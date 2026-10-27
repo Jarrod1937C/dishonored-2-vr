@@ -86,6 +86,39 @@ namespace
     std::atomic<unsigned long long> g_Lefts{ 0 }, g_Rights{ 0 }, g_SyncHeld{ 0 };
     std::atomic<bool> g_LastHeld{ false };
 
+    // ---- the game's own frame cap ----
+    // The game holds itself to 30 fps x com_timeScaler -- 120 at the options' highest setting (timeScaler 4) -- by
+    // spinning at the end of each frame until that much time has passed (exe+0x462E0, called from exe+0x35924A unless
+    // com_disableFrameSpinning is set; the timer is in microseconds: 33,333 / timeScaler). Synchronised stereo renders
+    // TWO game frames per headset frame, so under that cap it never passes 60 pairs a second, below every headset's
+    // refresh (72-120 Hz): whatever moves fast across the view -- close objects while strafing -- judders. While
+    // synchronised stereo runs the spin is off: the VR compositor paces the game to one pair per display period (two
+    // frames per refresh, whatever the headset's), and the simulation ticks once per pair -- at most the refresh, never
+    // past the 120 Hz the game's 1/120 s physics substeps are built for. The player's value comes back when it ends.
+    // The renderer's check (exe+0x359223) reads the cvar's integer value (+0x28), so that is what is written, and kept
+    // written: the console command alone was measured not to stick (frames 8.334 ms apart with it sent).
+    bool g_SpinForced = false; int g_SpinSaved = 0;   // main thread (OnPresent)
+    void ApplyFrameCap()
+    {
+        const bool want = g_SyncOn.load();
+        const bool have = CVars::Address("com_disableFrameSpinning") != 0;
+        if (want && !g_SpinForced)
+        {
+            g_SpinSaved = have ? CVars::GetInt("com_disableFrameSpinning") : 0;
+            if (have) CVars::SetInt("com_disableFrameSpinning", 1);
+            g_SpinForced = true;
+            const float ts = CVars::GetFloat("com_timeScaler", 0.f);
+            LOGI("StereoSync: the game's frame cap ({:.0f} fps) {} while synchronised stereo runs", 30.f * ts, have ? "is off" : "could NOT be switched off (cvar not found)");
+        }
+        else if (want && have && CVars::GetInt("com_disableFrameSpinning") != 1) CVars::SetInt("com_disableFrameSpinning", 1);
+        else if (!want && g_SpinForced)
+        {
+            if (have) CVars::SetInt("com_disableFrameSpinning", g_SpinSaved);
+            g_SpinForced = false;
+            LOGI("StereoSync: the game's frame cap is back");
+        }
+    }
+
     struct Rec { double t; int held; long long c18[3]; float c20[3]; int c28[3]; float org[3]; int stop; uint32_t in[16]; };
     std::mutex g_LogM;
     std::vector<Rec> g_Log; size_t g_LogWant = 0;
@@ -259,6 +292,7 @@ void StereoSync::Install()
 void StereoSync::OnPresent()
 {
     UiStackTick();
+    ApplyFrameCap();
     {   // the gate for the next frames (see PairHold)
         const unsigned long long np = ++g_Presents;
         LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f);

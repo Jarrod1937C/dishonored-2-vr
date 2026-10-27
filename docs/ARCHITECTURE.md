@@ -263,7 +263,14 @@ what the player's game learns later replaces it.
     hands, pointer and servo agree with the picture. The left image is only staged (`XRSession::StagePairLeft`, no
     OpenXR frame); the right one's Present submits both eyes in one frame (`SubmitPair`), each at the pose it was
     rendered from. Before a held frame the engine's DirectInput reads are skipped (the events wait for the simulated
-    frame: otherwise about half the key presses were lost). A gate holds only in play: not paused or stopped, no menu,
+    frame: otherwise about half the key presses were lost). The game's own frame cap (30 fps x `com_timeScaler`, 120 at
+    most from its options) would hold the pairs to 60 a second, under any headset's refresh: it is switched off while
+    synchronised stereo runs (`com_disableFrameSpinning`, restored after), and the headset's frame wait (once per pair)
+    is the limit -- two game frames per display period, whatever the refresh. The game's swapchain gets a third back
+    buffer (D3D11Hook, at its resize when VR starts): the compositor holds the game's GPU after each submitted pair
+    until it takes it, and with the game's 2 buffers the left image's Present had no buffer and blocked the render
+    thread that long (measured on SteamVR with a Pimax: ~10 ms a pair, ending 0.6 ms before the pair's display), so the
+    next pair always missed the next display period: half the refresh. A gate holds only in play: not paused or stopped, no menu,
     menu screen or player change, no hitch, and 30 Presents after any of those changed (holding a frame while a pause
     menu opened crashed the game's UI). Anything else is a mono view; a stereo health check falls back to mono (logged,
     retried with backoff) when no pair reaches the headset (`vr stereohealth`).
@@ -611,6 +618,16 @@ frame (`gpugrip`, `gputrim`): a pistol points along the controller, the sword st
 fist. The anchor is retaken when the equipment entity changes (weapon swap, load), after a 45-frame settle so the equip
 animation is not captured. `WeaponTargetPose` is the drawn pose; `WeaponFromHand` gives the pose for a controller pose
 NOW (used by the game thread when firing); `WeaponClaim` is the identification rule, lock-free, for other modules.
+
+**Each draw with its own view's transform.** `entity` must be the transform of the same game
+tick as the draw's model matrix, or `entity^-1 * model` carries the player's movement over one tick (4 m/s at 90 ticks/s:
+4.4 cm, sideways when strafing). It used to be the game thread's latest sample, read whenever the first moved draw of a
+view was recorded, and the transform was the NEWEST view's for every draw -- but draws are recorded on worker threads
+after the next view is built (in synchronised stereo the right eye's a whole game frame after the left's). Now every
+view records the first-person entities and the game camera when it is built (`ViewMatrixHook`, `BodyHide::SampleNow`;
+the right eye of a pair takes its left eye's, no tick lies between them), `EnsureTransform` builds one transform per view
+(a ring of 8, `XfState`), and each moved draw takes the one of the view its own PerViewCB names (the newest view's when
+that cannot be read: per-eye TAA off). The eye pivot (`vr pivotfix`) takes the player from the same record.
 
 ### The arms: palette rewrite and IK
 

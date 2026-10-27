@@ -11,6 +11,13 @@ namespace
     Resize_t  g_RealResize = nullptr;
     D3D11Hook::Callbacks g_Cb;
     std::atomic<bool> g_InPresent{ false };
+    // The game swapchain gets 3 back buffers, not the game's 2 (at its ResizeBuffers; RenderRes resizes it to the headset
+    // size when the session starts). The VR compositor holds the game's GPU work after each submitted frame until it
+    // takes that frame; with 2 buffers the next Present then had no buffer and blocked the render thread that long -- in
+    // synchronised stereo the Present of each pair's left image (~10 ms a pair, ending just before the pair's display:
+    // measured on SteamVR), so the next pair was always submitted too late for the next display period and the headset
+    // got half its refresh. The device's maximum frame latency is raised to match.
+    constexpr UINT kGameBuffers = 3;
 
     HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* sc, UINT sync, UINT flags)
     {
@@ -26,7 +33,28 @@ namespace
         LOGI("ResizeBuffers {}x{} fmt={} count={}", w, h, (int)f, n);
         if (g_Cb.onResize) g_Cb.onResize(sc);
         RenderRes::OnResizeBuffers(sc, w, h);
-        return g_RealResize(sc, n, w, h, f, flags);
+        DXGI_SWAP_CHAIN_DESC d{}; sc->GetDesc(&d);
+        const UINT had = n ? n : d.BufferCount;
+        const UINT count = had < kGameBuffers ? kGameBuffers : n;
+        HRESULT hr = g_RealResize(sc, count, w, h, f, flags);
+        if (FAILED(hr) && count != n)
+        {
+            LOGI("D3D11Hook: ResizeBuffers with {} buffers failed (0x{:08X}): the game's {} kept", count, (unsigned)hr, had);
+            return g_RealResize(sc, n, w, h, f, flags);
+        }
+        if (SUCCEEDED(hr) && count != n)
+        {
+            ID3D11Device* dev = nullptr; IDXGIDevice1* dx = nullptr; UINT lat = 0;
+            if (SUCCEEDED(sc->GetDevice(__uuidof(ID3D11Device), (void**)&dev)) && dev && SUCCEEDED(dev->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dx)) && dx)
+            {
+                dx->GetMaximumFrameLatency(&lat);
+                if (lat < count && SUCCEEDED(dx->SetMaximumFrameLatency(count))) lat = count;
+            }
+            if (dx) dx->Release();
+            if (dev) dev->Release();
+            LOGI("D3D11Hook: game swapchain {} buffers (the game asked {}), max frame latency {}", count, had, lat);
+        }
+        return hr;
     }
 
     bool GetVTable(void** outPresent, void** outResize)

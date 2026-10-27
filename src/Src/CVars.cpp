@@ -26,6 +26,8 @@ namespace
         { "pm_noBob",                0x3BFC0F0 },
         { "pm_thirdPerson",          0x3BFBFF0 },
         { "g_stopTime",              0x3BF9A70 },
+        { "com_disableFrameSpinning", 0 },        // (measured: object at exe+0x25B1E80) StereoSync: the frame cap off
+        { "com_timeScaler",          0 },        // (measured: object at exe+0x25B1E00) the frame cap is 30 fps x this
         { "g_debugPlayer",           0x3BFDFE0 },
         { "stereoRender_separation",       0x2EC1430 },
         { "stereoRender_screenSeparation", 0x2EC14B0 },

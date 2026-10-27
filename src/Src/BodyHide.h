@@ -80,5 +80,8 @@ namespace BodyHide
     //! (the model's rest pose) belongs to the old model and has to be retaken when it changes.
     struct Anchor { bool valid = false; void* ent = nullptr; float org[3] = {}; float axis[9] = {}; };
     void GetAnchors(Anchor out[aCount]);
+    //! The same entities read NOW, on the calling thread (the pointers Tick resolved, each re-validated): what
+    //! ViewMatrixHook records with a view when it is built, so the view and the entities come from one game tick.
+    void SampleNow(Anchor out[aCount]);
     const char* AnchorName(int id);
 }

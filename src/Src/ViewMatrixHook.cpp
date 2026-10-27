@@ -163,13 +163,36 @@ namespace
         return KbmInject::WorldYawOffset(deg);
     }
 
+    // ---- The first-person entities each view was built with (ViewMatrixHook::ViewEntities) ----
+    // GpuTrace places a moved draw's arm or weapon with `target * entity^-1` applied to the draw's own model matrix, so
+    // `entity` must be the transform of the same game tick. BodyHide samples the entities on the game thread once per
+    // tick, and the draws are recorded on worker threads after the next view is built (in synchronised stereo the right
+    // eye's a whole game frame after the left's): the latest sample could be a tick away from the draw, and the weapon
+    // and the hand on it were drawn one tick of movement off (4 m/s at 90 ticks/s: 4.4 cm, sideways when strafing). Each
+    // view records them when it is built; the right eye of a pair takes its left eye's (no tick lies between them).
+    struct ViewSnap
+    {
+        unsigned long long serial = 0; bool valid = false;
+        BodyHide::Anchor anch[BodyHide::aCount];
+        float cam[3] = {}, camAxis[9] = {}; bool camValid = false;
+    };
+    ViewSnap g_SnapRing[16];                           // under g_ViewM, by serial % 16
+    //! The record a view being built gets: the entities as they are now, and the game camera.
+    void TakeSnap(ViewSnap& s)
+    {
+        s = ViewSnap();
+        BodyHide::SampleNow(s.anch);
+        s.camValid = HandAimHook::RealCamera(s.cam, s.camAxis);
+        s.valid = true;
+    }
+
     //! `hp` is the HMD pose this view was composed with; `gameAxis` when the axis is the game's (head-aim mode).
     //! `eye` -2 = the alternating-stereo eye (VRRuntime::CurrentEye); `pair` see XrPose (~0 = this view starts one).
     //! Returns the view's serial.
     unsigned long long PublishView(const float* org, const float* axis, const float* out, const VRRuntime::HeadPose* hp = nullptr, bool gameAxis = false,
                                    const float* gameOrg = nullptr, bool flat = false, int eye = -2, unsigned long long pair = 0,
                                    const VRRuntime::PoseSet* ps = nullptr, const CameraHook::Tans* tans = nullptr, bool canted = false, const float* turn = nullptr,
-                                   const float* headAxis = nullptr)
+                                   const float* headAxis = nullptr, const ViewSnap* snap = nullptr)
     {
         ViewMatrixHook::XrPose p;
         p.flat = flat; p.canted = canted;
@@ -210,6 +233,8 @@ namespace
         geo.serial = g_ViewSerial; memcpy(geo.mat, out, 64); memcpy(geo.org, org, 12); memcpy(geo.axis, axis, 36); memcpy(geo.headAxis, headAxis ? headAxis : axis, 36);
         ViewSet& vs = g_SetRing[g_ViewSerial % 16];
         vs.serial = ps ? g_ViewSerial : 0; if (ps) vs.set = *ps;
+        ViewSnap& sn = g_SnapRing[g_ViewSerial % 16];
+        if (snap && snap->valid) { sn = *snap; sn.serial = g_ViewSerial; } else { sn.serial = 0; sn.valid = false; }
         PipeTrace::Event(PipeTrace::View, g_ViewSerial, (uint64_t)(int64_t)p.eye);
         return g_ViewSerial;
     }
@@ -223,6 +248,7 @@ namespace
         float o[3] = {}, a[9] = {}, tmpAxis[9] = {}, ref[3] = {}, gameOrg[3] = {};
         float scale = 1.f;
         VRRuntime::PoseSet set;             //!< both eyes, the head and the controllers, located once for the pair
+        ViewSnap snap;                      //!< the entities the left view was built with: the right view's too
         unsigned long long serial = 0;      //!< the left view's
     } g_Pair;
     std::atomic<unsigned long long> g_PairsRight{ 0 }, g_PairsLeft{ 0 };
@@ -551,7 +577,7 @@ namespace
                 g_Real(o, a, out);
                 CameraHook::Tans tans; CameraHook::ApplyEyeProjection(mainView, 1, tans);   // mode 2 (research): its own matrix, before the engine's VP
                 StereoTaa::OnMainView(mainView, 1, out);
-                PublishView(o, a, out, &hp, g_Pair.keep, g_Pair.gameOrg, false, 1, g_Pair.serial, &g_Pair.set, &tans, canted, turn, headAxis);
+                PublishView(o, a, out, &hp, g_Pair.keep, g_Pair.gameOrg, false, 1, g_Pair.serial, &g_Pair.set, &tans, canted, turn, headAxis, &g_Pair.snap);
                 g_Pair.valid = false; g_PairsRight++;
                 StereoSync::RightBuilt();
                 return;
@@ -567,6 +593,7 @@ namespace
             VRRuntime::HeadPose hp = sync ? ps.eye[0] : (eye >= 0 ? ps.eye[eye] : ps.head);
             if (hp.valid)
             {
+                ViewSnap snap; TakeSnap(snap);           // the entities this view is built with (ViewSnap)
                 static unsigned refGen = 0;
                 const bool recentred = hp.gen != refGen; refGen = hp.gen;     // the space moved THIS frame: see HeadPose::gen
                 if (g_RecenterReq.exchange(false) || !g_RefValid || recentred)
@@ -593,7 +620,10 @@ namespace
                     if (g_PivotFix.load())
                     {
                         float off = 0;
-                        BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+                        // the player as this view records it (ViewSnap), the same tick as `o`: the game thread's
+                        // last sample can be a tick away from it
+                        BodyHide::Anchor anLive[BodyHide::aCount]; const BodyHide::Anchor* an = snap.anch;
+                        if (!snap.valid) { BodyHide::GetAnchors(anLive); an = anLive; }
                         const BodyHide::Anchor& pl = an[BodyHide::aPlayer];
                         if (pl.valid && KbmInject::WorldYawOffset(off))
                         {
@@ -694,10 +724,10 @@ namespace
                 g_Real(o, a, out);
                 CameraHook::Tans tans; CameraHook::ApplyEyeProjection(mainView, viewEye, tans);   // mode 2 (research): its own matrix
                 StereoTaa::OnMainView(mainView, eye, out);    // each eye's own "previous frame" for the motion vectors
-                const unsigned long long serial = PublishView(o, a, out, &hp, g_KeepGameAxis.load(), org, false, sync ? 0 : syncOn ? -1 : -2, sync ? ~0ull : 0, &ps, &tans, canted, turn, headAxis);
+                const unsigned long long serial = PublishView(o, a, out, &hp, g_KeepGameAxis.load(), org, false, sync ? 0 : syncOn ? -1 : -2, sync ? ~0ull : 0, &ps, &tans, canted, turn, headAxis, &snap);
                 if (sync)
                 {
-                    memcpy(g_Pair.gameOrg, org, 12); g_Pair.set = ps;
+                    memcpy(g_Pair.gameOrg, org, 12); g_Pair.set = ps; g_Pair.snap = snap;
                     g_Pair.serial = serial; g_Pair.valid = true; g_PairsLeft++;
                     StereoSync::LeftBuilt();
                 }
@@ -780,12 +810,21 @@ bool ViewMatrixHook::ViewPoses(unsigned long long serial, VRRuntime::PoseSet& ou
     if (v.serial != serial || !v.set.valid) return false;
     out = v.set; return true;
 }
-bool ViewMatrixHook::ViewBySerial(unsigned long long serial, float mat[16], float org[3], float axis[9])
+bool ViewMatrixHook::ViewBySerial(unsigned long long serial, float mat[16], float org[3], float axis[9], float* headAxis)
 {
     std::lock_guard lk(g_ViewM);
     const ViewGeo& g = g_GeoRing[serial % 16];
     if (!serial || g.serial != serial) return false;
     memcpy(mat, g.mat, 64); memcpy(org, g.org, 12); memcpy(axis, g.axis, 36);
+    if (headAxis) memcpy(headAxis, g.headAxis, 36);
+    return true;
+}
+bool ViewMatrixHook::ViewEntities(unsigned long long serial, BodyHide::Anchor* anch, float cam[3], float camAxis[9], bool* camValid)
+{
+    std::lock_guard lk(g_ViewM);
+    const ViewSnap& s = g_SnapRing[serial % 16];
+    if (!serial || s.serial != serial || !s.valid) return false;
+    memcpy(anch, s.anch, sizeof s.anch); memcpy(cam, s.cam, 12); memcpy(camAxis, s.camAxis, 36); if (camValid) *camValid = s.camValid;
     return true;
 }
 unsigned long long ViewMatrixHook::SerialOfViewMatrix(const float m[16])

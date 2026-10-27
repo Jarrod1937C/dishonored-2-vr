@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 namespace VRRuntime { struct PoseSet; }
+namespace BodyHide { struct Anchor; }
 
 //! THE 6DOF hook. idRenderMatrix::CreateViewMatrix(const idVec3* org, const idMat3* axis,
 //! idRenderMatrix* out) = exe+0x109CC0 is what turns m_renderRV.vieworg/viewaxis into the
@@ -61,7 +62,11 @@ namespace ViewMatrixHook
     //! must take it from here: with the eye's own axis each eye put the hands ~7 deg aside, each its own way.
     bool RenderView(float mat[16], float org[3], float axis[9], unsigned long long* serial = nullptr, float* headAxis = nullptr);
     //! The same for a given main view (the last 16 are kept): false when it is gone.
-    bool ViewBySerial(unsigned long long serial, float mat[16], float org[3], float axis[9]);
+    bool ViewBySerial(unsigned long long serial, float mat[16], float org[3], float axis[9], float* headAxis = nullptr);
+    //! The first-person entities (BodyHide::aCount anchors) and the game camera as they were when view `serial` was built
+    //! -- the right eye of a synchronised pair has its left eye's -- so GpuTrace places each moved draw with ITS OWN view's
+    //! transform and entities (one game tick). False when it has none (a flat view, or gone from the ring).
+    bool ViewEntities(unsigned long long serial, BodyHide::Anchor* anch, float cam[3], float camAxis[9], bool* camValid);
     //! Which main view a draw belongs to, from the view matrix in ITS PerViewCB (StereoTaa::ViewMatrixOf): the serial
     //! of the newest view built with that matrix (either storage order), 0 = none of the last 16.
     unsigned long long SerialOfViewMatrix(const float m[16]);

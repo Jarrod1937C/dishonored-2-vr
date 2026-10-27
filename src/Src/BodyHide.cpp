@@ -80,9 +80,8 @@ namespace
     //! Copy the world transform of the first-person entities for the render thread. Called every frame on the game
     //! thread: the POINTERS are only refreshed every 30 frames, so each one is re-validated here -- a weapon swap
     //! destroys the entity and the stale pointer would otherwise be read as geometry.
-    void SampleAnchors()
+    void SampleInto(BodyHide::Anchor* a)
     {
-        BodyHide::Anchor a[BodyHide::aCount];
         void* ents[BodyHide::aCount] = { g_LeftWeapon.load(), g_RightWeapon.load(), g_LeftArm.load(), g_RightArm.load(), Game::LocalPlayer() };
         for (int i = 0; i < BodyHide::aCount; i++)
         {
@@ -97,6 +96,11 @@ namespace
             if (!(n > 0.9f && n < 1.1f)) continue;
             a[i].valid = true;
         }
+    }
+    void SampleAnchors()
+    {
+        BodyHide::Anchor a[BodyHide::aCount];
+        SampleInto(a);
         std::lock_guard lk(g_AnchorM);
         memcpy(g_Anchors, a, sizeof g_Anchors);
     }
@@ -252,6 +256,7 @@ bool BodyHide::HoldsGun(int side) { const uint32_t c = g_ItemClass[side & 1].loa
 void* BodyHide::RightWeaponEntity() { return g_RightWeapon.load(); }
 BodyHide::Stats BodyHide::GetStats() { std::lock_guard lk(g_M); return g_Stats; }
 void BodyHide::GetAnchors(Anchor out[aCount]) { std::lock_guard lk(g_AnchorM); memcpy(out, g_Anchors, sizeof g_Anchors); }
+void BodyHide::SampleNow(Anchor out[aCount]) { for (int i = 0; i < aCount; i++) out[i] = Anchor(); SampleInto(out); }
 const char* BodyHide::AnchorName(int id)
 {
     static const char* kN[aCount] = { "weaponL", "weaponR", "armL", "armR", "player" };

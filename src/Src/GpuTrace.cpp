@@ -562,6 +562,27 @@ namespace
     bool g_XfValid = false, g_XfPrevValid = false, g_ViewValid = false;
     float g_XfViewMat[16] = {};                // the view matrix of g_XfSerial (vr aaxf: is it the moved draw's own view?)
     std::atomic<unsigned long long> g_XfSame{ 0 }, g_XfOther{ 0 }, g_XfUnknown{ 0 }, g_XfLag[4];
+    // ---- Each moved draw placed with ITS OWN view's transform ----
+    // EnsureTransform used to build ONE transform, from the newest view and from wherever the first-person entities were
+    // at that moment (BodyHide samples them on the game thread once per tick), and every moved draw used it. But draws
+    // are recorded on worker threads after the next view is built -- in synchronised stereo the right eye's a whole game
+    // frame after the left's -- so a draw could be placed with another view's camera, and the weapon's correction
+    // (target * entity^-1, applied to the draw's model matrix) with the entity of ANOTHER TICK: off by one tick of the
+    // player's movement (4 m/s at 90 ticks/s = 4.4 cm), sideways when strafing, where it shows -- and the hand on the
+    // weapon with it. Now each view carries the entities and the game camera it was built with, and each moved draw is
+    // placed with the transform of the view its own PerViewCB names (kept here per view).
+    constexpr int kXfRing = 8;
+    struct XfState
+    {
+        unsigned long long serial = 0, present = 0, pair = 0; bool valid = false; int eye = -1;
+        Rigid vw, vinv, dv[2], dvPrev[2], dw[2], target[2], hand[2], bodyVr, bodyDelta;
+        bool targetValid[2] = {}, bodyValid = false, camValid = false;
+        float cam[3] = {}, camAxis[9] = {}, viewMat[16] = {};
+        BodyHide::Anchor anch[BodyHide::aCount];
+    };
+    XfState g_XfRing[kXfRing];                                 // under g_XfM, by serial % kXfRing
+    thread_local unsigned long long t_DrawSerial = 0;          // the moved draw's own view (BeginSixDof); 0 = not known
+    thread_local unsigned long long t_XfUsed = 0;              // the view whose transform it was placed with
     // Anchor. The reference the weapon is moved FROM is the equipment entity's own world transform, read fresh
     // every frame (BodyHide::GetAnchors) -- not a snapshot of where the model was when calibrated. Three things
     // that cost whole sessions all come from taking a snapshot:
@@ -1024,15 +1045,19 @@ namespace
 
     //! Refresh the frame's transform, keyed on the view serial so the hand pose and the view it is expressed in
     //! always come from the same frame. Whichever recording thread reaches the weapon first does the work.
+    //! XfState: the transform of the moved draw's OWN view is built too, from that view's own matrix,
+    //! poses and recorded entities, when it is not the newest one.
     std::atomic<bool> g_HandsFromView{ true };
     std::atomic<unsigned long long> g_XfFromView{ 0 }, g_XfLatest{ 0 };
-    bool EnsureTransform()
+    //! One view's transform into the ring (and, for the newest view, into the globals the other readers use, with what is
+    //! done once per new view: the weapon-change bookkeeping, anchoring a hand). Returns whether it is valid.
+    bool BuildXf(unsigned long long serial, bool latest)
     {
-        float vm[16], vorg[3], vaxis[9], haxis[9]; unsigned long long serial = 0;
+        float vm[16], vorg[3], vaxis[9], haxis[9];
         // (vaxis: the axis the view was rendered with -- the basis the MVPs live in; haxis: the head's, without a stereo
         // eye's turn or cant -- the yaw the controllers are carried into the world with, the same for both eyes)
-        if (!ViewMatrixHook::RenderView(vm, vorg, vaxis, &serial, haxis)) { g_XfNoView++; return false; }
-        { std::lock_guard lk(g_XfM); if (serial == g_XfSerial) return g_XfValid; }
+        if (!ViewMatrixHook::ViewBySerial(serial, vm, vorg, vaxis, haxis)) { g_XfNoView++; return false; }
+        XfState st; st.serial = serial; st.present = g_PresentFrame; memcpy(st.viewMat, vm, 64);
 
         // The view basis the factorisation recovers: x = clip x = right, y = clip y = up, z = depth = forward.
         // Built from the pose the renderer ACTUALLY used (HMD composition included), which is why it comes from
@@ -1049,6 +1074,8 @@ namespace
         for (int i = 0; i < 3; i++)
             vw.t[i] = -(vw.r[i * 3] * vorg[0] + vw.r[i * 3 + 1] * vorg[1] + vw.r[i * 3 + 2] * vorg[2]);
 
+        st.vw = vw; st.vinv = Inv(vw);
+
         // The controller, anchored to that same render view: the MVP lives in the render view's space, which differs
         // from the game camera by the HMD positional offset -- anchoring to the camera makes the weapon drift on lean.
         // The eye this VIEW was built for (its record), not the eye current now: the pipeline is deeper than one frame,
@@ -1062,6 +1089,7 @@ namespace
         const bool fromView = g_HandsFromView.load() && ViewMatrixHook::ViewPoses(serial, vset) && vset.inputValid;
         if (fromView) { hp = eye >= 0 ? vset.eye[eye] : vset.head; g_XfFromView++; } else g_XfLatest++;
         const bool prevSameEye = eye >= 0 && g_PrevPerEye.load() && StereoTaa::PrevIsSameEye(vm);
+        st.eye = eye; st.pair = viewRec.valid ? viewRec.pair : 0;
         Rigid hw[2];                                // controller poses in world space; columns = fwd/left/up
         bool haveHand[2] = {};
         for (int h = 0; h < 2; h++)
@@ -1075,30 +1103,14 @@ namespace
         }
         if (!haveHand[0] && !haveHand[1]) g_XfNoHand++;
 
-        std::lock_guard lk(g_XfM);
-        if (serial == g_XfSerial) return g_XfValid;              // another thread got here first
-        if (g_XfValid) { for (int h = 0; h < 2; h++) g_DeltaViewPrev[h] = g_DeltaView[h]; g_XfPrevValid = true; }
-        g_XfSerial = serial; g_XfPresent = g_PresentFrame; g_ViewRigid = vw; g_ViewInv = Inv(vw); g_ViewValid = true;
-        memcpy(g_XfViewMat, vm, 64);
-        PipeTrace::Event(PipeTrace::Xform, serial);
-        {   // The engine places the weapon relative to the GAME camera, while the MVP is built from the rendered
-            // view; with 6DOF head tracking the two differ by the HMD offset. Measuring "near the eye" against the
-            // rendered view would drop the weapon out of range as soon as the player stands up or leans.
-            float co[3], ca[9];
-            g_GameCamValid = HandAimHook::RealCamera(co, ca);
-            if (g_GameCamValid) { memcpy(g_GameCam, co, 12); memcpy(g_GameCamAxis, ca, 36); }
+
+        // The game camera and the first-person entities this view was BUILT with: the draws it is placed with were made
+        // from that game tick. Else as they are now (the game thread's last sample: the tick may differ).
+        if (!ViewMatrixHook::ViewEntities(serial, st.anch, st.cam, st.camAxis, &st.camValid))
+        {
+            st.camValid = HandAimHook::RealCamera(st.cam, st.camAxis);
+            BodyHide::GetAnchors(st.anch);
         }
-        BodyHide::GetAnchors(g_Anchor);          // where the engine says the weapon and the arms are, this frame
-        g_ClaimSeq.fetch_add(1); memcpy(g_ClaimAnch, g_Anchor, sizeof g_ClaimAnch); g_ClaimSeq.fetch_add(1); g_ClaimValid = g_SixDof.load() == 1;
-        if (g_PartsLeft.load() > 0 && g_GameCamValid && (serial % 4) == 0)
-            for (int k = 0; k < 2; k++)
-            {   // vr gunparts: where the flat game has each weapon, in the game camera's frame (fwd / left / up)
-                const BodyHide::Anchor& w = g_Anchor[k == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR];
-                if (!w.valid) continue;
-                const float d[3] = { w.org[0] - g_GameCam[0], w.org[1] - g_GameCam[1], w.org[2] - g_GameCam[2] };
-                float r[3]; for (int i = 0; i < 3; i++) r[i] = d[0] * g_GameCamAxis[i * 3] + d[1] * g_GameCamAxis[i * 3 + 1] + d[2] * g_GameCamAxis[i * 3 + 2];
-                LOGI("gunparts: ANCHOR weapon {} at fwd {:.3f} left {:.3f} up {:.3f} (axis fwd {:.2f},{:.2f},{:.2f})", k, r[0], r[1], r[2], w.axis[0], w.axis[1], w.axis[2]);
-            }
         {   // the body frames (see the declaration): head position + yaw-only axis, from the render view and from the game camera
             auto yawFrame = [](const float org[3], const float axis[9], Rigid& o) {
                 const float yaw = atan2f(axis[1], axis[0]), c = cosf(yaw), s = sinf(yaw);
@@ -1113,41 +1125,75 @@ namespace
                 float dw[3]; HandAimHook::XrOffsetToWorld(d, haxis, dw, fromView ? vset.head.quat : nullptr);
                 for (int i = 0; i < 3; i++) headOrg[i] += dw[i];
             }
-            yawFrame(headOrg, haxis, g_BodyVr);
-            g_BodyValid = g_GameCamValid;
-            if (g_BodyValid) { Rigid bg; yawFrame(g_GameCam, g_GameCamAxis, bg); g_BodyDelta = Mul(g_BodyVr, Inv(bg)); }
+            yawFrame(headOrg, haxis, st.bodyVr);
+            st.bodyValid = st.camValid;
+            if (st.bodyValid) { Rigid bg; yawFrame(st.cam, st.camAxis, bg); st.bodyDelta = Mul(st.bodyVr, Inv(bg)); }
         }
-        // A weapon swap (or a level load) builds a new equipment entity, and the grip rotation we captured belongs
-        // to the weapon that is gone -- keeping it holds the new one at a wrong angle for the rest of the session.
-        // Re-anchor instead, which needs no command from the player.
-        for (int h = 0; h < 2; h++)
+
+        std::lock_guard lk(g_XfM);
+        if (latest)
         {
-            void* ent = g_Anchor[h == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR].ent;
-            if (ent == g_AnchoredEnt[h]) { g_EntStable[h]++; continue; }
-            if (g_RestModelValid[h]) LOGI("gpu6dof: hand {} equipment changed ({} -> {}), re-anchoring", h, g_AnchoredEnt[h], ent);
-            g_AnchoredEnt[h] = ent;
-            g_EntStable[h] = 0;
-            g_RestModelValid[h] = false;
+            if (serial <= g_XfSerial) return g_XfValid;              // another thread got here first
+            if (g_XfValid) { for (int h = 0; h < 2; h++) g_DeltaViewPrev[h] = g_DeltaView[h]; g_XfPrevValid = true; }
+            g_XfSerial = serial; g_XfPresent = g_PresentFrame; g_ViewRigid = vw; g_ViewInv = st.vinv; g_ViewValid = true; g_XfValid = false;
+            memcpy(g_XfViewMat, vm, 64);
+            PipeTrace::Event(PipeTrace::Xform, serial);
+            // The engine places the weapon relative to the GAME camera, while the MVP is built from the rendered
+            // view; with 6DOF head tracking the two differ by the HMD offset. Measuring "near the eye" against the
+            // rendered view would drop the weapon out of range as soon as the player stands up or leans.
+            g_GameCamValid = st.camValid;
+            if (g_GameCamValid) { memcpy(g_GameCam, st.cam, 12); memcpy(g_GameCamAxis, st.camAxis, 36); }
+            memcpy(g_Anchor, st.anch, sizeof g_Anchor);          // where the engine says the weapon and the arms are, this view
+            g_ClaimSeq.fetch_add(1); memcpy(g_ClaimAnch, g_Anchor, sizeof g_ClaimAnch); g_ClaimSeq.fetch_add(1); g_ClaimValid = g_SixDof.load() == 1;
+            if (g_PartsLeft.load() > 0 && g_GameCamValid && (serial % 4) == 0)
+                for (int k = 0; k < 2; k++)
+                {   // vr gunparts: where the flat game has each weapon, in the game camera's frame (fwd / left / up)
+                    const BodyHide::Anchor& w = g_Anchor[k == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR];
+                    if (!w.valid) continue;
+                    const float d[3] = { w.org[0] - g_GameCam[0], w.org[1] - g_GameCam[1], w.org[2] - g_GameCam[2] };
+                    float r[3]; for (int i = 0; i < 3; i++) r[i] = d[0] * g_GameCamAxis[i * 3] + d[1] * g_GameCamAxis[i * 3 + 1] + d[2] * g_GameCamAxis[i * 3 + 2];
+                    LOGI("gunparts: ANCHOR weapon {} at fwd {:.3f} left {:.3f} up {:.3f} (axis fwd {:.2f},{:.2f},{:.2f})", k, r[0], r[1], r[2], w.axis[0], w.axis[1], w.axis[2]);
+                }
+            g_BodyVr = st.bodyVr; g_BodyValid = st.bodyValid; if (st.bodyValid) g_BodyDelta = st.bodyDelta;
+            // A weapon swap (or a level load) builds a new equipment entity, and the grip rotation we captured belongs
+            // to the weapon that is gone -- keeping it holds the new one at a wrong angle for the rest of the session.
+            // Re-anchor instead, which needs no command from the player.
+            for (int h = 0; h < 2; h++)
+            {
+                void* ent = g_Anchor[h == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR].ent;
+                if (ent == g_AnchoredEnt[h]) { g_EntStable[h]++; continue; }
+                if (g_RestModelValid[h]) LOGI("gpu6dof: hand {} equipment changed ({} -> {}), re-anchoring", h, g_AnchoredEnt[h], ent);
+                g_AnchoredEnt[h] = ent;
+                g_EntStable[h] = 0;
+                g_RestModelValid[h] = false;
+            }
+            if (g_CalReq.exchange(false)) { g_RestModelValid[0] = g_RestModelValid[1] = false; }
+
         }
-        if (g_CalReq.exchange(false)) { g_RestModelValid[0] = g_RestModelValid[1] = false; }
+        else
+        {
+            const XfState& r = g_XfRing[serial % kXfRing];
+            if (r.serial == serial) return r.valid;                  // another thread got here first
+        }
+        for (int h = 0; h < 2; h++) st.hand[h] = g_HandPose[h];
 
         Rigid deltaWorld[2];                                     // identity unless a controller is driving it
-        g_TargetValid[0] = g_TargetValid[1] = false;
+        if (latest) g_TargetValid[0] = g_TargetValid[1] = false;
         if (g_SixDof.load() == 1)
         {
-            if ((!haveHand[0] && !haveHand[1]) || !g_GameCamValid) { g_XfValid = false; return false; }
+            if ((!haveHand[0] && !haveHand[1]) || !st.camValid) { g_XfRing[serial % kXfRing] = st; return false; }
             for (int h = 0; h < 2; h++)
             {
                 const Rigid grip = GripOffset(h);
-                const BodyHide::Anchor& wa = g_Anchor[h == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR];
+                const BodyHide::Anchor& wa = st.anch[h == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR];
                 if (!haveHand[h]) continue;
                 if (!wa.valid)
                 {   // An empty hand: no equipment to move (the delta stays the identity), but the hand itself still has
                     // a controller to follow -- the arm draws pose it from the palm (see the empty-hand branch).
-                    g_TargetPose[h] = Mul(hw[h], grip); g_TargetValid[h] = true; g_HandPose[h] = hw[h];
+                    st.target[h] = Mul(hw[h], grip); st.targetValid[h] = true; st.hand[h] = hw[h];
                     continue;
                 }
-                Rigid ent;                                       // equipment entity -> world, this frame
+                Rigid ent;                                       // equipment entity -> world, as this view has it
                 for (int i = 0; i < 3; i++)
                 {
                     ent.r[i * 3] = wa.axis[i]; ent.r[i * 3 + 1] = wa.axis[3 + i]; ent.r[i * 3 + 2] = wa.axis[6 + i];
@@ -1155,6 +1201,7 @@ namespace
                 }
                 if (!g_RestModelValid[h])
                 {
+                    if (!latest) continue;               // a hand is anchored on the newest view only
                     if (g_HoldMode.load() == 1)
                     {   // Deterministic hold: gripBase is the identity, so the weapon's frame BECOMES the
                         // controller's frame and the barrel points where the controller points. The same hold every
@@ -1185,25 +1232,56 @@ namespace
                 // their own offsets stay together -- what came apart in the previous design.
                 const Rigid target = Mul(Mul(hw[h], g_GripBase[h]), grip);
                 deltaWorld[h] = Mul(target, Inv(ent));
-                g_TargetPose[h] = target; g_TargetValid[h] = true; g_HandPose[h] = hw[h];
+                st.target[h] = target; st.targetValid[h] = true; st.hand[h] = hw[h];
             }
         }
-        for (int h = 0; h < 2; h++)
+        for (int h = 0; h < 2; h++) { st.dw[h] = deltaWorld[h]; st.dv[h] = Mul(vw, Mul(deltaWorld[h], st.vinv)); }
+        if (latest)
         {
-            g_DeltaWorld[h] = deltaWorld[h];
-            g_DeltaView[h] = Mul(vw, Mul(deltaWorld[h], Inv(vw)));
-            if (!g_XfPrevValid) g_DeltaViewPrev[h] = g_DeltaView[h];
+            for (int h = 0; h < 2; h++)
+            {
+                g_TargetPose[h] = st.target[h]; g_TargetValid[h] = st.targetValid[h]; if (st.targetValid[h]) g_HandPose[h] = st.hand[h];
+                g_DeltaWorld[h] = st.dw[h];
+                g_DeltaView[h] = st.dv[h];
+                if (!g_XfPrevValid) g_DeltaViewPrev[h] = g_DeltaView[h];
+            }
+            if (eye >= 0)
+            {   // stereo: this eye's last delta is the previous one when the engine's previous matrices are this eye's too
+                if (prevSameEye && g_DeltaEyeValid[eye]) for (int h = 0; h < 2; h++) g_DeltaViewPrev[h] = g_DeltaViewEye[eye][h];
+                for (int h = 0; h < 2; h++) g_DeltaViewEye[eye][h] = g_DeltaView[h];
+                g_DeltaEyeValid[eye] = true;
+            }
+            else g_DeltaEyeValid[0] = g_DeltaEyeValid[1] = false;
+            g_XfPrevValid = true;
+            g_XfValid = true;
+            for (int h = 0; h < 2; h++) st.dvPrev[h] = g_DeltaViewPrev[h];
         }
-        if (eye >= 0)
-        {   // stereo: this eye's last delta is the previous one when the engine's previous matrices are this eye's too
-            if (prevSameEye && g_DeltaEyeValid[eye]) for (int h = 0; h < 2; h++) g_DeltaViewPrev[h] = g_DeltaViewEye[eye][h];
-            for (int h = 0; h < 2; h++) g_DeltaViewEye[eye][h] = g_DeltaView[h];
-            g_DeltaEyeValid[eye] = true;
+        else
+        {   // the previous delta (motion vectors): the view before this one in the ring -- of the same eye when the
+            // engine's previous matrices are that eye's (see g_DeltaViewEye)
+            const XfState* p = nullptr;
+            for (const XfState& r : g_XfRing)
+                if (r.valid && r.serial < serial && (!prevSameEye || r.eye == eye) && (!p || r.serial > p->serial)) p = &r;
+            for (int h = 0; h < 2; h++) st.dvPrev[h] = p ? p->dv[h] : st.dv[h];
         }
-        else g_DeltaEyeValid[0] = g_DeltaEyeValid[1] = false;
-        g_XfPrevValid = true;
-        g_XfValid = true;
+        st.valid = true;
+        g_XfRing[serial % kXfRing] = st;
         return true;
+    }
+    //! The transform for a moved draw: the newest view's (built if new), and the draw's own view's
+    //! (`want`, from its PerViewCB; 0 = not known) when that is an older one. True when the draw can be moved.
+    bool EnsureTransform(unsigned long long want = 0)
+    {
+        const unsigned long long latest = ViewMatrixHook::LatestSerial();
+        if (!latest) { g_XfNoView++; return false; }
+        bool have, ok;
+        { std::lock_guard lk(g_XfM); have = latest <= g_XfSerial; ok = g_XfValid; }
+        if (!have) ok = BuildXf(latest, true);
+        if (!want || want >= latest) return ok;
+        bool built = false, own = false;
+        { std::lock_guard lk(g_XfM); const XfState& r = g_XfRing[want % kXfRing]; if (r.serial == want) { built = true; own = r.valid; } }
+        if (!built && latest - want < kXfRing) own = BuildXf(want, false);
+        return own || ok;
     }
 
     //! Research: everything the factorisation believes about one draw, plus -- for the 384-byte layout, which is
@@ -1299,14 +1377,30 @@ namespace
         Rigid bodyW, bodyVr; bool bodyValid; int entStable[2]; unsigned long long xfSerial;
         {
             std::lock_guard lk(g_XfM);
-            if (!g_XfValid) return false;
-            xfSerial = g_XfSerial;
-            for (int h = 0; h < 2; h++)
-            { dvH[h] = g_DeltaView[h]; dvPrevH[h] = g_DeltaViewPrev[h]; dwH[h] = g_DeltaWorld[h]; targetH[h] = g_TargetPose[h]; targetValid[h] = g_TargetValid[h]; handH[h] = g_HandPose[h]; }
-            vinv = g_ViewInv; vw = g_ViewRigid; haveCam = g_GameCamValid; memcpy(cam, g_GameCam, 12); memcpy(camAxis, g_GameCamAxis, 36);
-            memcpy(anch, g_Anchor, sizeof anch);
-            bodyW = g_BodyDelta; bodyVr = g_BodyVr; bodyValid = g_BodyValid;
+            const XfState* own = nullptr;        // the transform of the view this draw belongs to
+            if (t_DrawSerial)
+            { const XfState& r = g_XfRing[t_DrawSerial % kXfRing]; if (r.serial == t_DrawSerial && r.valid) own = &r; }
+            if (own)
+            {
+                xfSerial = own->serial;
+                for (int h = 0; h < 2; h++)
+                { dvH[h] = own->dv[h]; dvPrevH[h] = own->dvPrev[h]; dwH[h] = own->dw[h]; targetH[h] = own->target[h]; targetValid[h] = own->targetValid[h]; handH[h] = own->hand[h]; }
+                vinv = own->vinv; vw = own->vw; haveCam = own->camValid; memcpy(cam, own->cam, 12); memcpy(camAxis, own->camAxis, 36);
+                memcpy(anch, own->anch, sizeof anch);
+                bodyW = own->bodyDelta; bodyVr = own->bodyVr; bodyValid = own->bodyValid;
+            }
+            else
+            {
+                if (!g_XfValid) return false;
+                xfSerial = g_XfSerial;
+                for (int h = 0; h < 2; h++)
+                { dvH[h] = g_DeltaView[h]; dvPrevH[h] = g_DeltaViewPrev[h]; dwH[h] = g_DeltaWorld[h]; targetH[h] = g_TargetPose[h]; targetValid[h] = g_TargetValid[h]; handH[h] = g_HandPose[h]; }
+                vinv = g_ViewInv; vw = g_ViewRigid; haveCam = g_GameCamValid; memcpy(cam, g_GameCam, 12); memcpy(camAxis, g_GameCamAxis, 36);
+                memcpy(anch, g_Anchor, sizeof anch);
+                bodyW = g_BodyDelta; bodyVr = g_BodyVr; bodyValid = g_BodyValid;
+            }
             entStable[0] = g_EntStable[0]; entStable[1] = g_EntStable[1];
+            t_XfUsed = xfSerial;
         }
         Rigid ownDv; bool useOwnDv = false;      // an arm draw whose hand pose comes from the palette, not the equipment entity
         bool torso = false;                      // a draw of the player entity's own models (torso, legs): follows the HMD body frame
@@ -3381,7 +3475,19 @@ namespace
     void BeginSixDof(ID3D11DeviceContext* ctx, Swap& sw, bool byIndex, UINT draw, bool allowMove = true)
     {
         if (!g_PoolReady.load()) return;
-        const bool xf = allowMove && SixDofOn() && EnsureTransform();
+        t_DrawSerial = 0; t_XfUsed = 0;
+        if (allowMove && SixDofOn())
+        {   // the view this draw belongs to, from the view matrix in its own PerViewCB
+            ID3D11Buffer* vcb = nullptr; ctx->VSGetConstantBuffers(1, 1, &vcb);
+            if (vcb)
+            {
+                StereoTaa::LearnViewCb(vcb);
+                float dm[16];
+                if (StereoTaa::ViewMatrixOf(ctx, vcb, dm)) t_DrawSerial = ViewMatrixHook::SerialOfViewMatrix(dm);
+                vcb->Release();
+            }
+        }
+        const bool xf = allowMove && SixDofOn() && EnsureTransform(t_DrawSerial);
         const bool fixing = StereoTaa::FixingPrev();
         if (!xf && !fixing) return;
         if (xf) { unsigned long long sr = 0; { std::lock_guard lk(g_XfM); sr = g_XfSerial; } CtxSerialSet(ctx, sr); }
@@ -3436,7 +3542,7 @@ namespace
             ID3D11Buffer* vcb = nullptr; ctx->VSGetConstantBuffers(1, 1, &vcb);
             if (vcb) StereoTaa::LearnViewCb(vcb);
             float dm[16];
-            unsigned long long xs = 0; { std::lock_guard lk(g_XfM); xs = g_XfSerial; }
+            unsigned long long xs = t_XfUsed; if (!xs) { std::lock_guard lk(g_XfM); xs = g_XfSerial; }
             const unsigned long long ds = vcb && StereoTaa::ViewMatrixOf(ctx, vcb, dm) ? ViewMatrixHook::SerialOfViewMatrix(dm) : 0;
             if (!ds) g_XfUnknown++;
             else if (ds == xs) g_XfSame++;

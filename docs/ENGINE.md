@@ -363,6 +363,18 @@ the copy.
   frame consumes: the reads are skipped before a held frame. Holding while a pause menu opens crashed in Iggy
   (exe+0x100B891, freed memory): only hold in play.
 
+- **The frame cap is a spin, set by `com_timeScaler`** (object exe+0x25B1E00, default 2, range 0.1-10): at the end of
+  the frame (exe+0x359223) the renderer calls exe+0x462E0, which busy-waits (exe+0x1585A0) until
+  `(1/30 s at exe+0x22813C8) * 1e6 / com_timeScaler` microseconds (timer exe+0x157F40, QPC in us) have passed since the
+  previous frame: **30 fps x com_timeScaler** (120 = 4). Skipped when `com_disableFrameSpinning` (exe+0x25B1E80) is set,
+  when `*(exe+0x3937288)` is non-zero, or when the renderer's vfunc +0x118 says no. Synchronised stereo switches the
+  spin off while it runs (StereoSync, `com_disableFrameSpinning`): under the cap it could not pass 60 pairs a second.
+- **Physics runs in fixed 1/120 s substeps** (the game clocks, exe+0x59990): clock 2 (gameLocal+0x2E7428+0xA0) advances
+  `n * (1/120) / scale` per game frame, `n = round(lag * 120 * scales)` against the real-time clock (catching up),
+  at most 12, with `g_physicsStepTolerance` (0.2) keeping n from flipping and `g_limitPhysicStepVariation` (0) limiting
+  it to one step of change per frame. Above 120 game frames a second some frames get no physics step (the community
+  FPS patches' "physics issues"); at 90 ticks/s the steps go 1, 1, 2. Clock 0's step is the real time, clamped to 0.5 s.
+
 ### 4.6 Render resolution, the window and the cfg writer
 - The engine renders at its window's **client size** (at most the desktop). What the size follows:
   - **WndProc exe+0xE9F80**: on **`WM_WINDOWPOSCHANGED` (0x47)** (not `WM_SIZE`, which goes to the default case) it calls
