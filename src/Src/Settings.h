@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "StereoSync.h"
 
 //! The player's settings: <game>\DishonoredVR.ini, read once at startup. Every key has a default, so a missing file,
 //! a missing key or a value that cannot be read all leave the mod working (and the log says which). Settings are
@@ -15,5 +16,7 @@ namespace Settings
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
+    bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: VrTweaks on while in VR
+    StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
 }

@@ -87,6 +87,9 @@ namespace CameraHook
 
     //! The main (scene) view object last seen by the hook, or null. Used by ViewMatrixHook.
     void* MainView();
+    //! One of the last few objects MainView() returned (the engine may keep more than one): a render task's view
+    //! pointer is checked against these before anything is read from it.
+    bool IsMainViewObject(const void* v);
 
     struct Stats
     {

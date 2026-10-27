@@ -28,6 +28,11 @@ namespace
         { "g_stopTime",              0x3BF9A70 },
         { "com_disableFrameSpinning", 0 },        // (measured: object at exe+0x25B1E80) StereoSync: the frame cap off
         { "com_timeScaler",          0 },        // (measured: object at exe+0x25B1E00) the frame cap is 30 fps x this
+        { "r_ILProbeUpdate_MaxUpdatesPerFrame", 0 }, // (measured: object at exe+0x32D1C20) StereoSync: halved in synchronised stereo
+        { "r_skipDOF",               0 },        // (measured: object at exe+0x32F3D50) VrTweaks
+        { "r_skipLensFlares",        0 },        // (measured: object at exe+0x32F7FC0) VrTweaks
+        { "r_SSSBlurQuality",        0 },        // (measured: object at exe+0x32F7C30) VrTweaks
+        { "r_textureUploadTimesliceMs", 0 },     // (measured: object at exe+0x32EFF90) VrTweaks
         { "g_debugPlayer",           0x3BFDFE0 },
         { "stereoRender_separation",       0x2EC1430 },
         { "stereoRender_screenSeparation", 0x2EC14B0 },

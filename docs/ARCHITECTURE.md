@@ -172,7 +172,16 @@ into `vr ...` commands in two batches:
   mana, ammo, health).
 
 A few settings are read directly by the module that needs them: `RenderScale` (RenderRes), `ControllerPitchOffset`
-and `LogControllerInput` (XRSession), `Haptics` (VRRuntime), `WriteStatusFile` (the heartbeat).
+and `LogControllerInput` (XRSession), `Haptics` (VRRuntime), `WriteStatusFile` (the heartbeat), `VrGraphicsTweaks`
+(VrTweaks) and the experimental `StereoShadowReuse`, `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
+and `StereoStreamOncePerPair` (StereoSync).
+
+**VrTweaks** ([VrTweaks.cpp](../src/Src/VrTweaks.cpp), ini `VrGraphicsTweaks`, default 1): while the headset shows the
+game, depth of field and lens flares are off (`r_skipDOF`, `r_skipLensFlares`: wrong in a headset), the skin blur takes
+23 taps instead of 92 (`r_SSSBlurQuality 2`) and texture uploads 1.5 ms a frame instead of 3
+(`r_textureUploadTimesliceMs`: at two frames per headset frame the game's budget was half a frame while streaming).
+The two archived ones are written as live values only (nothing reaches the game's config) and held; the other two go
+through the console once. Everything is put back when the headset stops showing the game.
 
 ### The VR package and its automatic activation
 
@@ -270,7 +279,17 @@ what the player's game learns later replaces it.
     buffer (D3D11Hook, at its resize when VR starts): the compositor holds the game's GPU after each submitted pair
     until it takes it, and with the game's 2 buffers the left image's Present had no buffer and blocked the render
     thread that long (measured on SteamVR with a Pimax: ~10 ms a pair, ending 0.6 ms before the pair's display), so the
-    next pair always missed the next display period: half the refresh. A gate holds only in play: not paused or stopped, no menu,
+    next pair always missed the next display period: half the refresh. The game's V-Sync is ignored too while
+    synchronised stereo runs (D3D11Hook: the Present's sync interval 0): with it on, the game skips its frame cap and
+    waits for the monitor's vblank instead, which would hold the pairs to half the MONITOR's refresh. The light probes'
+    update budget is halved meanwhile (`r_ILProbeUpdate_MaxUpdatesPerFrame`, per rendered frame: the same rate per
+    second as flat play). Experimental, each off by default in the ini: the right eye's frame skips render passes
+    that only repeat what the left eye's frame of the same tick just did, the way the engine skips a disabled task
+    (its context marked empty): the shadow maps (`StereoShadowReuse`, exe+0x32D4B0), the ocean's simulation
+    (`StereoOceanReuse`, UPDATE_OCEAN_FFT / UPDATE_OCEAN), the reflection probes' relighting (`StereoReflectionReuse`,
+    INDIRECT_LIGHTING_UPDATE_IBL), the decals on NPCs (`StereoDecalReuse`) and the texture streamer
+    (`StereoStreamOncePerPair`). A task is the right eye's when its view (task+0x70) is a main view object and that
+    view's matrix names the right view of a pair. Hooks exist only for what the ini asks for. A gate holds only in play: not paused or stopped, no menu,
     menu screen or player change, no hitch, and 30 Presents after any of those changed (holding a frame while a pause
     menu opened crashed the game's UI). Anything else is a mono view; a stereo health check falls back to mono (logged,
     retried with backoff) when no pair reaches the headset (`vr stereohealth`).
@@ -579,6 +598,16 @@ and nothing else on screen.
   in play): the six draw entry points, `Map`/`Unmap`/`UpdateSubresource` (cb2 is written just before each draw and a
   deferred context cannot be read back, so its contents are shadowed per thread), `Dispatch` and copies (for
   StereoTaa), and `FinishCommandList`/`ExecuteCommandList` (to carry the view serial to the presented image).
+
+**The per-draw path is hot.** Every draw of every recording thread (~2300 a frame, two frames per headset frame in
+synchronised stereo) passes the hooks, and with the weapon package or per-eye TAA every one of them enters
+`BeginSixDof`. What it does before it knows the draw is not the player's must not take a lock or touch a shared cache
+line: the newest transform is read from published mirrors (`EnsureTransform`, `XfPublish`), the command list's view tag
+is remembered per thread (`CtxSerialSet`), a draw whose model origin is out of reach of the player is rejected from its
+own rows (`FarFromPlayer`) before its view is looked up, the view lookups (`StereoTaa::ViewMatrixOf`,
+`ViewMatrixHook::SerialOfViewMatrix`, StereoTaa's `FindDrawView`) keep their last answer per thread until a PerViewCB
+is written or a view is published, and statistics are counted per thread and published every 64. Only the few dozen
+near draws reach the locked state copy in `TransformInstanceCb`.
 
 Replacement constant buffers come from pools created at Present, never inside a draw hook (creating or mapping shared
 buffers from the recording threads crashed the driver), written with `UpdateSubresource`, bound around the draw, and
@@ -933,7 +962,7 @@ entries replaced).
 | [PlayerViewHook](../src/Src/PlayerViewHook.cpp) | (disabled) render views of other entities | exe+0x881640 |
 | [BodyView](../src/Src/BodyView.cpp) | body-vs-real instrument, `fov auto` mode | - |
 | [StereoTaa](../src/Src/StereoTaa.cpp) | per-eye TAA in stereo | via GpuTrace context hooks and ViewMatrixHook |
-| [StereoSync](../src/Src/StereoSync.cpp) | synchronised stereo: every second game frame held (Draw only), its gate, input reads deferred | idGameLocal::RunFrame exe+0x8ACDF0, Draw exe+0x8AC710 (called), keyboard / mouse reads exe+0xE1970 / exe+0xE2930 |
+| [StereoSync](../src/Src/StereoSync.cpp) | synchronised stereo: every second game frame held (Draw only), its gate, input reads deferred | idGameLocal::RunFrame exe+0x8ACDF0, Draw exe+0x8AC710 (called), keyboard / mouse reads exe+0xE1970 / exe+0xE2930, right-eye pass skips (`Stereo*Reuse`: exe+0x32D4B0, exe+0x3053B0, exe+0x305370, exe+0x3102A0, exe+0x340F10, exe+0x34FD00), `r_ILProbeUpdate_MaxUpdatesPerFrame` |
 | [PipeTrace](../src/Src/PipeTrace.cpp) | frame pipeline trace | - |
 | [KbmInject](../src/Src/KbmInject.cpp) | controllers to keyboard/mouse, modes, head-aim servo, focus | `SendInput`; reads `g_mouseSensitivity`, `g_invertMouseYAxis` |
 | [KeyBinds](../src/Src/KeyBinds.cpp) | the player's key bindings, physical key positions | reads `dishonored2Config.cfg` |
@@ -958,6 +987,7 @@ entries replaced).
 | [WristHud](../src/Src/WristHud.cpp) | interface copy, wrist watch, letterbox removal | via GpuTrace draw hooks; `ark_ui_show_master_hud` |
 | [BinkVideo](../src/Src/BinkVideo.cpp) | is a pre-rendered video playing | `bink2w64.dll` exports (BinkOpen, BinkOpenWithOptions, BinkClose, BinkDoFrame, BinkDoFrameAsync, BinkNextFrame) |
 | [Settings](../src/Src/Settings.cpp) | the ini, turned into commands | - |
+| [VrTweaks](../src/Src/VrTweaks.cpp) | the ini's VR graphics tweaks, while the headset shows the game | `r_skipDOF` (read exe+0x375073), `r_skipLensFlares` (exe+0x375264), `r_SSSBlurQuality`, `r_textureUploadTimesliceMs` |
 | [Commands](../src/Src/Commands.cpp) | command channel, console, heartbeat, package activation | engine console (`BufferCommandText`) |
 | [TestAids](../src/Src/TestAids.cpp) | cheats and test aids via the game's own functions | GiveMark exe+0x4C1E50, AddItem exe+0x6156E0, AddEquipmentUpgrade exe+0x4557A0, component typeinfos |
 | [Game](../src/Src/Game.cpp), [GameInfo](../src/Src/GameInfo.cpp), [CVars](../src/Src/CVars.cpp) | engine accessors, build facts, cvars | game local exe+0x39A5290, GetLocalPlayer exe+0x8A8830, command system exe+0x228BAE0 |

@@ -44,6 +44,8 @@ namespace
     }
     std::atomic<unsigned long long> g_Refreshes{ 0 };
     std::atomic<void*> g_MainView{ nullptr };
+    std::atomic<void*> g_MainViews[4];                 // the last few distinct main view objects (IsMainViewObject)
+    std::atomic<unsigned> g_MainViewNext{ 0 };
     void RememberWritten(const float* org, const float* axis) { memcpy(g_Base.wOrg, org, 12); memcpy(g_Base.wAxis, axis, 36); }
 
     // --- math helpers -------------------------------------------------------
@@ -73,7 +75,13 @@ namespace
         int h = *(int*)((uint8_t*)view + CameraHook::kView_RenderH);
         // Main view heuristic: the largest render target (UI/portal/shadow views are smaller).
         bool main = w >= 1024 && h >= 576;
-        if (main) g_MainView.store(view);
+        if (main)
+        {
+            g_MainView.store(view);
+            bool known = false;
+            for (auto& v : g_MainViews) if (v.load(std::memory_order_relaxed) == view) { known = true; break; }
+            if (!known) g_MainViews[g_MainViewNext.fetch_add(1) % 4].store(view);
+        }
 
         // Experiments: 3 = halve the FOV, 4 = forceIdentityViewMatrix. If these don't alter the
         // image either, this object does not feed the scene pass.
@@ -458,6 +466,12 @@ void CameraHook::Uninstall()
 }
 
 void* CameraHook::MainView() { return g_MainView.load(); }
+bool CameraHook::IsMainViewObject(const void* v)
+{
+    if (!v) return false;
+    for (auto& m : g_MainViews) if (m.load(std::memory_order_relaxed) == v) return true;
+    return false;
+}
 void CameraHook::SetMode(int m) { g_Mode = m; }
 int  CameraHook::Mode() { return g_Mode; }
 void CameraHook::Recenter() { g_RecenterReq = true; }

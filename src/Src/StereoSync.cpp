@@ -5,6 +5,8 @@
 #include "CVars.h"
 #include "KbmInject.h"
 #include "ScreenMode.h"
+#include "ViewMatrixHook.h"
+#include "CameraHook.h"
 #include <detours/detours.h>
 
 namespace
@@ -118,6 +120,111 @@ namespace
             LOGI("StereoSync: the game's frame cap is back");
         }
     }
+
+    // ---- the light probes' update budget ----
+    // The indirect lighting updates at most r_ILProbeUpdate_MaxUpdatesPerFrame probes (8) on every RENDERED frame
+    // (the pass ARK_RENDERPASS_INDIRECT_LIGHTING_UPDATE_PROBES; the cap is read at exe+0x2B32A1). Synchronised stereo
+    // renders two frames per tick, the second of the same world: half the budget a frame keeps the probes' rate per
+    // second what it is in flat play, and the right eye's frame does not do the left's work again.
+    bool g_ProbeForced = false; int g_ProbeSaved = 0;   // main thread (OnPresent)
+    void ApplyProbeBudget()
+    {
+        const bool want = g_SyncOn.load();
+        const char* kCvar = "r_ILProbeUpdate_MaxUpdatesPerFrame";
+        if (want && !g_ProbeForced)
+        {
+            if (!CVars::Address(kCvar)) return;
+            g_ProbeSaved = CVars::GetInt(kCvar);
+            g_ProbeForced = true;
+            LOGI("StereoSync: light probe updates {} -> {} a frame while synchronised stereo runs (two frames per tick)", g_ProbeSaved, std::max(1, g_ProbeSaved / 2));
+        }
+        if (want && g_ProbeForced)
+        {
+            const int v = std::max(1, g_ProbeSaved / 2);
+            if (CVars::GetInt(kCvar) != v) CVars::SetInt(kCvar, v);
+        }
+        else if (!want && g_ProbeForced)
+        {
+            if (CVars::GetInt(kCvar) == std::max(1, g_ProbeSaved / 2)) CVars::SetInt(kCvar, g_ProbeSaved);
+            g_ProbeForced = false;
+        }
+    }
+
+    // ---- the right eye's repeated work (experimental: [Advanced] Stereo*Reuse) ----
+    // The right eye's frame draws the world of the SAME tick again. The engine's renderer is a list of named passes run
+    // as tasks (ENGINE.md, render passes); some of them do not depend on the view and so do, for the right eye, exactly
+    // what the left eye's frame just did: the shadow maps, the ocean's simulation, the reflection probes' relighting, the
+    // decals on NPCs, the texture streamer's uploads. Each can be skipped for a task of the right eye's view (task+0x70
+    // = the view object, one of the main view's; its m_viewMatrix at +0x7450 names the view) the way the engine skips a
+    // disabled task (the executor, exe+0x2C5D6C, for task+0xF4 & 0x100) -- and the way the ocean passes skip themselves
+    // when there is no ocean: the task's context marked empty (+0x12AD4), nothing recorded. Each one only if the ini
+    // asks for it; experimental: whether what the left frame left behind is still intact when the right eye's frame
+    // reads it has not been seen in a headset yet. Hooks only for what is asked.
+    enum Reuse { rShadows, rOcean, rReflections, rDecals, rStreaming, rGroups };
+    const char* kReuseKey[rGroups] = { "StereoShadowReuse", "StereoOceanReuse", "StereoReflectionReuse", "StereoDecalReuse", "StereoStreamOncePerPair" };
+    std::atomic<bool> g_ReuseOn[rGroups];
+    struct ReusePass
+    {
+        const char* name; uint32_t rva; int group; bool twoArgs;
+        void* real = nullptr; std::atomic<unsigned long long> run{ 0 }, skipped{ 0 };
+    };
+    ReusePass g_Pass[] = {
+        { "SHADOWS_WORLD + SHADOWS_DYNAMIC", 0x32D4B0, rShadows, true },     // (task, dynamic): both passes' thunks jump here
+        { "UPDATE_OCEAN_FFT", 0x3053B0, rOcean, false },
+        { "UPDATE_OCEAN", 0x305370, rOcean, false },
+        { "INDIRECT_LIGHTING_UPDATE_IBL", 0x3102A0, rReflections, false },
+        { "UPDATE_NPC_DECALS", 0x340F10, rDecals, false },
+        { "TEXTURE_STREAMER", 0x34FD00, rStreaming, false },
+    };
+    constexpr int kPasses = (int)(sizeof g_Pass / sizeof g_Pass[0]);
+    using Task1Fn = bool(*)(void* task);
+    using Task2Fn = bool(*)(void* task, bool arg);
+    //! The view a render task belongs to is the RIGHT eye of a synchronised pair.
+    bool RightEyeTask(void* task)
+    {
+        const uint8_t* view = *(const uint8_t* const*)((const uint8_t*)task + 0x70);
+        if (!CameraHook::IsMainViewObject(view)) return false;   // another view (a reflection, a camera screen), or not one
+        float m[16]; memcpy(m, view + 0x7450, 64);
+        const unsigned long long s = ViewMatrixHook::SerialOfViewMatrix(m);
+        if (!s) return false;
+        const ViewMatrixHook::XrPose p = ViewMatrixHook::RenderPoseXr(s);
+        return p.valid && p.eye == 1 && p.pair && p.pair != s;
+    }
+    //! Skip this task? Then it is marked as the engine marks a task it skips.
+    bool SkipTask(ReusePass& r, void* task)
+    {
+        if (!task || !g_ReuseOn[r.group].load(std::memory_order_relaxed) || !g_SyncOn.load(std::memory_order_relaxed) || !RightEyeTask(task))
+        { r.run++; return false; }
+        if (uint8_t* ctx = *(uint8_t**)((uint8_t*)task + 0x108)) ctx[0x12AD4] = 1;
+        r.skipped++;
+        return true;
+    }
+    template <int I> bool HkTask1(void* task)
+    {
+        ReusePass& r = g_Pass[I];
+        if (SkipTask(r, task)) return false;
+        return ((Task1Fn)r.real)(task);
+    }
+    template <int I> bool HkTask2(void* task, bool arg)
+    {
+        ReusePass& r = g_Pass[I];
+        if (SkipTask(r, task)) return false;
+        return ((Task2Fn)r.real)(task, arg);
+    }
+    void* HookOf(int i)
+    {
+        switch (i)
+        {
+        case 0: return (void*)&HkTask2<0>;
+        case 1: return (void*)&HkTask1<1>;
+        case 2: return (void*)&HkTask1<2>;
+        case 3: return (void*)&HkTask1<3>;
+        case 4: return (void*)&HkTask1<4>;
+        case 5: return (void*)&HkTask1<5>;
+        }
+        return nullptr;
+    }
+    static_assert(kPasses == 6, "HookOf lists every pass");
 
     struct Rec { double t; int held; long long c18[3]; float c20[3]; int c28[3]; float org[3]; int stop; uint32_t in[16]; };
     std::mutex g_LogM;
@@ -287,12 +394,24 @@ void StereoSync::Install()
     const LONG e = DetourTransactionCommit();
     g_PollsHooked = e == NO_ERROR;
     LOGI("StereoSync: RunFrame + keyboard/mouse read hooks {}", e == NO_ERROR ? "installed" : "FAILED");
+    for (int i = 0; i < kPasses; i++)
+    {   // only what the ini asks for (experimental): a pass not asked for is not touched at all
+        ReusePass& r = g_Pass[i];
+        if (!g_ReuseOn[r.group].load()) continue;
+        r.real = (void*)(GameInfo::Base() + r.rva);
+        DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)r.real, HookOf(i));
+        const LONG s = DetourTransactionCommit();
+        if (s != NO_ERROR) { r.real = nullptr; g_ReuseOn[r.group] = false; }
+        LOGI("StereoSync: {} (experimental): the right eye's frame skips ARK_RENDERPASS_{} (exe+0x{:X}): hook {}", kReuseKey[r.group], r.name, r.rva, s == NO_ERROR ? "installed" : "FAILED");
+    }
 }
 
 void StereoSync::OnPresent()
 {
     UiStackTick();
     ApplyFrameCap();
+    ApplyProbeBudget();
     {   // the gate for the next frames (see PairHold)
         const unsigned long long np = ++g_Presents;
         LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f);
@@ -340,6 +459,11 @@ bool StereoSync::Command(const std::string& what, std::istringstream& ss)
 }
 
 bool StereoSync::LastFrameHeld() { return g_LastHeld.load(); }
+void StereoSync::SetReuse(const ReuseFlags& f)
+{
+    g_ReuseOn[rShadows] = f.shadows; g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = f.reflections;
+    g_ReuseOn[rDecals] = f.decals; g_ReuseOn[rStreaming] = f.streaming;
+}
 
 std::string StereoSync::Status()
 {
@@ -350,7 +474,8 @@ std::string StereoSync::Status()
     return fmt::format("stereosync {} | ", ui) +
            fmt::format("stereosync on {} lefts {} rights {} held {} | gate {} (open {}{}) | not held:{} | input reads {} waited {} | frames {} simulated {}{}",
                        g_SyncOn.load() ? 1 : 0, g_Lefts.load(), g_Rights.load(), g_SyncHeld.load(), kGateNames[g_GateWhy.load()], g_GateShut[0].load(), gate, exp,
-                       g_Polls.load(), g_PollsHeld.load(), g_Calls.load(), g_Ticks.load(), g_Dbg.load() ? fmt::format(" | syncdbg {}", g_Dbg.load()) : std::string());
+                       g_Polls.load(), g_PollsHeld.load(), g_Calls.load(), g_Ticks.load(), g_Dbg.load() ? fmt::format(" | syncdbg {}", g_Dbg.load()) : std::string()) +
+           [] { std::string s; for (const ReusePass& r : g_Pass) if (r.real) s += fmt::format(" | {} run {} skipped (right eye) {}", r.name, r.run.load(), r.skipped.load()); return s; }();
 }
 unsigned long long StereoSync::Tick() { return g_Ticks.load(); }
 unsigned long long StereoSync::Frames() { return g_Calls.load(); }

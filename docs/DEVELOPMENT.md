@@ -137,7 +137,9 @@ Settings are not a separate code path: each one turns into the same `vr` command
 - `Settings::PackageCommands()` run when the VR package switches itself on (below): sword/throw/grab gestures,
   reticle, wrist HUD, `Stereo3D`, motion blur (`exec r_skipCameraMotionBlur 1`), cheats (`vr autoall`, `vr mana`,
   `vr ammo`, `vr infitems`, `vr hp`).
-- `RenderScale`, `ControllerPitchOffset`, `Haptics`, `LogControllerInput` and `WriteStatusFile` are read directly.
+- `RenderScale`, `ControllerPitchOffset`, `Haptics`, `LogControllerInput`, `WriteStatusFile`, `VrGraphicsTweaks`
+  (VrTweaks) and the experimental `Stereo*Reuse` / `StereoStreamOncePerPair` (StereoSync, read before its hooks are
+  installed) are read directly.
 
 `WriteStatusFile` defaults to **1 in code** (a dev setup has no ini, so the heartbeat is on) and is **0 in the shipped
 ini**. The shipped ini may also carry non-default values chosen for testers (e.g. `Reticle`, `[Cheats]`): read it before

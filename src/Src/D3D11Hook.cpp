@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "D3D11Hook.h"
 #include "RenderRes.h"
+#include "StereoSync.h"
 #include <detours/detours.h>
 
 namespace
@@ -25,6 +26,15 @@ namespace
         {
             // Guard against re-entrancy (nested presents from our own work).
             if (!g_InPresent.exchange(true)) { g_Cb.onPresent(sc); g_InPresent = false; }
+        }
+        // The game's V-Sync (r_swapInterval) is its Present's sync interval (exe+0x36B3FA), and with it on the game
+        // skips its own frame cap (exe+0x35922C): the monitor's refresh is then the cap -- a 60 Hz monitor would hold
+        // synchronised stereo to 30 pairs a second, whatever the headset. The headset paces the game in VR: no vblank wait.
+        if (sync && StereoSync::Active())
+        {
+            static bool logged = false;
+            if (!logged) { logged = true; LOGI("D3D11Hook: the game's V-Sync (sync interval {}) is ignored while synchronised stereo runs: the headset paces the frames", sync); }
+            sync = 0;
         }
         return g_RealPresent(sc, sync, flags);
     }

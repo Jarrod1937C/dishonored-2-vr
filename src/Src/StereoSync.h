@@ -35,4 +35,9 @@ namespace StereoSync
     //! a user command that only a simulated frame consumes): mouse motion is sent only before a frame that runs.
     bool NextFrameRuns();
     bool LastFrameHeld();       //!< the latest RunFrame call was held (on RunFrame's thread: the frame being built)
+    //! [Advanced] Stereo*Reuse (experimental, set before Install): passes the right eye's frame skips, using what the left
+    //! eye's frame of the same tick just did: the shadow maps, the ocean's simulation, the reflection probes' relighting,
+    //! the decals on NPCs, and the texture streamer's uploads (once per pair instead of once per frame).
+    struct ReuseFlags { bool shadows = false, ocean = false, reflections = false, decals = false, streaming = false; };
+    void SetReuse(const ReuseFlags& f);
 }

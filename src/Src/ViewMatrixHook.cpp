@@ -137,6 +137,9 @@ namespace
         for (int i = 0; i < 3; i++) { a[i] = f[i]; a[3 + i] = cr * l[i] + sr * u[i]; a[6 + i] = -sr * l[i] + cr * u[i]; }
     }
     unsigned long long g_ViewSerial = 0;
+    //! g_ViewSerial for readers on the hot path (every draw asks for the newest view): published after the rings hold
+    //! the view, so a serial read here always has its records.
+    std::atomic<unsigned long long> g_ViewSerialPub{ 0 };
     ViewMatrixHook::XrPose g_PoseRing[16];                     // under g_ViewM, indexed by serial
     struct ViewGeo { unsigned long long serial = 0; float mat[16] = {}, org[3] = {}, axis[9] = {}, headAxis[9] = {}; };
     ViewGeo g_GeoRing[16];                                     // under g_ViewM, indexed by serial: what each view WAS
@@ -235,6 +238,7 @@ namespace
         vs.serial = ps ? g_ViewSerial : 0; if (ps) vs.set = *ps;
         ViewSnap& sn = g_SnapRing[g_ViewSerial % 16];
         if (snap && snap->valid) { sn = *snap; sn.serial = g_ViewSerial; } else { sn.serial = 0; sn.valid = false; }
+        g_ViewSerialPub.store(g_ViewSerial, std::memory_order_release);
         PipeTrace::Event(PipeTrace::View, g_ViewSerial, (uint64_t)(int64_t)p.eye);
         return g_ViewSerial;
     }
@@ -827,7 +831,19 @@ bool ViewMatrixHook::ViewEntities(unsigned long long serial, BodyHide::Anchor* a
     memcpy(anch, s.anch, sizeof s.anch); memcpy(cam, s.cam, 12); memcpy(camAxis, s.camAxis, 36); if (camValid) *camValid = s.camValid;
     return true;
 }
+static unsigned long long SerialOfViewMatrixLocked(const float m[16]);
 unsigned long long ViewMatrixHook::SerialOfViewMatrix(const float m[16])
+{
+    // Asked for draw after draw with the same matrix (one PerViewCB serves a whole pass): the last answer is kept per
+    // thread until a new view is published -- no lock and no scan for the rest of the pass.
+    thread_local float t_M[16] = {}; thread_local unsigned long long t_Gen = 0, t_Serial = 0;
+    const unsigned long long gen = g_ViewSerialPub.load(std::memory_order_acquire);
+    if (gen && gen == t_Gen && !memcmp(m, t_M, 64)) return t_Serial;
+    const unsigned long long s = SerialOfViewMatrixLocked(m);
+    memcpy(t_M, m, 64); t_Gen = gen; t_Serial = s;
+    return s;
+}
+static unsigned long long SerialOfViewMatrixLocked(const float m[16])
 {
     std::lock_guard lk(g_ViewM);
     unsigned long long best = 0;
@@ -848,7 +864,7 @@ int ViewMatrixHook::NextViewEye()
     if (StereoSync::LastFrameHeld() && g_Pair.valid) return 1;
     return StereoSync::PairWanted() ? 0 : -1;
 }
-unsigned long long ViewMatrixHook::LatestSerial() { std::lock_guard lk(g_ViewM); return g_ViewSerial; }
+unsigned long long ViewMatrixHook::LatestSerial() { return g_ViewSerialPub.load(std::memory_order_acquire); }
 bool ViewMatrixHook::RenderView(float mat[16], float org[3], float axis[9], unsigned long long* serial, float* headAxis)
 {
     std::lock_guard lk(g_ViewM);

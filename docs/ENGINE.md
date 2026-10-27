@@ -152,6 +152,11 @@ time stamp together, as [GameInfo.h](../src/Src/GameInfo.h) does; on any mismatc
 
 - **Finding a cvar**: locate its NUL-terminated name in the image, then the 8-aligned qword pointing at it; that qword
   is `T+0x30`. ~33 ms for 14 names.
+- **Registration**: each cvar's static constructor calls exe+0x1008F0 (or exe+0x100840 with a range) with the name
+  in `rdx`, the default in `r8`, the type flags in `r9d` (1 bool, 2 int, 4 float; **0x10000 = saved in the config**:
+  `r_swapInterval`, `r_skipDOF`, `r_skipLensFlares`, `r_skipCameraMotionBlur`, the quality presets) and the
+  description on the stack. A cvar whose readers use `cmp [rip+obj+0x28]` reads its live value every frame; one with
+  no such reader is read through another path (use the console for it).
 - **Writing**: writing `+0x28/+0x2C` directly bypasses `OnChange` and the modified flag and leaves the string stale.
   Fine for plain tunables read every frame (`rs_enable`, `g_stopTime`, `ark_ui_show_master_hud`); useless for cvars
   whose effect lives in a callback. The console (`exec <cvar> <value>`, `toggle <cvar>`) goes through the engine.
@@ -369,11 +374,53 @@ the copy.
   previous frame: **30 fps x com_timeScaler** (120 = 4). Skipped when `com_disableFrameSpinning` (exe+0x25B1E80) is set,
   when `*(exe+0x3937288)` is non-zero, or when the renderer's vfunc +0x118 says no. Synchronised stereo switches the
   spin off while it runs (StereoSync, `com_disableFrameSpinning`): under the cap it could not pass 60 pairs a second.
+- **V-Sync is the Present's sync interval**: exe+0x36B3A0 presents with `r_swapInterval` (int at exe+0x3937288) when it
+  is above 0 (exe+0x36B3FA), and the frame-cap spin is skipped whenever it is non-zero (exe+0x35922C): with V-Sync on
+  the cap is the monitor's vblank. The mod presents with interval 0 while synchronised stereo runs (D3D11Hook).
 - **Physics runs in fixed 1/120 s substeps** (the game clocks, exe+0x59990): clock 2 (gameLocal+0x2E7428+0xA0) advances
   `n * (1/120) / scale` per game frame, `n = round(lag * 120 * scales)` against the real-time clock (catching up),
   at most 12, with `g_physicsStepTolerance` (0.2) keeping n from flipping and `g_limitPhysicStepVariation` (0) limiting
   it to one step of change per frame. Above 120 game frames a second some frames get no physics step (the community
   FPS patches' "physics issues"); at 90 ticks/s the steps go 1, 1, 2. Clock 0's step is the real time, clamped to 0.5 s.
+
+### 4.5b Render passes (the frame's task list)
+The renderer runs each view as a list of named passes (Forward+: depth prepass, tiled light culling, forward
+lighting), registered in exe+0x34FF80..0x351160 through exe+0x2C2960(pass, name, task count, 2, ., function). A pass
+is an array of 0x120-byte tasks: function at +0xD8, flags at +0xF4, the task's view object at +0x70 (its
+`m_viewMatrix` at +0x7450), its D3D context wrapper at +0x108. The executor (exe+0x2C5D50, and a twin at
+exe+0x2C5F90) skips a task whose flags have **0x100** (set by the frame's setup, e.g. exe+0x3536CA, exe+0x354C05): it
+marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function. Task counts in brackets:
+
+| pass (`ARK_RENDERPASS_`) | function | pass (`ARK_RENDERPASS_`) | function |
+|---|---|---|---|
+| CLEAR | exe+0x3110E0 | SSAO | exe+0x305BE0 |
+| UPDATE_NPC_DECALS | exe+0x340F10 | SHADOWS_WORLD [16] | thunk exe+0x32F390 -> exe+0x32D4B0(task, 0) |
+| CULL_OCEAN | exe+0x31A320 | SHADOWS_DYNAMIC [16] | thunk exe+0x32F380 -> exe+0x32D4B0(task, 1) |
+| GATHER_UMBRA | exe+0x31C710 | INDIRECT_LIGHTING_ACCUMULATE_FINAL_SH | exe+0x310190 |
+| GATHER_LIGHTS | exe+0x31BCC0 | INDIRECT_LIGHTING_UPDATE_IBL | exe+0x3102A0 |
+| GATHER_DYN_MODELS [6] | exe+0x31AD30 | INDIRECT_LIGHTING_UPDATE_PROBES | exe+0x310260 |
+| SORT | exe+0x33D320 | SCREENSHADOWS | exe+0x32C7F0 |
+| SHADOWS_PREPARE | exe+0x333550 | TLFLIGHTCULL | exe+0x2F7260 |
+| COLLECT_DYNAMIC_CASTERS | exe+0x330020 | FORWARD_WORLD / _DYNAMIC | exe+0x3133D0 / exe+0x3133B0 |
+| GATHER_CASTERS | exe+0x330C10 | FOG | exe+0x309430 |
+| INDIRECT_LIGHTING_UPDATE_DYNAMIC_MODELS | exe+0x310230 | UPDATE_OCEAN_FFT / UPDATE_OCEAN | exe+0x3053B0 / exe+0x305370 |
+| INDIRECT_LIGHTING_UPDATE_WORLD_STATE_AND_OCCLUDERS | exe+0x310200 | RENDER_WATER | exe+0x3045A0 |
+| GPUCULLING | exe+0x2FC030 | DOF_AUTOFOCUS / DOF | exe+0x3150D0 / exe+0x315450 |
+| DEPTHPASS [3] | exe+0x2FD8D0 | POSTPROC / POST_TONEMAP | exe+0x327270 / exe+0x323E70 |
+| DEPTHMINMAX | exe+0x2FC130 | TEXTURE_STREAMER | exe+0x34FD00 |
+| OCCLUSION_QUERIES | exe+0x31D7E0 | IGGY_FULLSCREEN | exe+0x31A8E0 |
+
+- The shadow task exe+0x32D4B0: task+0xF8 below `r_shadowParallelSliceCnt` is a sun cascade (exe+0x32EE50), anything
+  else a spot / omni light of the atlas (exe+0x32D6E0).
+- Cascade time slicing (`r_shadowParallelPartialSliceUpdate`, exe+0x32EF08): slice 0 every frame, slices 1..n-2 on
+  odd frames, slice n-1 on even ones (frame counter exe+0x32FC64C). A slice not updated is restored from a per-slice
+  cache (a copy, exe+0x2BB270, from the caches at exe+0x3308DE8) -- not re-rendered. In synchronised stereo the frames
+  alternate eyes, so each eye's distant cascades were fitted from the other eye's view.
+- The light probes' update budget `r_ILProbeUpdate_MaxUpdatesPerFrame` is read per rendered frame at exe+0x2B32A1.
+- The ocean passes (exe+0x3053B0, exe+0x305370) skip themselves when there is no ocean exactly as the executor skips a
+  disabled task (context +0x12AD4 = 1, return 0); UPDATE_OCEAN's work reads the view at task+0x70 (+0x3A34).
+  INDIRECT_LIGHTING_UPDATE_IBL reads the world through the view (task+0x70, then +0x39C0 = `m_parentWorld`).
+  TEXTURE_STREAMER (exe+0x34FD00) is a thunk to the streamer object at exe+0x32F0210 (exe+0x30D1E0).
 
 ### 4.6 Render resolution, the window and the cfg writer
 - The engine renders at its window's **client size** (at most the desktop). What the size follows:

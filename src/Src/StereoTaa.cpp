@@ -195,6 +195,9 @@ namespace
     thread_local ID3D11Resource* t_MapRes = nullptr; thread_local void* t_MapPtr = nullptr;
     struct CbShadow { void* buf = nullptr; void* ctx = nullptr; float m[16] = {}, vp[16] = {}, pvp[16] = {}; unsigned long long stamp = 0; };
     std::mutex g_SM; CbShadow g_Sh[32]; unsigned long long g_ShStamp = 0;
+    // Bumped (under the lock that guards them) whenever the PerViewCB shadows / the view ring change, so the per-draw
+    // lookups below can keep their last answer per thread: one PerViewCB serves a whole pass of draws.
+    std::atomic<unsigned long long> g_ShGen{ 1 }, g_RingGen{ 1 };
     bool IsViewCb(void* r)
     {
         if (!r) return false;
@@ -228,6 +231,7 @@ namespace
         const int off = g_ViewMatOff.load();
         if (off < 0 || !data) return;
         std::lock_guard lk(g_SM);
+        g_ShGen.fetch_add(1, std::memory_order_acq_rel);
         int slot = 0;
         for (int i = 0; i < 32; i++)
         {
@@ -542,6 +546,7 @@ void StereoTaa::OnMainView(void* view, int eye, const float vm[16])
     uint8_t* v = (uint8_t*)view;
     const unsigned frame = *(const uint32_t*)(v + kFrameNo);
     std::lock_guard lk(g_VM);
+    g_RingGen.fetch_add(1, std::memory_order_acq_rel);
     ViewRec& rec = g_Ring[++g_ViewSeq % 16];
     rec.seq = g_ViewSeq; rec.frame = frame; rec.eye = eye; memcpy(rec.m, vm, 64); memcpy(rec.jitter, v + kCurJitter, 8); rec.prevMine = false;
     if (g_Mode.load() != 1 || eye < 0 || !VRRuntime::Stereo())
@@ -608,7 +613,21 @@ void StereoTaa::OnMainView(void* view, int eye, const float vm[16])
     g_LastFrame = frame; g_LastEye = eye; g_HaveLast = true;
 }
 
+static bool ViewMatrixOfLocked(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, float m[16]);
 bool StereoTaa::ViewMatrixOf(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, float m[16])
+{
+    // Asked for every draw (GpuTrace: which view a draw belongs to); the answer only changes when a PerViewCB is
+    // written, so the last one is kept per thread.
+    thread_local void* t_Ctx = nullptr; thread_local void* t_Cb = nullptr; thread_local unsigned long long t_Gen = 0;
+    thread_local float t_M[16]; thread_local bool t_Ok = false;
+    const unsigned long long gen = g_ShGen.load(std::memory_order_acquire);
+    if (t_Gen == gen && t_Ctx == c && t_Cb == viewCb) { if (t_Ok) memcpy(m, t_M, 64); return t_Ok; }
+    const bool ok = ViewMatrixOfLocked(c, viewCb, t_M);
+    t_Ctx = c; t_Cb = viewCb; t_Gen = gen; t_Ok = ok;
+    if (ok) memcpy(m, t_M, 64);
+    return ok;
+}
+static bool ViewMatrixOfLocked(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, float m[16])
 {
     if (!IsViewCb(viewCb)) return false;
     std::lock_guard lk(g_SM);
@@ -757,7 +776,22 @@ namespace
     //! The view (ring entry) a draw's PerViewCB holds: the NEWEST matching entry (with a still head the ring holds
     //! several equal matrices of different frames; the first found was any of them). vr aaprevrule 0 = the first.
     struct DrawView { float m[16], vp[16], pvp[16], C[16]; unsigned frame = 0; int eye = -1; bool hasC = false, tr = false; };
+    bool FindDrawViewLocked(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, DrawView& d);
+    //! Asked for every draw with previous rows (FixPrevRows): kept per thread until a PerViewCB is written or a view is
+    //! added to the ring, the only things the answer depends on (with the rule).
     bool FindDrawView(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, DrawView& d)
+    {
+        thread_local void* t_Ctx = nullptr; thread_local void* t_Cb = nullptr; thread_local unsigned long long t_Sh = 0, t_Ring = 0;
+        thread_local int t_Rule = -1; thread_local bool t_Ok = false; thread_local DrawView t_D;
+        const unsigned long long sh = g_ShGen.load(std::memory_order_acquire), ring = g_RingGen.load(std::memory_order_acquire);
+        const int rule = g_PrevRule.load();
+        if (t_Sh == sh && t_Ring == ring && t_Rule == rule && t_Ctx == c && t_Cb == viewCb) { if (t_Ok) d = t_D; return t_Ok; }
+        const bool ok = FindDrawViewLocked(c, viewCb, t_D);
+        t_Ctx = c; t_Cb = viewCb; t_Sh = sh; t_Ring = ring; t_Rule = rule; t_Ok = ok;
+        if (ok) d = t_D;
+        return ok;
+    }
+    bool FindDrawViewLocked(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, DrawView& d)
     {
         if (!IsViewCb(viewCb)) return false;
         {
@@ -921,7 +955,10 @@ bool StereoTaa::FixPrevRows(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, const 
         float C[16];   // none: C, as before (the cached previous of the other eye's last frame)
         if (PrevCorrection(c, viewCb, C, prev, cur)) { float in[16]; memcpy(in, prev, 64); Mul4(C, in, prev); changed = true; }
     }
-    if (cur) NoteObjMotion(c, d, cur, prev);
+    // objmotion (heartbeat statistics): one draw in 32 per thread is plenty for a distribution, and spares every other
+    // draw a 4x4 inverse and two products
+    thread_local unsigned t_OmTick = 0;
+    if (cur && (++t_OmTick & 31) == 0) NoteObjMotion(c, d, cur, prev);
     return changed;
 }
 

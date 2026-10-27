@@ -11,6 +11,7 @@
 #include "WristHud.h"
 #include "StereoTaa.h"
 #include "StereoSync.h"
+#include "VrTweaks.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
 #include "Commands.h"
@@ -63,6 +64,7 @@ static void OnPresent(IDXGISwapChain* sc)
     Commands::OnPresent();
     BodyView::OnPresent();        // vr fov auto: applied as soon as the headset gives its fov
     RenderRes::OnPresent(sc);
+    VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
     Overlay::OnPresent(sc);       // draws onto the backbuffer first...
     VRRuntime::OnPresent(sc);     // ...so the flat VR frame includes the overlay (debug aid)
     KbmInject::Tick();            // controllers -> keyboard/mouse (uses this frame's synced input)
@@ -110,6 +112,8 @@ static DWORD WINAPI InitThread(LPVOID)
     }
     Settings::Load();
     LOGI("settings: {}", Settings::Summary());
+    VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
+    StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects

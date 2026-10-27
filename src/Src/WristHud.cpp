@@ -236,7 +236,10 @@ bool WristHud::MirrorBegin(ID3D11DeviceContext* ctx, int kind, Mirror& m)
     if (!ours || !g_Capture.load() || !ctx || !(g_Wanted.load() || g_ShotWant.load() || lift)) return false;
     m.lift = lift;
     LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
-    g_Checked++;
+    // every draw of every recording thread passes here while the watch is on: the statistics are counted per thread
+    // and added to the shared totals every 64 checks (two shared cache lines a draw otherwise)
+    thread_local unsigned long long t_Checked = 0, t_Ticks = 0;
+    if (++t_Checked == 64) { g_Checked.fetch_add(64, std::memory_order_relaxed); g_CheckTicks.fetch_add(t_Ticks, std::memory_order_relaxed); t_Checked = 0; t_Ticks = 0; }
     // Is the game drawing into the backbuffer? One view, its resource, compared.
     ID3D11RenderTargetView* rtv0 = nullptr;
     ctx->OMGetRenderTargets(1, &rtv0, nullptr);
@@ -250,7 +253,7 @@ bool WristHud::MirrorBegin(ID3D11DeviceContext* ctx, int kind, Mirror& m)
         if (res) res->Release();
         rtv0->Release();
     }
-    auto done = [&](bool r) { LARGE_INTEGER t1; QueryPerformanceCounter(&t1); g_CheckTicks += (unsigned long long)(t1.QuadPart - t0.QuadPart); return r; };
+    auto done = [&](bool r) { LARGE_INTEGER t1; QueryPerformanceCounter(&t1); t_Ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart); return r; };
     if (!bb) return done(false);
     // (it uses BOTH in one frame: measured, the interface alternates between sRGB and UNORM views of the typeless
     // backbuffer, draw by draw -- so the view is matched per draw)

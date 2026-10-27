@@ -335,13 +335,13 @@ namespace
     //! node through a dangling pointer.
     const InstLayout* LayoutFor(void* vs)
     {
-        constexpr int kFast = 8;
+        constexpr int kFast = 64;                 // hundreds of vertex shaders a frame: 8 slots missed (lock + map) often
         static thread_local void* fastVs[kFast] = {};
         static thread_local InstLayout fastL[kFast];
         static thread_local unsigned long long fastGen = 0;
         const unsigned long long gen = g_LayoutGen.load(std::memory_order_relaxed);
         if (fastGen != gen) { for (int i = 0; i < kFast; i++) fastVs[i] = nullptr; fastGen = gen; }
-        const int slot = (int)((((uintptr_t)vs) >> 4) & (kFast - 1));
+        const int slot = (int)((((uintptr_t)vs) >> 6) & (kFast - 1));
         if (fastVs[slot] == vs) return &fastL[slot];
         {
             std::lock_guard lk(g_LayoutM);
@@ -581,6 +581,21 @@ namespace
         BodyHide::Anchor anch[BodyHide::aCount];
     };
     XfState g_XfRing[kXfRing];                                 // under g_XfM, by serial % kXfRing
+    // Lock-free mirrors for the per-draw fast path (EnsureTransform, BeginSixDof): g_XfSerial / g_XfValid, each ring
+    // entry's serial * 2 + valid, and the game camera's distance from the newest render view (m, < 0 = unknown; see
+    // FarFromPlayer). Written under g_XfM once a build is complete (XfPublish), never in the middle of one, so a draw
+    // that sees a serial here sees that transform finished.
+    std::atomic<unsigned long long> g_XfSerialPub{ 0 }; std::atomic<bool> g_XfValidPub{ false };
+    std::atomic<unsigned long long> g_XfRingPub[kXfRing];
+    std::atomic<float> g_CamEyePub{ -1.f };
+    //! Under g_XfM: makes the state of g_XfSerial and of ring entry `serial` visible to the lock-free readers.
+    void XfPublish(unsigned long long serial)
+    {
+        const XfState& r = g_XfRing[serial % kXfRing];
+        g_XfRingPub[serial % kXfRing].store(r.serial * 2 + (r.valid ? 1 : 0), std::memory_order_release);
+        g_XfValidPub.store(g_XfValid, std::memory_order_relaxed);
+        g_XfSerialPub.store(g_XfSerial, std::memory_order_release);
+    }
     thread_local unsigned long long t_DrawSerial = 0;          // the moved draw's own view (BeginSixDof); 0 = not known
     thread_local unsigned long long t_XfUsed = 0;              // the view whose transform it was placed with
     // Anchor. The reference the weapon is moved FROM is the equipment entity's own world transform, read fresh
@@ -1131,6 +1146,7 @@ namespace
         }
 
         std::lock_guard lk(g_XfM);
+        struct Publish { unsigned long long s; ~Publish() { XfPublish(s); } } publish{ serial };   // on every way out, still under the lock
         if (latest)
         {
             if (serial <= g_XfSerial) return g_XfValid;              // another thread got here first
@@ -1143,6 +1159,10 @@ namespace
             // rendered view would drop the weapon out of range as soon as the player stands up or leans.
             g_GameCamValid = st.camValid;
             if (g_GameCamValid) { memcpy(g_GameCam, st.cam, 12); memcpy(g_GameCamAxis, st.camAxis, 36); }
+            {   // how far the rendered eye is from the game camera (the HMD's offset): FarFromPlayer's bound
+                const float d[3] = { st.cam[0] - vorg[0], st.cam[1] - vorg[1], st.cam[2] - vorg[2] };
+                g_CamEyePub.store(st.camValid ? sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) : -1.f, std::memory_order_relaxed);
+            }
             memcpy(g_Anchor, st.anch, sizeof g_Anchor);          // where the engine says the weapon and the arms are, this view
             g_ClaimSeq.fetch_add(1); memcpy(g_ClaimAnch, g_Anchor, sizeof g_ClaimAnch); g_ClaimSeq.fetch_add(1); g_ClaimValid = g_SixDof.load() == 1;
             if (g_PartsLeft.load() > 0 && g_GameCamValid && (serial % 4) == 0)
@@ -1272,15 +1292,17 @@ namespace
     //! (`want`, from its PerViewCB; 0 = not known) when that is an older one. True when the draw can be moved.
     bool EnsureTransform(unsigned long long want = 0)
     {
+        // Asked for every draw: once a view's transform is built, answered from the published mirrors without a lock.
         const unsigned long long latest = ViewMatrixHook::LatestSerial();
         if (!latest) { g_XfNoView++; return false; }
-        bool have, ok;
-        { std::lock_guard lk(g_XfM); have = latest <= g_XfSerial; ok = g_XfValid; }
-        if (!have) ok = BuildXf(latest, true);
+        bool ok;
+        if (latest <= g_XfSerialPub.load(std::memory_order_acquire)) ok = g_XfValidPub.load(std::memory_order_relaxed);
+        else ok = BuildXf(latest, true);
         if (!want || want >= latest) return ok;
-        bool built = false, own = false;
-        { std::lock_guard lk(g_XfM); const XfState& r = g_XfRing[want % kXfRing]; if (r.serial == want) { built = true; own = r.valid; } }
-        if (!built && latest - want < kXfRing) own = BuildXf(want, false);
+        const unsigned long long tag = g_XfRingPub[want % kXfRing].load(std::memory_order_acquire);
+        bool own = false;
+        if ((tag >> 1) == want) own = (tag & 1) != 0;
+        else if (latest - want < kXfRing) own = BuildXf(want, false);
         return own || ok;
     }
 
@@ -1560,8 +1582,9 @@ namespace
                             // is the pose the user validated, so if replaying the hold works, the two print the
                             // same rows. Measured here rather than judged from a screenshot: the hand is a fanned
                             // black glove and its apparent "direction" is not readable when the fingers splay.
-                            bool relLog = (g_PresentFrame % 180) == 0 && side == 0;
-                            if (!relLog && g_RelLogLeft.load() > 0) { relLog = true; g_RelLogLeft--; }
+                            // (on request only: `vr gpuhandrel <n>`; it used to log every 180th frame by default)
+                            bool relLog = false;
+                            if (g_RelLogLeft.load() > 0) { relLog = true; g_RelLogLeft--; }
                             const int whits = g_WeaponHits[side].load();
                             float entPalm = -1.f;
                             if (wa.valid) { float d2 = 0; for (int i = 0; i < 3; i++) { const float x = wa.org[i] - Pw.t[i]; d2 += x * x; } entPalm = sqrtf(d2); }
@@ -3410,12 +3433,22 @@ namespace
     struct CtxSer { void* k = nullptr; unsigned long long s = 0; };
     std::mutex g_CtxSerM; CtxSer g_CtxSer[32]; CtxSer g_ListSer[64]; int g_ListNext = 0;
     std::atomic<unsigned long long> g_ExecSerial{ 0 }, g_ExecFrame{ 0 };
+    std::atomic<unsigned long long> g_CtxSerGen{ 1 };   // bumped whenever a context's tag is taken (FinishCommandList)
+    //! Called for every draw: a context already tagged with at least `s` since the last FinishCommandList anywhere is
+    //! left alone without the lock (the thread remembers what it tagged).
     void CtxSerialSet(void* ctx, unsigned long long s)
     {
-        std::lock_guard lk(g_CtxSerM);
-        CtxSer* freeSlot = nullptr;
-        for (auto& e : g_CtxSer) { if (e.k == ctx) { if (s > e.s) e.s = s; return; } if (!e.k && !freeSlot) freeSlot = &e; }
-        if (freeSlot) { freeSlot->k = ctx; freeSlot->s = s; }
+        thread_local void* t_Ctx = nullptr; thread_local unsigned long long t_S = 0, t_Gen = 0;
+        const unsigned long long gen = g_CtxSerGen.load(std::memory_order_acquire);
+        if (t_Ctx == ctx && t_Gen == gen && s <= t_S) return;
+        bool stored = false;
+        {
+            std::lock_guard lk(g_CtxSerM);
+            CtxSer* freeSlot = nullptr;
+            for (auto& e : g_CtxSer) { if (e.k == ctx) { if (s > e.s) e.s = s; stored = true; break; } if (!e.k && !freeSlot) freeSlot = &e; }
+            if (!stored && freeSlot) { freeSlot->k = ctx; freeSlot->s = s; stored = true; }
+        }
+        if (stored) { t_Ctx = ctx; t_S = s; t_Gen = gen; }
     }
     using FinishCL_t = HRESULT(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, BOOL, ID3D11CommandList**);
     using ExecCL_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11CommandList*, BOOL);
@@ -3427,6 +3460,7 @@ namespace
         {
             std::lock_guard lk(g_CtxSerM);
             for (auto& e : g_CtxSer) if (e.k == c) { s = e.s; e.k = nullptr; e.s = 0; break; }
+            g_CtxSerGen.fetch_add(1, std::memory_order_acq_rel);
             if (SUCCEEDED(hr) && pp && *pp && s) { g_ListSer[g_ListNext] = { *pp, s }; g_ListNext = (g_ListNext + 1) % 64; }
         }
         StereoTaa::OnFinishList(c, SUCCEEDED(hr) && pp ? *pp : nullptr);
@@ -3472,25 +3506,39 @@ namespace
         return true;
     }
 
+    //! Certainly not one of the player's own draws: its model origin is farther from the eye it is drawn for than the near
+    //! radius (TransformInstanceCb's test, from the game camera) plus the game camera's distance from the rendered eye (the
+    //! HMD's offset) and a margin for the other eye and a tick of motion. Read from the draw's own rows only -- no lock,
+    //! no shared state but two atomics -- so the world's ~2300 draws a frame never reach the locked part. False whenever
+    //! in doubt (no layout, no camera, a research tool that wants every draw): TransformInstanceCb then decides.
+    bool FarFromPlayer(const InstLayout* L, const float* in, UINT bytes)
+    {
+        if (!L || !L->ok) return false;
+        if (g_DiagLeft.load(std::memory_order_relaxed) > 0 || g_PartsLeft.load(std::memory_order_relaxed) > 0
+            || g_CensusLeft.load(std::memory_order_relaxed) > 0 || g_ProjAny.load(std::memory_order_relaxed)) return false;
+        const size_t floats = bytes / 4;
+        auto within = [&](int off) { return off >= 0 && (size_t)off + 4 <= floats; };
+        if (!(within(L->x) && within(L->y) && within(L->z) && within(L->w))) return false;
+        const float camEye = g_CamEyePub.load(std::memory_order_relaxed);
+        if (camEye < 0.f) return false;
+        float n = g_Near.load(std::memory_order_relaxed);
+        if (n > 0.f && g_BodyFollow.load() && n < 2.5f) n = 2.5f;      // as TransformInstanceCb
+        if (!(n > 0.f)) return false;
+        const Factored f = Factor(in + L->x, in + L->y, in + L->z, in + L->w);
+        if (!f.ok) return false;
+        const float d2 = f.pose.t[0] * f.pose.t[0] + f.pose.t[1] * f.pose.t[1] + f.pose.t[2] * f.pose.t[2];
+        const float reach = n + camEye + 0.5f;
+        return d2 > reach * reach;
+    }
+
     void BeginSixDof(ID3D11DeviceContext* ctx, Swap& sw, bool byIndex, UINT draw, bool allowMove = true)
     {
         if (!g_PoolReady.load()) return;
         t_DrawSerial = 0; t_XfUsed = 0;
-        if (allowMove && SixDofOn())
-        {   // the view this draw belongs to, from the view matrix in its own PerViewCB
-            ID3D11Buffer* vcb = nullptr; ctx->VSGetConstantBuffers(1, 1, &vcb);
-            if (vcb)
-            {
-                StereoTaa::LearnViewCb(vcb);
-                float dm[16];
-                if (StereoTaa::ViewMatrixOf(ctx, vcb, dm)) t_DrawSerial = ViewMatrixHook::SerialOfViewMatrix(dm);
-                vcb->Release();
-            }
-        }
-        const bool xf = allowMove && SixDofOn() && EnsureTransform(t_DrawSerial);
+        bool xf = allowMove && SixDofOn() && EnsureTransform();    // the newest view's transform (lock-free once built)
         const bool fixing = StereoTaa::FixingPrev();
         if (!xf && !fixing) return;
-        if (xf) { unsigned long long sr = 0; { std::lock_guard lk(g_XfM); sr = g_XfSerial; } CtxSerialSet(ctx, sr); }
+        if (xf) CtxSerialSet(ctx, g_XfSerialPub.load(std::memory_order_acquire));
         ID3D11Buffer* cur = nullptr;
         ctx->VSGetConstantBuffers(2, 1, &cur);                  // AddRefs
         if (!cur) { if (xf) g_CbMiss++; return; }
@@ -3504,6 +3552,22 @@ namespace
         float in[kInstMaxFloats];
         memcpy(in, e->f, std::min<size_t>(bd.ByteWidth, sizeof in));
         const bool eyeFixed = fixing && EyePrevFix(ctx, L, in, bd.ByteWidth);
+        // Nearly every draw is the world, far from anything the player holds: rejected here from its own rows, before
+        // the lookup of its view and TransformInstanceCb's locked copy of the transform state (FarFromPlayer).
+        if (xf && !byIndex && FarFromPlayer(L, in, bd.ByteWidth)) { xf = false; thread_local unsigned t_Far = 0; if (++t_Far == 64) { g_NotNear.fetch_add(64, std::memory_order_relaxed); t_Far = 0; } }
+        if (xf)
+        {   // the view this draw belongs to, from the view matrix in its own PerViewCB, and that view's own transform when
+            // it is not the newest one (the left eye of a synchronised pair, recorded after the right view was built)
+            ID3D11Buffer* vcb = nullptr; ctx->VSGetConstantBuffers(1, 1, &vcb);
+            if (vcb)
+            {
+                StereoTaa::LearnViewCb(vcb);
+                float dm[16];
+                if (StereoTaa::ViewMatrixOf(ctx, vcb, dm)) t_DrawSerial = ViewMatrixHook::SerialOfViewMatrix(dm);
+                vcb->Release();
+            }
+            if (t_DrawSerial) xf = EnsureTransform(t_DrawSerial);
+        }
         float out[kInstMaxFloats]; ArmInfo ai;
         const bool transformed = xf && TransformInstanceCb(ctx, L, in, bd.ByteWidth, out, byIndex, draw, &ai);
         if (!transformed) t_DrawProjValid = false;
@@ -3608,8 +3672,11 @@ namespace
 
     void Record(ID3D11DeviceContext* ctx, int kind, Entry e, UINT indexCount)
     {
-        g_Counts[kind][e]++;
-        g_Stats.draws++;
+        {   // every draw of every recording thread passes here: count per thread, publish every 64 (one shared cache line
+            // fought over by all of them, twice a draw, otherwise)
+            thread_local unsigned t_N[2][eCount] = {};
+            if (++t_N[kind][e] == 64) { g_Counts[kind][e].fetch_add(64, std::memory_order_relaxed); g_Stats.draws.fetch_add(64, std::memory_order_relaxed); t_N[kind][e] = 0; }
+        }
         if (g_WantConstants.load() && IsTarget(indexCount)) { CaptureConstants(ctx); g_WantConstants = false; }
         if (g_WantShader.load() && IsTarget(indexCount))
         {
@@ -4942,7 +5009,7 @@ void GpuTrace::SetSixDof(int mode)
 {
     g_SixDof = mode;
     if (mode) g_CalReq = true;
-    { std::lock_guard lk(g_XfM); g_XfSerial = 0; g_XfValid = false; g_XfPrevValid = false; }
+    { std::lock_guard lk(g_XfM); g_XfSerial = 0; g_XfValid = false; g_XfPrevValid = false; g_XfValidPub = false; g_XfSerialPub = 0; }
     LOGI("gpu6dof: mode {} ({})", mode, mode == 0 ? "off" : mode == 1 ? "follow the controller" : "identity rebuild");
 }
 int  GpuTrace::SixDof() { return g_SixDof.load(); }

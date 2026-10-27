@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Settings.h"
 #include "GameInfo.h"
+#include "StereoSync.h"
 #include <map>
 #include <algorithm>
 
@@ -40,6 +41,7 @@ namespace
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr },   // 0.1.0's ini; replaced by RenderScale
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr },
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
+        { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: a few game graphics settings while in VR
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -54,6 +56,12 @@ namespace
         { "advanced.logcontrollerinput", Kind::Bool,  "1", 0, 0, nullptr },
         { "advanced.keepaliveframes",   Kind::Bool,   "1", 0, 0, nullptr },
         { "advanced.newsessionafter",   Kind::Float,  "5", 0, 120, nullptr },
+        // experimental (StereoSync): passes the right eye's frame skips, using what the left eye's frame of the same tick did
+        { "advanced.stereoshadowreuse", Kind::Bool,   "0", 0, 0, nullptr },
+        { "advanced.stereooceanreuse",  Kind::Bool,   "0", 0, 0, nullptr },
+        { "advanced.stereoreflectionreuse", Kind::Bool, "0", 0, 0, nullptr },
+        { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr },
+        { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr },
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
@@ -202,6 +210,15 @@ bool Settings::LogInput() { return B("advanced.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
+bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
+StereoSync::ReuseFlags Settings::StereoReuse()
+{
+    StereoSync::ReuseFlags f;
+    f.shadows = B("advanced.stereoshadowreuse"); f.ocean = B("advanced.stereooceanreuse");
+    f.reflections = B("advanced.stereoreflectionreuse"); f.decals = B("advanced.stereodecalreuse");
+    f.streaming = B("advanced.stereostreamonceperpair");
+    return f;
+}
 
 std::string Settings::Summary()
 {

@@ -104,6 +104,7 @@ set(MOD_SOURCES
     Src/PipeTrace.cpp  Src/PipeTrace.h
     Src/TestAids.cpp   Src/TestAids.h
     Src/Settings.cpp   Src/Settings.h
+    Src/VrTweaks.cpp   Src/VrTweaks.h
     Src/KeyBinds.cpp   Src/KeyBinds.h
     Src/SysInfo.cpp    Src/SysInfo.h
     Src/Seeds.cpp      Src/Seeds.h
