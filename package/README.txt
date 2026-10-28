@@ -167,6 +167,18 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 
  VALVE INDEX (experimental)
    The left controller's A / B act as X / Y. Menu button: press the left trackpad down hard.
+   The grips react to how hard you SQUEEZE them (their force sensor), not to your fingers resting
+   on them: GripThreshold in DishonoredVR.ini sets how firmly. If you changed the game's grip
+   bindings in SteamVR, reset them there.
+   Layout = index in DishonoredVR.ini uses the trackpads instead (the rest is as above):
+   Left trackpad, press its top / right / bottom / left .. quick slot 1 / 2 / 3 / 4
+                                       (with the wheel open: assign the highlighted item to it;
+                                       in menus: the arrows)
+   Left trackpad, press its middle ... menu button (short: journal, hold: pause)
+   Right trackpad, press ............. interact: take / use / open what your RIGHT hand points at
+                                       (the right grip still does too); in cutscenes: skip
+   Left B (upper) / left A (lower) ... drink a health / mana elixir
+   Right A / B ....................... jump / crouch, as above
 
  PS VR2 (Sense controllers through SteamVR)
    Square / Triangle are X / Y, Cross / Circle are A / B. SteamVR does not pass the Create button
@@ -187,7 +199,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
                SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
                QuickSlotHoldTime = 0.5 (s)       Haptics = 1 (vibration)
-               Layout = default (the controls above; "classic" = Y leans, X interacts,
+               GripThreshold = 0.6 (how firmly a grip is squeezed to count; Index: squeeze force)
+               Layout = default (the controls above; "index" = Valve Index trackpads; "classic" = Y leans, X interacts,
                                  menu button pauses)
                ControllerPitchOffset = 0 (tilts the hands up/down, degrees)
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)

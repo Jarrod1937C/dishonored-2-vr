@@ -26,8 +26,9 @@ namespace
         { "controls.snapturnblank",     Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: black during a snap turn
         { "controls.snapturnblankopacity", Kind::Float, "0.5", 0, 1, nullptr },   // how dark: 1 = black
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
-        { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic" },
+        { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index" },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
+        { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // KbmInject: grip press point
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
@@ -168,7 +169,12 @@ std::vector<std::string> Settings::StartupCommands()
     c.push_back(V("controls.turnmode") == "snap" ? fmt::format("vr snap {}", F("controls.snapturnangle")) : "vr snap 0");
     c.push_back(fmt::format("vr turnspeed {}", F("controls.smoothturnspeed")));
     c.push_back(fmt::format("vr quickhold {}", F("controls.quickslotholdtime")));
-    c.push_back(V("controls.layout") == "classic" ? "vr quickslots 0" : "vr quickslots 1");
+    // default = Touch-style (Y / X quick slots), classic = 1.0's (Y lean, X interact), index = the Index controllers'
+    // trackpads (left: quick slots and menu, right: interact; left B / A potions); index on any other controller = default
+    {
+        const std::string& l = V("controls.layout");
+        c.push_back(l == "classic" ? "vr quickslots 0" : l == "index" ? "vr quickslots 2" : "vr quickslots 1");
+    }
     // the game brought to the front when the controllers are used while it is behind another window (KbmInject)
     c.push_back(B("controls.focusgamewindow") ? "vr autofocus 1" : "vr autofocus 0");
     // the menu screen is there from the title screen on, before any game is loaded (ScreenMode)
@@ -219,6 +225,7 @@ bool Settings::LogInput() { return B("advanced.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
+float Settings::GripThreshold() { return F("controls.gripthreshold"); }
 bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }
 bool Settings::StereoHud() { return B("display.stereohud"); }

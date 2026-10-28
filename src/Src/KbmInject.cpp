@@ -152,7 +152,17 @@ namespace
     std::atomic<float> g_TurnSpeed{ 120.f };      //!< smooth turn, degrees per second at full deflection
     std::atomic<int> g_MovePwm{ 0 };              //!< 1 = the old 8-frame pulse-width modulation of the move keys
     std::atomic<int> g_Potions{ 0 };              //!< 1 = the old right-stick potions (up health, down mana)
-    std::atomic<int> g_QuickSlots{ 1 };           //!< 0 = the old Y (lean) and X (interact)
+    // [Controls] GripThreshold: how far the grip is pressed (0..1: the squeeze on Touch, the squeeze FORCE on an Index)
+    // before it counts, and it lets go 0.15 below that, so a grip held right at the line does not flicker.
+    std::atomic<float> g_GripOn{ 0.6f };
+    bool GripPressed(int h, float v)
+    {
+        static bool down[2] = {};
+        const float on = g_GripOn.load(), off = std::max(0.02f, on - 0.15f);
+        down[h] = down[h] ? v > off : v > on;
+        return down[h];
+    }
+    std::atomic<int> g_QuickSlots{ 1 };           //!< 0 = the old Y (lean) and X (interact); 2 = the Index layout (trackpads, PadBits)
     std::atomic<float> g_QuickHold{ 0.5f };       //!< seconds held for Y / X to mean slot 3 / 4
     bool g_SprintLatch = false; double g_StillSince = 0;
     bool g_MoveKeys[4] = {};                      //!< 8-way digital move state, with hysteresis
@@ -200,6 +210,33 @@ namespace
     std::atomic<bool> g_Possessing{ false };   //!< inside a possessed host (see Tick)
     bool g_PossessionEdge = false;             //!< it began or ended this tick: the servo re-seeds
     enum : unsigned { kVTrigL = 1u << 8, kVTrigR = 1u << 9, kVGripL = 1u << 10, kVGripR = 1u << 11 };
+    // The Index layout's trackpad presses ([Controls] Layout = index, `vr quickslots 2`): the left pad's edges are a
+    // d-pad (up / right / down / left = quick slots 1-4, as the console's d-pad), its middle is the menu button, and the
+    // right pad is the interact key -- on the hand whose ray picks what is interacted with.
+    enum : unsigned { kVPadUp = 1u << 12, kVPadRight = 1u << 13, kVPadDown = 1u << 14, kVPadLeft = 1u << 15, kVPadUse = 1u << 16 };
+    constexpr unsigned kVPadDirs = kVPadUp | kVPadRight | kVPadDown | kVPadLeft;
+    //! The trackpads as presses (force past 0.5, let go below 0.3), each press's meaning fixed by where it began.
+    unsigned PadBits(const XRInputState& in)
+    {
+        static bool down[2] = {}; static unsigned what[2] = {};
+        for (int h = 0; h < 2; h++)
+        {
+            const float f = in.padForce[h];
+            if (!down[h] && f > 0.5f)
+            {
+                down[h] = true;
+                if (h == 1) what[h] = kVPadUse;
+                else
+                {
+                    const float x = in.padX[0], y = in.padY[0];
+                    what[h] = x * x + y * y < 0.45f * 0.45f ? kXRBtnMenu
+                            : fabsf(y) >= fabsf(x) ? (y > 0 ? kVPadUp : kVPadDown) : (x > 0 ? kVPadRight : kVPadLeft);
+                }
+            }
+            else if (down[h] && f < 0.3f) down[h] = false;
+        }
+        return (down[0] ? what[0] : 0u) | (down[1] ? what[1] : 0u);
+    }
     int g_MenuDir = -1; double g_MenuDirNext = 0;   //!< menu arrow held (slot) and when it repeats
     const char* ModeName(Mode m) { return m == kModePlay ? "play" : m == kModeMenu ? "menu" : "wheel"; }
 
@@ -468,6 +505,29 @@ namespace
         }
     }
     void QuickReset() { for (QuickBtn& q : g_QuickBtn) q.down = false; }
+    //! The Index layout's quick slots: a press on the left pad's edge is that slot at once (no short / held: four
+    //! directions are four slots). `assign`: the wheel is open, so it assigns the highlighted item instead.
+    void PadQuick(unsigned pressed, bool assign)
+    {
+        static const struct { unsigned bit; Slot slot; const char* name; } kPad[4] = {
+            { kVPadUp, kQuick1, "up" }, { kVPadRight, kQuick2, "right" }, { kVPadDown, kQuick3, "down" }, { kVPadLeft, kQuick4, "left" } };
+        for (const auto& p : kPad)
+        {
+            if (!(pressed & p.bit)) continue;
+            Tap(p.slot);
+            if (assign) g_WheelAssigned = true;
+            const int n = p.slot - kQuick1;
+            g_Count.quick[n]++;
+            LOGI("KbmInject: left trackpad {} -> quick slot {} (key {}){}", p.name, n + 1, g_Bind[p.slot].name, assign ? ": ASSIGNS the item highlighted in the wheel" : "");
+        }
+    }
+    //! The Index layout's potions: the LEFT hand's B (upper) health, A (lower) mana -- the wheel's B / A on the right,
+    //! without the wheel. (On an Index the left A / B arrive as X / Y.)
+    void PadPotions(unsigned pressed)
+    {
+        if (pressed & kXRBtnY) { Tap(kR); g_Count.potions[0]++; LOGI("KbmInject: health potion (left B)"); }
+        if (pressed & kXRBtnX) { Tap(kT); g_Count.potions[1]++; LOGI("KbmInject: mana potion (left A)"); }
+    }
     //! Menu button (play and cutscenes): a short press opens the journal (J on release), held 0.6 s it pauses (ESC, with
     //! a buzz). Inside any menu the button is ESC at once (Tick), so the same short press closes the journal again.
     //! (`vr quickslots 0`: the old way round, short = pause, held = journal.)
@@ -825,7 +885,7 @@ void KbmInject::Tick()
         const int st = VRRuntime::GetStatus().state;
         const bool headsetOn = st == 5 && lastState != 5;   // XR_SESSION_STATE_FOCUSED: the headset was put on
         lastState = st;
-        const bool active = in.buttons != 0 || in.triggerL > 0.5f || in.triggerR > 0.5f || in.gripL > 0.6f || in.gripR > 0.6f
+        const bool active = in.buttons != 0 || in.triggerL > 0.5f || in.triggerR > 0.5f || in.gripPressL > g_GripOn.load() || in.gripPressR > g_GripOn.load()
                          || fabsf(in.moveX) > 0.6f || fabsf(in.moveY) > 0.6f || fabsf(in.turnX) > 0.6f || fabsf(in.turnY) > 0.6f;
         if (!inFront && g_AutoFocus.load() && (headsetOn || (active && g_Now >= nextTry)))
         {
@@ -970,6 +1030,19 @@ void KbmInject::Tick()
     // Touch but its conversion drops the menu button (measured by another OpenXR mod), and without a menu there is
     // no pause, no save and no load. While the chord is held neither click does its own job.
     unsigned raw = in.buttons;
+    // The Index layout (and an Index bound): the left pad's force -- the menu button of the other layouts, wherever it is
+    // pressed -- is split by where it is pressed (PadBits). Any other controller keeps the default layout.
+    const bool indexPads = g_QuickSlots.load() == 2 && in.pad;
+    {
+        static int was = -1;
+        if (g_QuickSlots.load() == 2 && (int)in.pad != was)
+        {
+            was = in.pad ? 1 : 0;
+            LOGI("KbmInject: Index layout {}", in.pad ? "on: left trackpad = quick slots (edges) and menu (middle), right trackpad = interact, left B / A = health / mana potion"
+                                                      : "asked for, but no trackpads are bound (not an Index controller): the default layout");
+        }
+    }
+    if (indexPads) raw = (raw & ~kXRBtnMenu) | PadBits(in);
     {
         static bool chord = false;
         constexpr unsigned kBoth = kXRBtnThumbL | kXRBtnThumbR;
@@ -979,7 +1052,7 @@ void KbmInject::Tick()
     }
     // Analog inputs as buttons, so the latch covers them too.
     const unsigned btn = raw | (in.triggerL > 0.5f ? kVTrigL : 0) | (in.triggerR > 0.5f ? kVTrigR : 0)
-                                    | (in.gripL > 0.6f ? kVGripL : 0) | (in.gripR > 0.6f ? kVGripR : 0);
+                                    | (GripPressed(0, in.gripPressL) ? kVGripL : 0) | (GripPressed(1, in.gripPressR) ? kVGripR : 0);
     // The power wheel: held open by the L grip (MOUSE3). The game stops simulating while it is up, which on its own
     // would read as a menu -- and releasing the grip's MOUSE3 on the way into "menu" closes the wheel at once. So
     // while the grip that opened it is still held, it is the wheel, whatever the rest says.
@@ -1052,6 +1125,10 @@ void KbmInject::Tick()
         if (std::max(ax, ay) > (g_MenuDir >= 0 ? 0.35f : 0.6f))
             dir = ay >= ax ? (sy > 0 ? kUp : kDown) : (sx > 0 ? kRight : kLeft);
         if (dir != g_MenuDir) { g_MenuDir = dir; if (dir >= 0) { Tap((Slot)dir); g_MenuDirNext = g_Now + 0.45; } }
+        if (pressed & kVPadUp) Tap(kUp);                  // (Index layout: the left trackpad's edges are arrows too)
+        if (pressed & kVPadDown) Tap(kDown);
+        if (pressed & kVPadLeft) Tap(kLeft);
+        if (pressed & kVPadRight) Tap(kRight);
         else if (dir >= 0 && g_Now >= g_MenuDirNext) { Tap((Slot)dir); g_MenuDirNext = g_Now + 0.12; }
         // A pre-rendered video (a mission's opening, BinkVideo) is a menu here -- nothing simulates, no player state
         // runs -- but the game's prompt over it is "F Skip", the interact key held, and ENTER does nothing there: the
@@ -1116,7 +1193,8 @@ void KbmInject::Tick()
         {
             if (pressed & kXRBtnB) { Tap(kR); g_Count.potions[0]++; LOGI("KbmInject: wheel: health potion (B)"); }
             if (pressed & kXRBtnA) { Tap(kT); g_Count.potions[1]++; LOGI("KbmInject: wheel: mana potion (A)"); }
-            QuickButtons(live, pressed, true);
+            if (indexPads) { PadQuick(pressed, true); PadPotions(pressed); }
+            else QuickButtons(live, pressed, true);
         }
         std::lock_guard lk(g_M); unsigned m = 0; for (int i = 0; i < kCount; i++) if (g_Held[i]) m |= 1u << i; g_Stats.heldMask = m;
         return;
@@ -1138,8 +1216,8 @@ void KbmInject::Tick()
     {
         for (int i = 0; i < kCount; i++) if (i != kF && g_Held[i] && g_TapUntil[i] == 0) Hold((Slot)i, false);
         SwordGesture::Reset(); SwordContact::Reset();
-        const bool skip = (live & (kXRBtnA | kXRBtnX)) != 0;
-        if (skip && !g_Held[kF]) { g_Count.skips++; LOGI("KbmInject: cutscene: skip (F held with {})", (live & kXRBtnA) ? "A" : "X"); }
+        const bool skip = (live & (kXRBtnA | kXRBtnX | kVPadUse)) != 0;   // (the Index layout's right trackpad is F too)
+        if (skip && !g_Held[kF]) { g_Count.skips++; LOGI("KbmInject: cutscene: skip (F held with {})", (live & kXRBtnA) ? "A" : (live & kXRBtnX) ? "X" : "the right trackpad"); }
         Hold(kF, skip);
         MenuButton(live, g_QuickSlots.load() != 0);
         HeadAimServo(in);
@@ -1177,7 +1255,8 @@ void KbmInject::Tick()
     const bool quick = g_QuickSlots.load() != 0;
     // Y / X: quick slots 1-4 (short / held). The old Y was the game's LEAN, which only leans together with a sideways
     // stick and stops the stick walking meanwhile -- alone it did nothing; leaning the head already moves the view.
-    if (quick) QuickButtons(live, pressed, false);
+    if (indexPads) { PadQuick(pressed, false); PadPotions(pressed); QuickReset(); }
+    else if (quick) QuickButtons(live, pressed, false);
     else QuickReset();
     Hold(kAlt,   !quick && (live & kXRBtnY) != 0);        // (old) Y      : lean
     Hold(kZ,     (live & kXRBtnThumbR) != 0);             // R stick click: zoom
@@ -1214,7 +1293,8 @@ void KbmInject::Tick()
     // Once the press has become a hold the key has done its job: F is the hold's "drop", and `vr grabrelease 1` taps it
     // when the grip opens, which needs the key up beforehand.
     if (holding && g_GripF) { g_GripF = false; LOGI("KbmInject: {} grip took an object: F up", grabSide); }
-    Hold(kF, (!quick && (live & kXRBtnX) != 0) || g_GripF);   // the grabbing grip (above), (old) X : interact
+    Hold(kF, (!quick && (live & kXRBtnX) != 0) || g_GripF     // the grabbing grip (above), (old) X : interact
+             || (indexPads && (live & kVPadUse) != 0));          // Index layout: the right trackpad
     if (holding && relMode == 1 && (released & grabGrip))
     {
         float speed = 0; const bool thr = GrabHand::ReleaseThrows(&speed);
@@ -1337,6 +1417,11 @@ float KbmInject::TurnSpeed() { return g_TurnSpeed; }
 void KbmInject::SetMovePwm(int m) { g_MovePwm = m; }
 void KbmInject::SetPotions(int m) { g_Potions = m; }
 void KbmInject::SetQuickSlots(int m) { g_QuickSlots = m; }
+void KbmInject::SetGripThreshold(float t)
+{
+    g_GripOn = t < 0.05f ? 0.05f : (t > 0.98f ? 0.98f : t);
+    LOGI("KbmInject: a grip counts as pressed past {:.2f} (GripThreshold; the squeeze force on an Index), released below {:.2f}", g_GripOn.load(), std::max(0.02f, g_GripOn.load() - 0.15f));
+}
 void KbmInject::SetQuickKeys(const std::string& keys)
 {
     std::string k = g_QuickKeys;

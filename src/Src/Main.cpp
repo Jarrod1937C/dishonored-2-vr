@@ -120,6 +120,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetFog(Settings::Fog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
+    KbmInject::SetGripThreshold(Settings::GripThreshold());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

@@ -94,7 +94,15 @@ struct XRInputState
     float turnY = 0.0f;          //!< right thumbstick Y (-1..1), for stick pitch
     float moveX = 0.0f, moveY = 0.0f; //!< left thumbstick, for locomotion
     float triggerL = 0.0f, triggerR = 0.0f; //!< 0..1
-    float gripL = 0.0f, gripR = 0.0f;       //!< squeeze, 0..1
+    float gripL = 0.0f, gripR = 0.0f;       //!< squeeze, 0..1 (Index: how far the fingers close round it, not force)
+    //! The grip as a BUTTON, 0..1: what the grip actions (grab, block, the wheel) are decided on. Touch: the squeeze
+    //! itself; Valve Index: its FORCE sensor -- its squeeze value is the fingers' curl, near 1 with the hand just resting
+    //! on the grip. The squeeze value when the runtime binds nothing to it.
+    float gripPressL = 0.0f, gripPressR = 0.0f;
+    //! The trackpads (Valve Index only: bound for no other controller): position -1..1 and press force 0..1, per hand
+    //! (0 = left). `pad` = the runtime has them (an Index controller is bound).
+    float padX[2] = {}, padY[2] = {}, padForce[2] = {};
+    bool pad = false;
     unsigned buttons = 0;        //!< kXRBtn* mask (a/b/x/y, stick clicks)
     XRHandPose hand[2];          //!< 0 = left, 1 = right (aim pose)
     //! XrTime (ns) the poses were predicted for. Velocities come from differences of this, not of the wall clock:

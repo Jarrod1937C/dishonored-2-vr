@@ -589,6 +589,20 @@ Every tick decides one of three modes:
 | Menu button | short = journal, held 0.6 s = pause | ESC | |
 | Both stick clicks | the menu button (for controllers without one) | | |
 
+The grips are decided on `XRInputState::gripPress` (the `grippress_l/r` actions): the squeeze value on Touch, the
+squeeze FORCE on a Valve Index (whose squeeze value is the fingers' curl: a hand resting on the grip read ~1 and held
+the grip down). Pressed past `GripThreshold` (ini, default 0.6), released 0.15 below it. The analog `gripL/gripR` (the
+curl on an Index) still closes the drawn hand. A runtime that binds nothing to `grippress` falls back to the value.
+
+`vr quickslots 2` (ini `Layout = index`) is the Valve Index layout, active when the runtime binds the Index trackpads
+(`XRInputState::pad`, the `pad_l/pad_r/padpress_l/padpress_r` actions, suggested for the Index profile only; any other
+controller keeps the default layout). A trackpad press is force past 0.5 (released below 0.3), its meaning fixed by
+where it began (`PadBits`): the left pad's middle (radius 0.45) is the menu button -- replacing the force-anywhere
+binding the other layouts use -- and its top / right / bottom / left are quick slots 1-4 at once (`PadQuick`; with the
+wheel open they assign, in menus they are the arrows). The right pad is F (interact on what the right hand's pointer
+picked; in a cutscene, skip). The left B / A (X / Y on an Index) are the health / mana potions (`PadPotions`), the
+wheel's B / A without the wheel.
+
 `vr quickslots 0` (ini `Layout = classic`) restores the older layout (Y lean, X interact, menu short = pause). In a
 cutscene only A/X (held = skip, the game's F), the menu button and the stick work; while a pre-rendered video plays
 (BinkVideo), A/X held = F skips it. The sword, throw and grab gestures add to this table (sections 8 and 9).

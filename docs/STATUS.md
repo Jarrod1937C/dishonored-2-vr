@@ -98,6 +98,8 @@ headset.
 | Console-style movement: 8-way stick, latched sprint, crouch toggle | Done | Mock, then Played | |
 | Default layout: A jump, B crouch, Y / X quick slots 1-2 (held 0.5 s: 3-4), menu button short = journal / held = pause, potions B / A with the wheel open, in menus grips = next tab and triggers = sub-tabs | Done | Mock; pause Validated (Q3) | The game has no "previous tab": grips cycle through the tabs. With the wheel open, Y / X assign the highlighted item to a slot. |
 | `Layout = classic` (Y leans, X interacts, menu button pauses) | Done | Mock | |
+| Grips decided on the squeeze force on a Valve Index (not the finger curl, which a resting hand set off); `GripThreshold` | Done | Not yet tested | Reported on hardware: a resting hand activated the grips. |
+| `Layout = index` (Valve Index: left trackpad = quick slots 1-4 by its edges and the menu button by its middle, right trackpad = interact, left B / A = health / mana potion) | Done | Not yet tested | Other controllers keep the default layout with it. |
 | Both sticks pressed together = menu button (for controllers without one) | Done | Mock | Needed for PS VR2. |
 | Interact only with the right grip and the pointer (X no longer interacts) | Done | Played (Q3) | Lean by moving your body: there is no lean button. |
 | `ControllerPitchOffset` (tilts the hands up or down) | Done | Mock | For controllers whose aim pose differs from Touch. Not measured on Index or Sense. |

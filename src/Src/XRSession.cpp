@@ -52,6 +52,8 @@ struct XRState
     // The left hand's GRIP pose: the anatomical one (origin in the palm, -Z along the straightened index finger, +X out
     // of the left palm, so -X out of the back of the hand). The wrist HUD rides on it.
     XrAction wristAction = XR_NULL_HANDLE;
+    XrAction padAction[2] = {}, padForceAction[2] = {};   // Index trackpads: position, press force (0=L, 1=R)
+    XrAction gripPressAction[2] = {};                     // the grip as a button: Touch squeeze, Index squeeze FORCE
     XrSpace wristSpace = XR_NULL_HANDLE;
     XrSwapchain wristSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageD3D11KHR> wristImages;
@@ -1041,6 +1043,18 @@ bool XRSession::InitInput()
     if (!mkAction("btn_menu", "Menu: journal (short) / pause (hold)", XR_ACTION_TYPE_BOOLEAN_INPUT, g.btnAction[6])) return false;
     if (!mkAction("aim_l", "Left hand pose", XR_ACTION_TYPE_POSE_INPUT, g.aimAction[0])) return false;
     if (!mkAction("aim_r", "Right hand pose", XR_ACTION_TYPE_POSE_INPUT, g.aimAction[1])) return false;
+    // The grip as a button (grab, block, the wheel): optional; without it the squeeze value decides, as before.
+    for (int h = 0; h < 2; h++)
+        if (!mkAction(h ? "grippress_r" : "grippress_l", h ? "Right grip press: grab / interact / block" : "Left grip press: power wheel",
+                      XR_ACTION_TYPE_FLOAT_INPUT, g.gripPressAction[h])) g.gripPressAction[h] = XR_NULL_HANDLE;
+    // The Index trackpads ([Controls] Layout = index): optional, bound for the Index only.
+    for (int h = 0; h < 2; h++)
+    {
+        if (!mkAction(h ? "pad_r" : "pad_l", h ? "Right trackpad (Index layout: interact)" : "Left trackpad (Index layout: quick slots / menu)",
+                      XR_ACTION_TYPE_VECTOR2F_INPUT, g.padAction[h])) g.padAction[h] = XR_NULL_HANDLE;
+        if (!mkAction(h ? "padpress_r" : "padpress_l", h ? "Right trackpad press" : "Left trackpad press",
+                      XR_ACTION_TYPE_FLOAT_INPUT, g.padForceAction[h])) g.padForceAction[h] = XR_NULL_HANDLE;
+    }
     // Optional: without it the wrist HUD falls back to the aim pose.
     if (!mkAction("wrist_l", "Left wrist pose (HUD)", XR_ACTION_TYPE_POSE_INPUT, g.wristAction)) g.wristAction = XR_NULL_HANDLE;
     // Haptics are a nicety: without them every input still works, so a runtime that refuses them is not fatal.
@@ -1078,6 +1092,7 @@ bool XRSession::InitInput()
         { &g.moveAction, "/user/hand/left/input/thumbstick" },
         { &g.triggerAction[0], "/user/hand/left/input/trigger/value" }, { &g.triggerAction[1], "/user/hand/right/input/trigger/value" },
         { &g.gripAction[0], "/user/hand/left/input/squeeze/value" }, { &g.gripAction[1], "/user/hand/right/input/squeeze/value" },
+        { &g.gripPressAction[0], "/user/hand/left/input/squeeze/value" }, { &g.gripPressAction[1], "/user/hand/right/input/squeeze/value" },
         { &g.btnAction[0], "/user/hand/right/input/a/click" }, { &g.btnAction[1], "/user/hand/right/input/b/click" },
         { &g.btnAction[2], "/user/hand/left/input/x/click" }, { &g.btnAction[3], "/user/hand/left/input/y/click" },
         { &g.btnAction[4], "/user/hand/left/input/thumbstick/click" }, { &g.btnAction[5], "/user/hand/right/input/thumbstick/click" },
@@ -1090,10 +1105,14 @@ bool XRSession::InitInput()
         { &g.moveAction, "/user/hand/left/input/thumbstick" },
         { &g.triggerAction[0], "/user/hand/left/input/trigger/value" }, { &g.triggerAction[1], "/user/hand/right/input/trigger/value" },
         { &g.gripAction[0], "/user/hand/left/input/squeeze/value" }, { &g.gripAction[1], "/user/hand/right/input/squeeze/value" },
+        // the Index's squeeze VALUE is the fingers' curl (a resting hand reads ~1): the grip as a button is its force
+        { &g.gripPressAction[0], "/user/hand/left/input/squeeze/force" }, { &g.gripPressAction[1], "/user/hand/right/input/squeeze/force" },
         { &g.btnAction[0], "/user/hand/right/input/a/click" }, { &g.btnAction[1], "/user/hand/right/input/b/click" },
         { &g.btnAction[2], "/user/hand/left/input/a/click" }, { &g.btnAction[3], "/user/hand/left/input/b/click" },
         { &g.btnAction[4], "/user/hand/left/input/thumbstick/click" }, { &g.btnAction[5], "/user/hand/right/input/thumbstick/click" },
         { &g.btnAction[6], "/user/hand/left/input/trackpad/force" },
+        { &g.padAction[0], "/user/hand/left/input/trackpad" }, { &g.padAction[1], "/user/hand/right/input/trackpad" },
+        { &g.padForceAction[0], "/user/hand/left/input/trackpad/force" }, { &g.padForceAction[1], "/user/hand/right/input/trackpad/force" },
         { &g.aimAction[0], "/user/hand/left/input/aim/pose" }, { &g.aimAction[1], "/user/hand/right/input/aim/pose" },
         { &g.wristAction, "/user/hand/left/input/grip/pose" },
         { &g.hapticAction[0], "/user/hand/left/output/haptic" }, { &g.hapticAction[1], "/user/hand/right/output/haptic" } });
@@ -1160,6 +1179,19 @@ void XRSession::SyncInput()
     m_Input.triggerR = getFloat(g.triggerAction[1]);
     m_Input.gripL = getFloat(g.gripAction[0]);
     m_Input.gripR = getFloat(g.gripAction[1]);
+    {   // the grip as a button: its own binding when the runtime has one, else the squeeze value as before
+        float* press[2] = { &m_Input.gripPressL, &m_Input.gripPressR };
+        const float val[2] = { m_Input.gripL, m_Input.gripR };
+        for (int h = 0; h < 2; h++)
+        {
+            *press[h] = val[h];
+            if (!g.gripPressAction[h]) continue;
+            XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO };
+            gi.action = g.gripPressAction[h];
+            XrActionStateFloat st = { XR_TYPE_ACTION_STATE_FLOAT };
+            if (XR_SUCCEEDED(xrGetActionStateFloat(g.session, &gi, &st)) && st.isActive) *press[h] = st.currentState;
+        }
+    }
     m_Input.buttons =
         (getBool(g.btnAction[0]) ? kXRBtnA : 0) |
         (getBool(g.btnAction[1]) ? kXRBtnB : 0) |
@@ -1177,6 +1209,21 @@ void XRSession::SyncInput()
         {
             m_Input.moveX = st.currentState.x;
             m_Input.moveY = st.currentState.y;
+        }
+    }
+
+    m_Input.pad = false;
+    for (int h = 0; h < 2; h++)
+    {
+        m_Input.padX[h] = m_Input.padY[h] = m_Input.padForce[h] = 0.f;
+        if (!g.padAction[h]) continue;
+        XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO };
+        gi.action = g.padAction[h];
+        XrActionStateVector2f st = { XR_TYPE_ACTION_STATE_VECTOR2F };
+        if (XR_SUCCEEDED(xrGetActionStateVector2f(g.session, &gi, &st)) && st.isActive)
+        {
+            m_Input.padX[h] = st.currentState.x; m_Input.padY[h] = st.currentState.y; m_Input.pad = true;
+            if (g.padForceAction[h]) m_Input.padForce[h] = getFloat(g.padForceAction[h]);
         }
     }
 
@@ -2781,6 +2828,7 @@ bool XRSession::Shutdown(bool processExit)
     g.turnAction = g.turnYAction = g.moveAction = XR_NULL_HANDLE;
     for (int i = 0; i < 2; i++) { g.triggerAction[i] = g.gripAction[i] = g.aimAction[i] = g.hapticAction[i] = XR_NULL_HANDLE; }
     for (auto& a : g.btnAction) a = XR_NULL_HANDLE;
+    for (int i = 0; i < 2; i++) g.padAction[i] = g.padForceAction[i] = g.gripPressAction[i] = XR_NULL_HANDLE;
     m_Initialized = false;
     m_SessionRunning = false;
     m_FrameStarted = false;
@@ -2809,7 +2857,7 @@ void XRSession::LogInputChanges()
     for (int i = 0; i < 7; i++)
         if (((b ^ prevButtons) >> i) & 1) { LOGI("input: {} {}", kNames[i], (b >> i) & 1 ? "pressed" : "released"); logged++; }
     prevButtons = b;
-    const float t[2] = { m_Input.triggerL, m_Input.triggerR }, gr[2] = { m_Input.gripL, m_Input.gripR };
+    const float t[2] = { m_Input.triggerL, m_Input.triggerR }, gr[2] = { m_Input.gripPressL, m_Input.gripPressR };
     for (int h = 0; h < 2; h++)
     {
         // hysteresis: pressed past 0.6, released under 0.3
