@@ -25,6 +25,7 @@ namespace Settings
     float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
+    bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
 }

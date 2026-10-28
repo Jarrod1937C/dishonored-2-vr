@@ -200,6 +200,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
                AmbientOcclusion = 1 (0 = no ambient occlusion in VR: faster)
+               Fog = 1 (0 = no fog in VR: its low-resolution blocks show in front of the sky; faster)
                DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,
                                  about half the frame rate; 0 = flat, both eyes the same
                                  picture; 2 = the old alternating 3D of version 1.0)

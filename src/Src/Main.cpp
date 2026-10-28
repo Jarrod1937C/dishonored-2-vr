@@ -117,6 +117,7 @@ static DWORD WINAPI InitThread(LPVOID)
     LOGI("settings: {}", Settings::Summary());
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
+    VrTweaks::SetFog(Settings::Fog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());

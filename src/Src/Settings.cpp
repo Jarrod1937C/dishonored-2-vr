@@ -50,6 +50,7 @@ namespace
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
         { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: no depth of field in VR
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
+        { "display.fog",                Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no fog in VR
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -226,6 +227,7 @@ bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
+bool Settings::Fog() { return B("display.fog"); }
 StereoSync::ReuseFlags Settings::StereoReuse()
 {
     StereoSync::ReuseFlags f;

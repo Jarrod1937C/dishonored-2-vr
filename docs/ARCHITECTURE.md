@@ -173,7 +173,7 @@ into `vr ...` commands in two batches:
 
 A few settings are read directly by the module that needs them: `RenderScale` (RenderRes), `ControllerPitchOffset`
 and `LogControllerInput` (XRSession), `Haptics` (VRRuntime), `WriteStatusFile` (the heartbeat), `VrGraphicsTweaks`
-and `AmbientOcclusion` (VrTweaks), `SnapTurnBlank` (KbmInject), `CameraPitchFix` (ViewMatrixHook), `MinimalReticle`
+`AmbientOcclusion` and `Fog` (VrTweaks), `SnapTurnBlank` (KbmInject), `CameraPitchFix` (ViewMatrixHook), `MinimalReticle`
 and `ReticleOpacity` (Reticle) and the experimental `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
 and `StereoStreamOncePerPair` (StereoSync).
 
@@ -181,6 +181,10 @@ and `StereoStreamOncePerPair` (StereoSync).
 flags (view+0x3A37, set by the engine every frame from `r_skipDOF` / `r_skipSSAO` before the passes run) get "no
 depth of field" (ini `VrGraphicsTweaks`, default 1: in a headset the eyes focus, not the camera) and, if the ini asks,
 "no ambient occlusion" (`AmbientOcclusion = 0`: the game's own option only switches between HBAO+ and its own AO).
+`Fog = 0` writes the live `r_skipFog` 1 while the headset shows the game (put back after; a flag cvar, not saved to the
+config): the fog is drawn at a fraction of the screen's resolution and shows as blocks in front of the sky in a headset.
+A filtered upscale (`r_fogNearestUpscale 0`) and no light scattering (view+0x3A36 bit 2) were tried first and made no
+visible difference.
 ViewMatrixHook sets them as the main view is built. No cvar is written: the game's options, its config and its own
 backup of the DOF setting (`r_skipDofBck`) stay the player's. A first version wrote cvars (`r_skipDOF`,
 `r_skipLensFlares`, `r_SSSBlurQuality`, `r_textureUploadTimesliceMs`) and the game hung at its main menu; DOF and lens

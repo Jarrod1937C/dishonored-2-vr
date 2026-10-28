@@ -465,6 +465,18 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
 - Arm models: the arm entity's origin (shared by both arms) is ~0.35 m below and behind the eye; a draw filter that
   rejects origins behind the camera misses the arms.
 
+### 4.8 Fog and its upscale
+- View render flags +0x3A36 (set each frame at exe+0x374F9F..): bit 0 `r_skipFog`, bit 2 `r_skipLightScattering` (the
+  fog pass tests it at exe+0x3098BF), bit 3 `r_skipGodRays` (archived: the menu's god rays option).
+- The fog is rendered at a reduced resolution (`atm/distanceFog/TexDepthHalf`) and brought to the screen by
+  exe+0x30BB70: with `r_fogNearestUpscale` (int, default 1, read every frame at exe+0x30BC46) a depth-aware
+  nearest-sample upscale with `r_fogNearestThreshold` (0.0002, exe+0x30BC5E), else a filtered 4-tap one. Related
+  tunables (not archived): `r_fogBlurRadius` 6, `r_bilateralSharpnessNear` 0.1 / `Far` 0.01, `r_bilateralDepthRange` 10,
+  `r_atmGodRaysDepthSharpness` 0.00001.
+- In a headset the fog's low resolution shows as blocks in front of the sky; neither the filtered upscale nor
+  `r_skipLightScattering` changed it visibly (tested on hardware). `r_skipFog` (flag cvar, read every frame at
+  exe+0x374F9F into view+0x3A36 bit 0 and at exe+0x30644A) removes it: the mod's `Fog = 0`.
+
 ---
 
 ## 5. Camera, aim and the player
