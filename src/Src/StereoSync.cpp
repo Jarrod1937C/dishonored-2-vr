@@ -161,7 +161,8 @@ namespace
     // asks for it; experimental: whether what the left frame left behind is still intact when the right eye's frame
     // reads it has not been seen in a headset yet. Hooks only for what is asked.
     //
-    // NOT the shadow maps (tried as StereoShadowReuse, exe+0x32D4B0: shadows broke in BOTH eyes). The engine updates
+    // NOT the sun's shadow maps (tried as StereoShadowReuse, exe+0x32D4B0: shadows broke in BOTH eyes; the spot / omni
+    // lights' are below, with the condition that makes them safe). The engine updates
     // the sun's farther cascades on alternate frames (frame parity, exe+0x32EF1D) and keeps the rest in caches; in
     // synchronised stereo alternate frames are alternate eyes, so the right eye's frames are the ones that update some
     // cascades -- skipped, those were never updated for either eye. Any pass the engine schedules by frame parity has the
@@ -222,6 +223,153 @@ namespace
         return nullptr;
     }
     static_assert(kPasses == 5, "HookOf lists every pass");
+
+    // ---- the spot and omni lights' shadow maps ([Advanced] StereoLightShadowReuse, experimental) ----
+    // The shadow task exe+0x32D4B0(task, dynamic) draws a sun cascade for task+0xF8 below r_shadowParallelSliceCnt and a
+    // spot / omni light's faces otherwise (exe+0x32D6E0). Those faces live in one atlas and do not depend on the view: the
+    // right eye's frame (the same tick, nothing moved) draws exactly what the left eye's left in the atlas. But the
+    // frame's SHADOWS_PREPARE (exe+0x333550) runs for every frame and keeps a cache of each face's static casters (the
+    // cache manager exe+0x3309A08): a face it finds there is copied into the atlas (exe+0x32DB10); one it does not is
+    // given a new cache entry and marked DIRTY (face+0xF0), the world pass draws its static casters into the atlas and
+    // the dynamic pass's first task copies them into the entry (exe+0x334C90). Skipping a right frame that had a dirty
+    // face left that entry empty for good -- found in the cache from then on: the light lost its walls as casters (the
+    // breakage of the first StereoShadowReuse, together with the cascades, which are not touched here).
+    // So the right eye's spot / omni tasks are skipped only when its frame's job lists have no dirty face AND are the
+    // left frame's own (the same lights, faces, atlas pages and rects, matrices and cache entries: a hash of them, taken
+    // by the first task of each frame). Otherwise the right frame draws them, as the engine would.
+    std::atomic<bool> g_LightShadowOn{ false };
+    using ShadowTaskFn = bool(*)(void* task, char dynamic);
+    ShadowTaskFn g_ShadowReal = nullptr;
+    constexpr uint32_t kShadowTask = 0x32D4B0, kSliceCnt = 0x397A2F8;   // the task; r_shadowParallelSliceCnt's int
+    constexpr uint32_t kJobsHash = 0xA4719E7A;                          // the task parameter holding the job lists
+    constexpr uint32_t kJobLists[3] = { 0x26A030, 0x267020, 0x264010 };  // world (shared), world (last task), dynamic
+    struct ShadowState
+    {
+        std::mutex m;
+        unsigned long long leftSerial = 0, leftSig = 0;   // the latest left frame's job lists
+        unsigned long long decided = 0; bool skip = false; // the right frame decided last, and the decision
+        unsigned long long lefts = 0, rightsSkipped = 0, rightsDirty = 0, rightsDiffer = 0, rightsNoLeft = 0, unreadable = 0;
+        unsigned long long tasksSkipped = 0, tasksRun = 0;
+        int lastJobs = 0, lastFaces = 0;
+    } g_Sh;
+
+    bool Readable(const void* p, size_t n)
+    {
+        if (!p || (uintptr_t)p < 0x10000) return false;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
+        return (uintptr_t)p + n <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    }
+    //! An engine pointer as the job lists hold them (cheap: these are read for every face of every frame)
+    inline bool Plausible(const void* p) { const uintptr_t v = (uintptr_t)p; return v >= 0x10000 && v < 0x7FFFFFFF0000ull && !(v & 7); }
+    inline void Mix(unsigned long long& h, const void* d, size_t n)
+    {   // FNV-1a, 64 bit
+        const uint8_t* b = (const uint8_t*)d;
+        for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001B3ull; }
+    }
+    //! The frame's spot / omni job lists, hashed; `dirty`: a face is to be drawn into a new cache entry this frame.
+    bool ShadowJobsSig(void* task, unsigned long long& sig, bool& dirty, int& jobs, int& faces)
+    {
+        const uint8_t* t = (const uint8_t*)task;
+        const uint8_t* params = *(const uint8_t* const*)(t + 0xE0);
+        const uint32_t np = *(const uint32_t*)(t + 0xE8) & 0xFFFFFF;
+        if (!np || np > 4096 || !Readable(params, (size_t)np * 16)) return false;
+        const uint8_t* obj = nullptr;
+        for (uint32_t i = 0; i < np && !obj; i++)
+        {
+            const uint8_t* e = *(const uint8_t* const*)(params + (size_t)i * 16);
+            if (Readable(e, 0x18) && *(const uint32_t*)(e + 8) == kJobsHash) obj = *(const uint8_t* const*)(e + 0x10);
+        }
+        if (!obj) { const uint8_t* e = *(const uint8_t* const*)params; if (Readable(e, 0x18)) obj = *(const uint8_t* const*)(e + 0x10); }
+        if (!Plausible(obj)) return false;
+        for (uint32_t lo : kJobLists) if (!Readable(obj + lo, 16)) return false;
+        sig = 0xCBF29CE484222325ull; dirty = false; jobs = 0; faces = 0;
+        for (uint32_t lo : kJobLists)
+        {
+            const uint8_t* const* arr = *(const uint8_t* const* const*)(obj + lo);
+            const uint32_t n = *(const uint32_t*)(obj + lo + 8) & 0xFFFFFF;
+            Mix(sig, &n, 4);
+            if (!n) continue;
+            if (n > 4096 || !Readable(arr, (size_t)n * 8)) return false;   // once per list
+            for (uint32_t j = 0; j < n; j++)
+            {
+                const uint8_t* job = arr[j];
+                if (!Plausible(job)) return false;
+                const uint8_t* light = *(const uint8_t* const*)job;
+                Mix(sig, &light, 8);
+                if (!light) continue;
+                if (!Plausible(light)) return false;
+                const int type = *(const int*)(light + 0x5C);
+                Mix(sig, &type, 4);
+                const int nf = type < 0 ? 0 : type <= 1 ? 6 : type == 2 ? (int)(*(const uint32_t*)(job + 0x18) & 0xFFFFFF) : 0;
+                if (nf > 64) return false;
+                const uint8_t* rec = *(const uint8_t* const*)(job + 0x10);
+                if (nf && !Plausible(rec)) return false;
+                jobs++;
+                for (int f = 0; f < nf; f++)
+                {
+                    const uint8_t* r = rec + (size_t)f * 0x100;
+                    Mix(sig, r + 4, 20);                        // page, rect (x0 -1 = no face)
+                    if (*(const int*)(r + 8) == -1) continue;
+                    Mix(sig, r + 0xA0, 64);                     // its light matrix
+                    Mix(sig, r + 0xE0, 8);                      // its cache entry
+                    if (r[0xF0]) dirty = true;
+                    faces++;
+                }
+            }
+        }
+        return true;
+    }
+    bool HkShadowTask(void* task, char dynamic)
+    {
+        if (!task || !g_LightShadowOn.load(std::memory_order_relaxed) || !g_SyncOn.load(std::memory_order_relaxed))
+            return g_ShadowReal(task, dynamic);
+        const int slices = *(const int*)(GameInfo::Base() + kSliceCnt);
+        if (*(const int*)((const uint8_t*)task + 0xF8) < slices) return g_ShadowReal(task, dynamic);   // a sun cascade: never
+        const uint8_t* view = *(const uint8_t* const*)((const uint8_t*)task + 0x70);
+        unsigned long long s = 0;
+        ViewMatrixHook::XrPose p;
+        if (view && CameraHook::IsMainViewObject(view))
+        {
+            float m[16]; memcpy(m, view + 0x7450, 64);
+            s = ViewMatrixHook::SerialOfViewMatrix(m);
+            if (s) p = ViewMatrixHook::RenderPoseXr(s);
+        }
+        const bool left = p.valid && p.eye == 0 && p.pair;              // keyed by the pair (its left view's serial)
+        const bool right = p.valid && p.eye == 1 && p.pair && p.pair != s;
+        if (!left && !right) return g_ShadowReal(task, dynamic);
+        bool skip = false;
+        {
+            std::lock_guard lk(g_Sh.m);
+            if (left)
+            {
+                if (g_Sh.leftSerial != p.pair)
+                {   // the first spot / omni task of this left frame: its job lists
+                    unsigned long long sig = 0; bool dirty = false; int jobs = 0, faces = 0;
+                    if (ShadowJobsSig(task, sig, dirty, jobs, faces)) { g_Sh.leftSerial = p.pair; g_Sh.leftSig = sig; g_Sh.lefts++; g_Sh.lastJobs = jobs; g_Sh.lastFaces = faces; }
+                    else { g_Sh.leftSerial = 0; g_Sh.unreadable++; }
+                }
+            }
+            else
+            {
+                if (g_Sh.decided != s)
+                {   // the first spot / omni task of this right frame decides for all of them
+                    g_Sh.decided = s; g_Sh.skip = false;
+                    unsigned long long sig = 0; bool dirty = false; int jobs = 0, faces = 0;
+                    if (!ShadowJobsSig(task, sig, dirty, jobs, faces)) g_Sh.unreadable++;
+                    else if (g_Sh.leftSerial != p.pair) g_Sh.rightsNoLeft++;
+                    else if (dirty) g_Sh.rightsDirty++;
+                    else if (sig != g_Sh.leftSig) g_Sh.rightsDiffer++;
+                    else { g_Sh.skip = true; g_Sh.rightsSkipped++; }
+                }
+                skip = g_Sh.skip;
+                if (skip) g_Sh.tasksSkipped++; else g_Sh.tasksRun++;
+            }
+        }
+        if (!skip) return g_ShadowReal(task, dynamic);
+        if (uint8_t* ctx = *(uint8_t**)((uint8_t*)task + 0x108)) ctx[0x12AD4] = 1;   // as the engine marks a task it skips
+        return false;
+    }
 
     struct Rec { double t; int held; long long c18[3]; float c20[3]; int c28[3]; float org[3]; int stop; uint32_t in[16]; };
     std::mutex g_LogM;
@@ -391,6 +539,16 @@ void StereoSync::Install()
     const LONG e = DetourTransactionCommit();
     g_PollsHooked = e == NO_ERROR;
     LOGI("StereoSync: RunFrame + keyboard/mouse read hooks {}", e == NO_ERROR ? "installed" : "FAILED");
+    if (g_LightShadowOn.load())
+    {   // (experimental) the right eye's spot / omni shadow maps, when they are the left eye's (see HkShadowTask)
+        g_ShadowReal = (ShadowTaskFn)(GameInfo::Base() + kShadowTask);
+        DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)g_ShadowReal, HkShadowTask);
+        const LONG s = DetourTransactionCommit();
+        if (s != NO_ERROR) { g_ShadowReal = nullptr; g_LightShadowOn = false; }
+        LOGI("StereoSync: StereoLightShadowReuse (experimental): the right eye's frame reuses the left's spot / omni shadow maps when its jobs are the same and none is new: hook exe+0x{:X} {}",
+             kShadowTask, s == NO_ERROR ? "installed" : "FAILED");
+    }
     for (int i = 0; i < kPasses; i++)
     {   // only what the ini asks for (experimental): a pass not asked for is not touched at all
         ReusePass& r = g_Pass[i];
@@ -460,6 +618,7 @@ void StereoSync::SetReuse(const ReuseFlags& f)
 {
     g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = f.reflections;
     g_ReuseOn[rDecals] = f.decals; g_ReuseOn[rStreaming] = f.streaming;
+    g_LightShadowOn = f.lightShadows;
 }
 
 std::string StereoSync::Status()
@@ -472,7 +631,14 @@ std::string StereoSync::Status()
            fmt::format("stereosync on {} lefts {} rights {} held {} | gate {} (open {}{}) | not held:{} | input reads {} waited {} | frames {} simulated {}{}",
                        g_SyncOn.load() ? 1 : 0, g_Lefts.load(), g_Rights.load(), g_SyncHeld.load(), kGateNames[g_GateWhy.load()], g_GateShut[0].load(), gate, exp,
                        g_Polls.load(), g_PollsHeld.load(), g_Calls.load(), g_Ticks.load(), g_Dbg.load() ? fmt::format(" | syncdbg {}", g_Dbg.load()) : std::string()) +
-           [] { std::string s; for (const ReusePass& r : g_Pass) if (r.real) s += fmt::format(" | {} run {} skipped (right eye) {}", r.name, r.run.load(), r.skipped.load()); return s; }();
+           [] { std::string s; for (const ReusePass& r : g_Pass) if (r.real) s += fmt::format(" | {} run {} skipped (right eye) {}", r.name, r.run.load(), r.skipped.load()); return s; }() +
+           [] {
+               if (!g_ShadowReal) return std::string();
+               std::lock_guard lk(g_Sh.m);
+               return fmt::format(" | lightshadows lefts {} rights reused {} drawn: new cache {} differ {} no left {} unreadable {} | tasks skipped {} run {} | last jobs {} faces {}",
+                                  g_Sh.lefts, g_Sh.rightsSkipped, g_Sh.rightsDirty, g_Sh.rightsDiffer, g_Sh.rightsNoLeft, g_Sh.unreadable,
+                                  g_Sh.tasksSkipped, g_Sh.tasksRun, g_Sh.lastJobs, g_Sh.lastFaces);
+           }();
 }
 unsigned long long StereoSync::Tick() { return g_Ticks.load(); }
 unsigned long long StereoSync::Frames() { return g_Calls.load(); }

@@ -217,7 +217,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  Link / Air Link only)
                Experimental, 0 by default (1 = the right eye's frame reuses the left eye's work):
                                  StereoOceanReuse   StereoReflectionReuse   StereoDecalReuse
-                                 StereoStreamOncePerPair
+                                 StereoStreamOncePerPair   StereoLightShadowReuse (lamps' shadows)
 
  TWO CHEATS ARE ON by default, so every power and weapon can be tried in VR right away:
  UnlockEverything (every power, upgrade, bone charm crafting, black market upgrade and weapon, on

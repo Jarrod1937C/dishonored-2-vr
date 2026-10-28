@@ -70,6 +70,7 @@ namespace
         { "advanced.stereoreflectionreuse", Kind::Bool, "0", 0, 0, nullptr },
         { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr },
         { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr },
+        { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr },
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
@@ -234,6 +235,7 @@ StereoSync::ReuseFlags Settings::StereoReuse()
     f.ocean = B("advanced.stereooceanreuse");
     f.reflections = B("advanced.stereoreflectionreuse"); f.decals = B("advanced.stereodecalreuse");
     f.streaming = B("advanced.stereostreamonceperpair");
+    f.lightShadows = B("advanced.stereolightshadowreuse");
     return f;
 }
 

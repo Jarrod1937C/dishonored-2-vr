@@ -294,10 +294,16 @@ what the player's game learns later replaces it.
     that only repeat what the left eye's frame of the same tick just did, the way the engine skips a disabled task
     (its context marked empty): the ocean's simulation (`StereoOceanReuse`, UPDATE_OCEAN_FFT / UPDATE_OCEAN), the reflection probes' relighting (`StereoReflectionReuse`,
     INDIRECT_LIGHTING_UPDATE_IBL), the decals on NPCs (`StereoDecalReuse`) and the texture streamer
-    (`StereoStreamOncePerPair`). A task is the right eye's when its view (task+0x70) is a main view object and that
+    (`StereoStreamOncePerPair`), and the spot / omni lights' shadow maps (`StereoLightShadowReuse`, below). A task is the right eye's when its view (task+0x70) is a main view object and that
     view's matrix names the right view of a pair. Hooks exist only for what the ini asks for. NOT the shadows: skipping
     them for the right eye (exe+0x32D4B0) broke shadows in both eyes, because the engine updates the sun's farther
-    cascades on alternate frames, which in synchronised stereo are always the same eye's. A gate holds only in play: not paused or stopped, no menu,
+    cascades on alternate frames, which in synchronised stereo are always the same eye's. The spot / omni lights' faces
+    (the shadow task exe+0x32D4B0 for task+0xF8 at or above `r_shadowParallelSliceCnt`) are skipped for the right eye only
+    when that frame's shadow job lists hash the same as the left frame's (lights, faces, atlas pages and rects, light
+    matrices, cache entries) and no face is DIRTY: SHADOWS_PREPARE gives a face it does not find in its cache a new entry
+    and marks it, the world pass draws its static casters into the atlas and the dynamic pass copies them into the entry;
+    a skipped dirty face left an empty entry that was found from then on (the walls that stopped casting). Otherwise the
+    right frame draws them. Counts on the heartbeat's `lightshadows`. A gate holds only in play: not paused or stopped, no menu,
     menu screen or player change, no hitch, and 30 Presents after any of those changed (holding a frame while a pause
     menu opened crashed the game's UI). Anything else is a mono view; a stereo health check falls back to mono (logged,
     retried with backoff) when no pair reaches the headset (`vr stereohealth`).

@@ -465,6 +465,25 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
 - Arm models: the arm entity's origin (shared by both arms) is ~0.35 m below and behind the eye; a draw filter that
   rejects origins behind the camera misses the arms.
 
+### 4.7b Spot / omni light shadows
+- The shadow task exe+0x32D4B0(task, dynamic): task+0xF8 below `r_shadowParallelSliceCnt` (int at exe+0x397A2F8) is a
+  sun cascade (exe+0x32EE50), else a spot / omni light: exe+0x32D6E0(task, params, index - slices, count - slices).
+- Sun cascades (exe+0x32EE50): slice 0 every frame; with `r_shadowParallelPartialSliceUpdate` slices 1..n-2 on odd frames
+  (exe+0x32FC64C), n-1 on even. A slice not updated is copied back from its cache (exe+0x3308DE8[slice-1], exe+0x2BB270);
+  an updated one is copied into it. Render matrices from exe+0x3309020 + slice*0x40; the lighting binds exe+0x3308E20..
+  (exe+0x32FD40).
+- Job lists: the task parameter (task+0xE0 list of 16-byte entries, count task+0xE8) whose +8 is 0xA4719E7A holds at
+  +0x10 an object with three idLists (ptr +0, count +8 & 0xFFFFFF) of job pointers: +0x26A030 world (shared by the
+  tasks but the last), +0x267020 world (the last task), +0x264010 dynamic.
+- Job: +0 the light (type at light+0x5C: 0/1 six faces, exe+0x32C630; 2 job+0x18 faces, exe+0x32D940), +0x10 face
+  records of 0x100: +4 atlas page, +8 rect x0 y0 x1 y1 (x0 = -1: none), +0xA0 matrix, +0xE0 cache entry, +0xE8 pointer to
+  a flag, +0xF0 DIRTY.
+- SHADOWS_PREPARE (exe+0x333550) per face: the cache manager (exe+0x3309A08) lookup exe+0x2CD500; found = clean, else a
+  new entry (exe+0x2CCA20) and DIRTY (exe+0x333401 / exe+0x33344F).
+- World pass: the first spot task clears every atlas page (exe+0x3308D90 list, exe+0x2BAFC0); per face (exe+0x32CEA0)
+  DIRTY = draw its static casters into the atlas rect, clean = copy its cache entry there (exe+0x32DB10). Dynamic pass:
+  its first task copies every DIRTY face from the atlas into its entry (exe+0x334C90), then moving casters are drawn on top.
+
 ### 4.8 Fog and its upscale
 - View render flags +0x3A36 (set each frame at exe+0x374F9F..): bit 0 `r_skipFog`, bit 2 `r_skipLightScattering` (the
   fog pass tests it at exe+0x3098BF), bit 3 `r_skipGodRays` (archived: the menu's god rays option).
