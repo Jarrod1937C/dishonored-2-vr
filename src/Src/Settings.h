@@ -16,6 +16,13 @@ namespace Settings
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
+    bool SnapTurnBlank();                         //!< [Controls] SnapTurnBlank: black during a snap turn (KbmInject)
+    bool StereoHud();                             //!< [Display] StereoHud: the game's HUD on one panel for both eyes (ScreenMode)
+    float HudDistance();                          //!< [Display] HudDistance: that panel's distance, m
+    bool CameraPitchFix();                        //!< [Display] CameraPitchFix: the game's neck out of the view (ViewMatrixHook)
+    float SnapTurnBlankOpacity();                 //!< [Controls] SnapTurnBlankOpacity: 0..1, 1 = black
+    bool MinimalReticle();                        //!< [Display] MinimalReticle: the reticle is only a dot (Reticle)
+    float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)

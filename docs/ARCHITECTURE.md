@@ -173,7 +173,8 @@ into `vr ...` commands in two batches:
 
 A few settings are read directly by the module that needs them: `RenderScale` (RenderRes), `ControllerPitchOffset`
 and `LogControllerInput` (XRSession), `Haptics` (VRRuntime), `WriteStatusFile` (the heartbeat), `VrGraphicsTweaks`
-and `AmbientOcclusion` (VrTweaks) and the experimental `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
+and `AmbientOcclusion` (VrTweaks), `SnapTurnBlank` (KbmInject), `CameraPitchFix` (ViewMatrixHook), `MinimalReticle`
+and `ReticleOpacity` (Reticle) and the experimental `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
 and `StereoStreamOncePerPair` (StereoSync).
 
 **VrTweaks** ([VrTweaks.cpp](../src/Src/VrTweaks.cpp)): while the headset shows the game, the main view's own render
@@ -418,7 +419,12 @@ Two compositions exist:
   frame and rotated into the world by the room-to-game yaw mapping (below), not by the camera's current yaw: otherwise
   a lean, and stereo's +/- half IPD, would rotate with the head. The game eye sits about 5 cm in front of the body's
   vertical axis and would swing round a circle as the servo turns the body; `vr pivotfix` holds that offset fixed in
-  the room. Inside a possessed host, pitch comes from the head with level roll, and the head translation is scaled by
+  the room. The game also moves its eye with its PITCH (a flat screen's neck: the pitch is spread over the body's joints
+  and the eye sits ahead of the head joint), forward and down when looking down; with the servo putting the head's
+  pitch on the game, that came on top of the real neck the headset tracks, and the world slid to and fro with each nod.
+  `CameraPitchFix` (ini, default 1) measures it while the player stands still (the change of the eye's forward and
+  vertical offset from the player per degree of game pitch, averaged per 3-degree band) and takes the integral from
+  level out of play's eye (`PfStep`; the curve is on the heartbeat's `pitchfix` line). Inside a possessed host, pitch comes from the head with level roll, and the head translation is scaled by
   the host's eye height (a rat's eye is 0.18 m off the floor).
 - **Full HMD mode** (head aim off): the HMD rotation replaces the game's on top of the game's yaw (`ComposeHead`).
 
@@ -462,6 +468,12 @@ injected mouse motion:
   there). In takedowns, cutscenes and hard landings it holds its target and injects nothing.
 
 Smooth turning (default 120 deg/s with a 0.25 dead zone) and snap turning add to the servo's target.
+A snap moves the room-to-game mapping (`WorldYawOffset`) at once, while the frames already in flight were rendered
+facing the old way: below the full frame rate the compositor turned them into place and the edge they do not cover
+showed as a black border swinging back. `SnapTurnBlank` (ini, default 1) blacks the headset's picture from the snap
+until the servo has the game within 1.5 deg of the new heading and an image built after that is submitted
+(`KbmInject::SnapBlankFade`, applied as `XRSession::DimFrame`), then fades it back in over 60 ms; 0.5 s at most.
+`SnapTurnBlankOpacity` (default 0.5) sets how dark: the picture's brightness is 1 - opacity at the blank's deepest.
 
 ### PlayerState: what the player is doing
 
@@ -850,7 +862,12 @@ yaw, and One Euro filtered, so head sway and hand tremor do not shake a ray that
 [Reticle.cpp](../src/Src/Reticle.cpp) draws, per hand, a line along the pointer and a ring where the engine says the
 shot or power will land (the gun ray's hit, the power's target, the grab pick), or at a fixed range. It is drawn with
 ImGui into the backbuffer from `Overlay::OnPresent` and projected with the projection the player's own draws used, so
-it lands exactly where the drawn hand is. `vr handaxes 1` adds palm, controller, blade and box axes: the instrument
+it lands exactly where the drawn hand is. `MinimalReticle = 1` draws only the end of each ray, a small white dot ringed
+in black (visible on any background), three times the size while the grab hand's ray is on something it can take;
+`ReticleOpacity` (default 0.5) scales the reticle's alpha. While the reticles are on and the headset shows the game, the
+game's own crosshair (the centre of the game camera's view, which marks nothing when the hands aim) is off:
+`Reticle::Tick` writes `ark_ui_crosshair_style` 0 and `ark_ui_crosshair_opacity` 0 (live values only, as WristHud does
+with the HUD option, so the config keeps the player's) and puts the player's values back otherwise. `vr handaxes 1` adds palm, controller, blade and box axes: the instrument
 for judging a pose from a screenshot.
 
 ---
@@ -879,6 +896,16 @@ The shop of a black market lays its interface out against the frame's edges, so 
 to the frame's bottom (`vr screencfg shopcrop`). The **power wheel** is play: the world stays, the view follows the head,
 and the game's whole interface is lifted out of the picture (WristHud's copy, kept out of the backbuffer) onto panel
 slot 1, fixed where it was opened.
+
+**The HUD in stereo** (`ScreenMode::PlayHud`, ini `StereoHud`, default 1, and `HudDistance`, default 2 m). The game draws
+its interface into each eye's picture at the same pixels, but the same pixel of the two pictures is not the same
+direction: each eye's picture is rendered for its own frustum, turned towards that frustum's centre (wider on the nose
+side), so every HUD element came out at two directions, diverging. In stereo play the interface is lifted the same way as
+for the wheel (WristHud's copy only) and shown on panel slot 1 for both eyes: the plane of the picture it was drawn over,
+at HudDistance, in the frame the game camera rendered that picture as (the eye's turn and its offset from the head taken
+back out, the head's position from the view's own poses), in the room. It covers what the picture covered at any distance;
+the distance only sets where the eyes converge on it. The left image of a pair is drawn without its interface; the
+right image's is the one shown.
 
 ### WristHud: the HUD as a watch
 

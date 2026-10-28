@@ -252,6 +252,9 @@ public:
     void SubmitScreen(const XRBackdrop& b);
     //! Brightness of the game's picture in this frame's projection layer (the fade back in after a menu). One frame.
     void SetFrameFade(float k) { m_FrameFade = k; }
+    //! A further dimming of this frame's game picture, on top of the fade (0 = black): the snap-turn blank
+    //! (KbmInject::SnapBlankFade). One frame, the lowest asked wins.
+    void DimFrame(float k) { if (k < m_FrameDim) m_FrameDim = k; }
     //! The frozen backdrop: every play frame offers its picture (SubmitFrame keeps one every ~0.2 s, half size, with
     //! the pose it was seen from). Freeze picks the newest one at least minAge seconds old (the menu was already
     //! drawn over the last few frames before it was recognised) and at most maxAge; false = none. Unfreeze lets the
@@ -416,7 +419,7 @@ private:
     XRPanelLayer m_Panel[2];                 //!< this frame's panels (SetPanelLayer)
     unsigned long long m_PanelFrames[2] = {}, m_ScreenFrames = 0, m_Snapshots = 0;
     bool AppendPanelLayer(int slot, XrCompositionLayerQuad& quad);
-    float m_FrameFade = 1.f;
+    float m_FrameFade = 1.f, m_FrameDim = 1.f;
     bool m_ResyncEyes = false;
     // the frozen-backdrop ring (FreezeBackdrop): half-size pictures with the pose and tan extents they were seen with
     struct Snap { float quat[4] = { 0, 0, 0, 1 }; float tan[4] = {}; long long qpc = 0; bool valid = false;

@@ -116,6 +116,30 @@ namespace
     double g_TapUntil[kCount] = {};               //!< a tapped key goes up at this time (0 = not a tap)
     unsigned g_Frame = 0;
     bool g_SnapArmed = true;
+    // [Controls] SnapTurnBlank: the headset's picture goes black from a snap until an image rendered after the game
+    // turned is shown. Below the full frame rate the frames already in flight were rendered facing the old way and are
+    // claimed at the new heading (the turn is in WorldYawOffset at once): the compositor turned them into place, and
+    // the edge they do not cover showed as a black border swinging back. 0 none, 1 the game is still turning, 2 turned:
+    // black until the view serial g_SnapUntil (or, with no serial to go by, the time g_SnapUntilT), then a short fade in.
+    std::atomic<bool> g_SnapBlankOn{ false };
+    std::atomic<float> g_SnapBlankDepth{ 1.f };    //!< SnapTurnBlankOpacity: how dark the blank is (1 = black, 0.3 = 30 % darker)
+    std::atomic<int> g_SnapState{ 0 };
+    std::atomic<unsigned long long> g_SnapUntil{ 0 };
+    std::atomic<double> g_SnapT0{ 0 }, g_SnapUntilT{ 0 }, g_SnapShownT{ 0 };
+    std::atomic<unsigned long long> g_SnapBlanks{ 0 };
+    constexpr double kSnapTimeout = 0.5, kSnapFadeIn = 0.06;
+    constexpr float kSnapSettledDeg = 1.5f;
+    double QpcNow() { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); LARGE_INTEGER c; QueryPerformanceCounter(&c); return (double)c.QuadPart / (double)f.QuadPart; }
+    void SnapBlankStart() { if (!g_SnapBlankOn.load()) return; g_SnapT0 = QpcNow(); g_SnapShownT = 0; g_SnapState = 1; g_SnapBlanks++; }
+    //! The game has turned (or was told to, without the servo): black until a view built from now on is shown.
+    void SnapBlankSettled(unsigned long long extraViews)
+    {
+        if (g_SnapState.load() != 1) return;
+        const unsigned long long latest = ViewMatrixHook::LatestSerial();
+        g_SnapUntil = latest ? latest + extraViews : 0;
+        g_SnapUntilT = QpcNow() + 0.035 * (double)extraViews;
+        g_SnapState = 2;
+    }
     double g_Now = 0, g_Dt = 1.0 / 90;            //!< seconds, from QPC; dt clamped (a hitch must not fling the view)
 
     // Console-style layout (the user's choice, 2026-09-30): smooth turning, crouch toggles on B (the game's C is a
@@ -635,8 +659,8 @@ namespace
             {
                 g_SnapArmed = false;
                 const float dir = in.turnX > 0 ? 1.f : -1.f;
-                if (servo) { g_DesiredYaw += -dir * snap; g_StickTurn = g_StickTurn.load() - dir * snap; }
-                else g_YawAccum += dir * snap * CountsPerDeg();
+                if (servo) { g_DesiredYaw += -dir * snap; g_StickTurn = g_StickTurn.load() - dir * snap; SnapBlankStart(); }
+                else { g_YawAccum += dir * snap * CountsPerDeg(); SnapBlankStart(); SnapBlankSettled(4); }
             }
             else if (fabsf(in.turnX) < 0.3f) g_SnapArmed = true;
         }
@@ -659,6 +683,9 @@ namespace
             while (err > 180.f) err -= 360.f;
             while (err < -180.f) err += 360.f;
             g_YawAccum = -err * CountsPerDeg() * kYawGain;   // mouse +dx turns right; game yaw + is left
+            // the game faces the snap's heading: the views built from here on show it (+1: the view of the state just read
+            // may not be built yet -- the game thread runs ahead of this Present)
+            if (fabsf(err) < kSnapSettledDeg) SnapBlankSettled(1);
             float perr = 0.f;
             // Not in a host: its camera pitch is animated (measured: -27 deg in one frame when the host stops walking,
             // then drifting back), so the servo only fought it, and nothing needs it there -- the view takes the head's
@@ -1270,6 +1297,39 @@ bool KbmInject::WorldYawOffset(float& deg)
     return true;
 }
 float KbmInject::StickTurnTotal() { return g_StickTurn.load(); }
+void KbmInject::SetSnapBlank(bool on)
+{
+    g_SnapBlankOn = on; if (!on) g_SnapState = 0;
+    LOGI("KbmInject: snap turns {}", on ? fmt::format("darken the headset ({:.0f} %) until the game has turned (SnapTurnBlank = 1)", g_SnapBlankDepth.load() * 100.f) : std::string("do not blank the headset"));
+}
+namespace { float SnapBlankRaw(unsigned long long serial); }
+float KbmInject::SnapBlankFade(unsigned long long serial)
+{
+    const float raw = SnapBlankRaw(serial);      // 0 = blanked .. 1 = clear
+    return raw >= 1.f ? 1.f : 1.f - g_SnapBlankDepth.load() * (1.f - raw);
+}
+void KbmInject::SetSnapBlankOpacity(float k) { g_SnapBlankDepth = k < 0.f ? 0.f : (k > 1.f ? 1.f : k); }
+namespace { float SnapBlankRaw(unsigned long long serial)
+{
+    const int st = g_SnapState.load();
+    if (!st) return 1.f;
+    const double now = QpcNow();
+    if (now - g_SnapT0.load() > kSnapTimeout + kSnapFadeIn) { g_SnapState = 0; return 1.f; }   // never settled (a takedown took the camera)
+    if (st == 1 && now - g_SnapT0.load() < kSnapTimeout) return 0.f;
+    if (st == 2)
+    {
+        const unsigned long long until = g_SnapUntil.load();
+        const bool before = serial && until ? serial < until : now < g_SnapUntilT.load();
+        if (before && now - g_SnapT0.load() < kSnapTimeout) return 0.f;
+    }
+    // the first image of the new heading: a short fade in, not a flash
+    double shown = g_SnapShownT.load();
+    if (shown <= 0) { shown = now; g_SnapShownT = now; }
+    const float k = (float)((now - shown) / kSnapFadeIn);
+    if (k >= 1.f) { g_SnapState = 0; return 1.f; }
+    return k < 0.25f ? 0.25f : k;
+} }
+unsigned long long KbmInject::SnapBlanks() { return g_SnapBlanks.load(); }
 void KbmInject::SetMenuInput(int m) { g_MenuInput = m; }
 int KbmInject::MenuInput() { return g_MenuInput; }
 void KbmInject::SetTurnSpeed(float d) { g_TurnSpeed = d; }

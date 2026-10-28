@@ -380,6 +380,25 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                     g_Session.SetSourceWarp(i, w);
                 }
             };
+            // The game's interface, lifted out of the stereo pictures (ScreenMode::PlayHud, StereoHud): one panel for both
+            // eyes on the plane of the picture it was drawn over, in the frame the game camera rendered it as -- the
+            // eye's turn to its frustum (warp) and the eye's own offset from the head taken back out
+            auto playHud = [&](const ViewMatrixHook::XrPose& rp) {
+                if (!rp.valid || !rp.tanValid || rp.flat) return;
+                float q[4]; memcpy(q, rp.quat, 16);
+                if (rp.eye >= 0)
+                {
+                    const float cw[4] = { -rp.warp[0], -rp.warp[1], -rp.warp[2], rp.warp[3] };
+                    float e[4]; VRMath::QMul(rp.quat, cw, e);     // the eye
+                    float rel[4];
+                    if (EyeRelative(rp.eye, rel)) { const float cr[4] = { -rel[0], -rel[1], -rel[2], rel[3] }; VRMath::QMul(e, cr, q); }
+                    else memcpy(q, e, 16);
+                }
+                float pos[3]; memcpy(pos, rp.pos, 12);
+                VRRuntime::PoseSet vps;
+                if (ViewMatrixHook::ViewPoses(rp.pair ? rp.pair : rp.serial, vps) && vps.valid && vps.head.valid) memcpy(pos, vps.head.pos, 12);
+                ScreenMode::PlayHud(g_Session, q, pos, rp.tan);
+            };
             // The layer's fov (vr layerfov): a stereo eye's image declares its own (margin included) when asked; a mono
             // image goes into each eye's native fov (warped there on canted displays)
             auto declareFor = [&](bool stereoEye) { g_Session.SetDeclareFov(stereoEye && g_LayerFov.load() != 0); };
@@ -437,7 +456,10 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                     int source = 0;
                     const ViewMatrixHook::XrPose rp = PickRenderPose(source);
                     imageKnown = rp.serial != 0; imageFlat = rp.flat;
+                    // a snap turn still on its way into the picture (KbmInject, SnapTurnBlank): black, then a short fade in
+                    if (!imageFlat) g_Session.DimFrame(KbmInject::SnapBlankFade(rp.pair ? rp.pair : rp.serial));
                 }
+                else g_Session.DimFrame(KbmInject::SnapBlankFade(0));
                 if (g_DropThis && !imageFlat)
                 {   // a disagreement of the eye phasing (above): nothing new to the headset this frame
                     g_Session.DropStagedPair(); g_Session.ResubmitLast();
@@ -450,6 +472,7 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                     int source = 0;
                     const ViewMatrixHook::XrPose rp = PickRenderPose(source);
                     PipeTrace::Event(PipeTrace::Present, 1);
+                    playHud(rp);
                     declareFor(true);
                     if (rp.valid && rp.eye == 1 && rp.pair && g_Session.SubmitPair(bb, rp.quat, rp.pos, rp.pair, rp.tanValid ? rp.tan : nullptr, rp.warp))
                     {
@@ -504,6 +527,7 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                     {
                         int source = 0;
                         const ViewMatrixHook::XrPose rp = PickRenderPose(source);
+                        playHud(rp);
                         if (rp.valid && rp.eye >= 0)
                         {
                             NoteShown(rp);

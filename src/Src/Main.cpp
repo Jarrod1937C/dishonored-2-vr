@@ -21,6 +21,8 @@
 #include "XInputHook.h"
 #include "PadProbe.h"
 #include "KbmInject.h"
+#include "Reticle.h"
+#include "ScreenMode.h"
 #include "HandAimHook.h"
 #include "WeaponPose.h"
 #include "HandFx.h"
@@ -64,6 +66,7 @@ static void OnPresent(IDXGISwapChain* sc)
     Commands::OnPresent();
     BodyView::OnPresent();        // vr fov auto: applied as soon as the headset gives its fov
     RenderRes::OnPresent(sc);
+    Reticle::Tick();              // the game's crosshair off while the hand reticles are on
     VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
     Overlay::OnPresent(sc);       // draws onto the backbuffer first...
     VRRuntime::OnPresent(sc);     // ...so the flat VR frame includes the overlay (debug aid)
@@ -114,6 +117,11 @@ static DWORD WINAPI InitThread(LPVOID)
     LOGI("settings: {}", Settings::Summary());
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
+    KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
+    KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
+    ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
+    ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
+    Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();

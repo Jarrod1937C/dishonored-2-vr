@@ -495,6 +495,11 @@ Vtable exe+0x1C72218, ctor exe+0x7EF5A0, update exe+0x7F38E0 (runs at load: a pl
   `m_aimOrigin`. Writing `m_aimOrigin/m_aimAxis` right after it holds for the rest of the frame (what every power and
   player sensor aims with). `GetAimOriginAndAxis(this, out, out)` exe+0x3C7CD0 (camera at this+0x40) is not used by
   firing.
+- **The eye travels with the pitch.** UpdateAim takes the world position of the joint at cam+0x2519A (exe+0x53D940)
+  and the eye (exe+0x417820), and puts `m_aimOrigin` at that joint + |eye - joint| * the view's forward: the eye is on
+  a sphere round the head joint. exe+0x7F4CD0 bends the joints at cam+0x2519E / +0x2519C / +0x2519A by fractions of
+  the pitch (+0x25268 / +0x2526C / +0x25270). So looking down carries the eye forward and down: a neck for a flat
+  screen (the mod's `CameraPitchFix` takes it out in VR, measured rather than modelled).
 - **The last writer of cam+0xD8/+0xFC each frame is exe+0x88C5E0** (adds shake and bob; rdx = cam+0x30): its return
   is the place to take a snapshot of the final camera.
 - `renderView_t copy(dst, src)` = exe+0x444C0, called with src = cam+0x30; the destination feeds the scene (view setup

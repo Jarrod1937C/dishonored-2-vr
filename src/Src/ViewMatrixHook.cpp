@@ -116,6 +116,84 @@ namespace
     std::atomic<bool> g_PivotFix{ true };                      // vr pivotfix: the game eye's offset from the body axis held in the room (see Hook)
     std::atomic<unsigned long long> g_PivotFixed{ 0 };
     std::atomic<float> g_HostScale{ 1.f };                     // head translation scale in a host (see Hook)
+
+    // ---- The game eye's travel with its pitch ([Display] CameraPitchFix) ----
+    // The game's eye is not on its pitch axis: the view pitch is spread over the first-person body's joints and the eye
+    // sits ahead of the head joint (UpdateAim, exe+0x7F4B30: m_aimOrigin = the joint + |eye - joint| * the view's
+    // forward; exe+0x7F4CD0 bends three joints by fractions of the pitch, m_armsPitch +0x25268..+0x25270). Looking down
+    // carries the eye forward and down, looking up back and up: a neck for a flat screen. In head-aim mode the game's
+    // pitch is the head's (the servo), and the headset already moves the eyes with the real neck -- so the world swayed
+    // to and fro with every nod, the game's neck on top of the player's own.
+    // How far the eye travels depends on the animation, so it is measured, not modelled: while the player stands still
+    // (the player entity unmoved), each change of the game's pitch between two views is paired with the change of the
+    // eye's offset from the player (forward in the body's yaw frame, and up), and the ratio (m per degree) is averaged
+    // per pitch band. The curve is the integral of that from level, and play's eye is moved back by it: the eye stays
+    // where it is with the view level, whatever the pitch. Unaffected by crouching or the eye height (a slope, not a
+    // position); a sample whose offset changes faster than any neck could (a crouch, a mantle) is dropped.
+    std::atomic<bool> g_PitchFix{ true };
+    constexpr int kPfBins = 60;                                  // 3 deg each, -90..+90
+    constexpr float kPfBin = 180.f / kPfBins;
+    struct PitchCurve
+    {
+        float slopeF[kPfBins] = {}, slopeZ[kPfBins] = {}, w[kPfBins] = {};
+        float lastP = 0, lastF = 0, lastZ = 0, lastPl[3] = {}; bool lastValid = false; int anchorAge = 0;
+        unsigned long long samples = 0, rejected = 0, applied = 0;
+        float lastCorrF = 0, lastCorrZ = 0;
+    };
+    PitchCurve g_Pf; std::mutex g_PfM;
+    int PfBinOf(float p) { int b = (int)floorf((p + 90.f) / kPfBin); return b < 0 ? 0 : b >= kPfBins ? kPfBins - 1 : b; }
+    //! the eye's travel (forward, up; m) from level to pitch p: the learned slopes integrated (g_PfM held)
+    void PfCurve(float p, float& f, float& z)
+    {
+        f = 0; z = 0;
+        if (p > 89.f) p = 89.f; if (p < -89.f) p = -89.f;
+        const float dir = p >= 0 ? 1.f : -1.f;
+        float at = 0.f;
+        while (dir * (p - at) > 1e-4f)
+        {
+            const int b = PfBinOf(at + dir * 1e-3f);
+            const float edge = -90.f + (b + (dir > 0 ? 1 : 0)) * kPfBin;      // the band's far edge in this direction
+            const float to = dir > 0 ? std::min(edge, p) : std::max(edge, p);
+            if (g_Pf.w[b] > 0.f) { f += g_Pf.slopeF[b] * (to - at); z += g_Pf.slopeZ[b] * (to - at); }
+            at = to;
+        }
+    }
+    //! one view of play: learn from it (standing still), and return the eye's travel at its pitch
+    void PfStep(float pitch, float fwd, float up, const float pl[3], bool learn, float& corrF, float& corrZ)
+    {
+        std::lock_guard lk(g_PfM);
+        PitchCurve& c = g_Pf;
+        // measured against an anchor view, kept until the pitch has moved a degree (a slow nod moves it a fraction of a
+        // degree a view) or the player moves; dropped after ~0.7 s (90 views), so idle sway cannot pile up in it
+        bool reanchor = !learn || !c.lastValid || ++c.anchorAge > 90;
+        if (!reanchor)
+        {
+            const float dp = pitch - c.lastP, df = fwd - c.lastF, dz = up - c.lastZ;
+            const float mv = fabsf(pl[0] - c.lastPl[0]) + fabsf(pl[1] - c.lastPl[1]) + fabsf(pl[2] - c.lastPl[2]);
+            if (mv >= 0.002f || fabsf(dp) > 12.f) reanchor = true;
+            else if (fabsf(dp) >= 1.f)
+            {
+                reanchor = true;
+                const float lim = 0.006f * fabsf(dp) + 0.002f;   // 0.34 m/rad: further than the eye is from any joint
+                if (fabsf(df) > lim || fabsf(dz) > lim) c.rejected++;
+                else
+                {
+                    const int b0 = PfBinOf(std::min(pitch, c.lastP)), b1 = PfBinOf(std::max(pitch, c.lastP) - 1e-3f);
+                    const float k = std::min(0.3f, fabsf(dp) / 10.f);   // a bigger step is a better measurement
+                    for (int b = b0; b <= b1; b++)                         // every band the step crossed
+                    {
+                        if (c.w[b] <= 0.f) { c.slopeF[b] = df / dp; c.slopeZ[b] = dz / dp; }
+                        else { c.slopeF[b] += (df / dp - c.slopeF[b]) * k; c.slopeZ[b] += (dz / dp - c.slopeZ[b]) * k; }
+                        c.w[b] += fabsf(dp);
+                    }
+                    c.samples++;
+                }
+            }
+        }
+        if (reanchor) { c.lastP = pitch; c.lastF = fwd; c.lastZ = up; memcpy(c.lastPl, pl, 12); c.lastValid = learn; c.anchorAge = 0; }
+        PfCurve(pitch, corrF, corrZ);
+        c.lastCorrF = corrF; c.lastCorrZ = corrZ; c.applied++;
+    }
     constexpr float kStandingEye = 1.70f;                      // m, a standing Corvo's camera over his feet (measured)
 
     float Wrap180(float d) { while (d > 180.f) d -= 360.f; while (d < -180.f) d += 360.f; return d; }
@@ -623,6 +701,7 @@ namespace
                     // correction, `pivLoco` the same with the offset play last used (g_PivotBody) -- what a moving
                     // state's view holds (see g_PivotBody).
                     float pivFull[2] = {}, pivLoco[2] = {}, pivL[2] = {}, pivErr = 0.f; bool pivAnchor = false, pivOk = false;
+                    float pitchCorrF = 0.f, pitchCorrZ = 0.f;    // the game eye's travel with its pitch (g_PitchFix)
                     if (g_PivotFix.load())
                     {
                         float off = 0;
@@ -640,6 +719,13 @@ namespace
                             if (dx * dx + dy * dy < 0.3f * 0.3f)
                             {
                                 pivL[0] = cg * dx + sg * dy; pivL[1] = -sg * dx + cg * dy;       // in the camera's yaw frame
+                                if (g_PitchFix.load())
+                                {   // the game's neck out of play's eye (g_PitchFix): forward here, the height below
+                                    const bool play = !g_AnimViewOn.load() && !KbmInject::Possessing();
+                                    const float pitch = asinf(Clampf(a[2], -1.f, 1.f)) * kR2D;
+                                    PfStep(pitch, pivL[0], o[2] - pl.org[2], pl.org, play, pitchCorrF, pitchCorrZ);
+                                    if (play) pivL[0] -= pitchCorrF; else pitchCorrF = pitchCorrZ = 0.f;
+                                }
                                 pivFull[0] = ca * pivL[0] - sa * pivL[1] - dx; pivFull[1] = sa * pivL[0] + ca * pivL[1] - dy;
                                 pivOk = true;
                             }
@@ -654,7 +740,7 @@ namespace
                     const AnimOut ao = AnimViewStep(o, a, hp, pivErr, ps.head);
                     if (pivAnchor && !g_AnimViewOn.load())
                     {   // play
-                        o[0] += pivFull[0]; o[1] += pivFull[1];
+                        o[0] += pivFull[0]; o[1] += pivFull[1]; o[2] -= pitchCorrZ;
                         if (pivOk) { g_PivotBody[0] = pivL[0]; g_PivotBody[1] = pivL[1]; g_PivotBodyValid = true; g_PivotFixed++; }
                     }
                     else if (pivAnchor && ao.loco)
@@ -767,6 +853,19 @@ bool ViewMatrixHook::Enabled() { return g_Enabled; }
 void ViewMatrixHook::Recenter() { g_RecenterReq = true; }
 void ViewMatrixHook::SetWorldScale(float s) { g_Scale = s; }
 void ViewMatrixHook::SetKeepGameAxis(bool on) { g_KeepGameAxis = on; }
+void ViewMatrixHook::SetPitchFix(bool on)
+{
+    g_PitchFix = on;
+    LOGI("ViewMatrixHook: the game eye's travel with its pitch {} (CameraPitchFix = {})", on ? "taken out of the view" : "kept", on ? 1 : 0);
+}
+std::string ViewMatrixHook::PitchFixStatus()
+{
+    std::lock_guard lk(g_PfM);
+    std::string s = fmt::format("pitchfix {} samples {} rejected {} now fwd {:.1f} up {:.1f} cm; curve (deg: fwd/up cm)", g_PitchFix.load() ? 1 : 0,
+                                g_Pf.samples, g_Pf.rejected, g_Pf.lastCorrF * 100.f, g_Pf.lastCorrZ * 100.f);
+    for (float p : { -60.f, -30.f, 30.f, 60.f }) { float f, z; PfCurve(p, f, z); s += fmt::format(" {:.0f}: {:.1f}/{:.1f}", p, f * 100.f, z * 100.f); }
+    return s;
+}
 void ViewMatrixHook::SetPivotFix(bool on) { g_PivotFix = on; LOGI("ViewMatrixHook: eye pivot held in the room {} ({} frames so far)", on, g_PivotFixed.load()); }
 void ViewMatrixHook::SetAnimCam(int mode) { g_AnimCam = mode; }
 int ViewMatrixHook::AnimCam() { return g_AnimCam.load(); }

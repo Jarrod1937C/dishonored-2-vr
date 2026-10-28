@@ -23,6 +23,8 @@ namespace
         { "controls.turnmode",          Kind::Choice, "smooth", 0, 0, "smooth|snap" },
         { "controls.smoothturnspeed",   Kind::Float,  "120", 30, 360, nullptr },
         { "controls.snapturnangle",     Kind::Float,  "45", 10, 90, nullptr },
+        { "controls.snapturnblank",     Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: black during a snap turn
+        { "controls.snapturnblankopacity", Kind::Float, "0.5", 0, 1, nullptr },   // how dark: 1 = black
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
         { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic" },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
@@ -32,6 +34,11 @@ namespace
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
         { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.minimalreticle",     Kind::Bool,   "0", 0, 0, nullptr },   // Reticle: only a small dot where each hand points
+        { "display.reticleopacity",     Kind::Float,  "0.5", 0.05f, 1, nullptr },
+        { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
+        { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
+        { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr },
         { "display.wristhudsize",       Kind::Float,  "8.5", 4, 15, nullptr },
         // 0 mono, 1 synchronised stereo, 2 the alternating stereo of 1.0 (whose ini had 1 / true for that one: it gets
@@ -210,6 +217,13 @@ bool Settings::LogInput() { return B("advanced.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
+bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
+float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }
+bool Settings::StereoHud() { return B("display.stereohud"); }
+float Settings::HudDistance() { return F("display.huddistance"); }
+bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
+bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
+float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 StereoSync::ReuseFlags Settings::StereoReuse()

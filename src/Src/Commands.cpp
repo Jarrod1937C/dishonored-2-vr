@@ -1150,6 +1150,7 @@ namespace
           << "\nxr_stereo " << VRRuntime::Stereo() << " mode " << (StereoSync::Active() ? "2 synchronised" : VRRuntime::Stereo() ? "1 alternating" : "0 mono") << " eye " << VRRuntime::CurrentEye() << " presented " << VRRuntime::PresentedEye() << "\n";
         f << RenderRes::Status() << "\n";
         f << VrTweaks::Status() << "\n";
+        f << ViewMatrixHook::PitchFixStatus() << " snapblanks " << KbmInject::SnapBlanks() << "\n";
         f << StereoTaa::Status() << "\n";
         f << StereoSync::Status() << "\n";
         f << MetaAsw::Status() << "\n";

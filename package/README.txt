@@ -153,7 +153,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 
  With Reticle = 1 in DishonoredVR.ini (off in this build), two lines show where each hand points:
  the RIGHT one is what the right grip takes or uses, the LEFT one is where a power or shot goes,
- with a ring where it will land.
+ with a ring where it will land. MinimalReticle = 1 shows only a small white dot where each one
+ ends (the right one grows when it is on something you can take or use); ReticleOpacity sets how
+ see-through they are.
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab
@@ -182,6 +184,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  file) gives you the default back. The values in this build's file:
 
    [Controls]  TurnMode = smooth (or snap)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 45
+               SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
+               SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
                QuickSlotHoldTime = 0.5 (s)       Haptics = 1 (vibration)
                Layout = default (the controls above; "classic" = Y leans, X interacts,
                                  menu button pauses)
@@ -189,6 +193,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)
    [Gameplay]  SwordGestures = 1   ThrowGestures = 1   GrabObjects = 1
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
+               MinimalReticle = 0 (1 = only a dot where each hand points)  ReticleOpacity = 0.5
+               StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)
+               HudDistance = 2 (m, how far away that layer floats)
+               CameraPitchFix = 1 (the game's camera does not slide forward / back as you look down / up)
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
                AmbientOcclusion = 1 (0 = no ambient occlusion in VR: faster)

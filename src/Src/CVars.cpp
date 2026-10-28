@@ -21,6 +21,8 @@ namespace
         { "com_showFPS",             0x288F540 },
         { "g_showHud",               0x3BFC270 },
         { "ark_ui_show_master_hud",  0x3BEFBB0 },
+        { "ark_ui_crosshair_style",  0 },        // Reticle: the game's crosshair off while the hand reticles are on
+        { "ark_ui_crosshair_opacity", 0 },
         { "ark_hud_enable_keyhole",  0x3BE0EF0 },
         { "ark_playerBobAmount",     0x3BEF1F0 },
         { "pm_noBob",                0x3BFC0F0 },

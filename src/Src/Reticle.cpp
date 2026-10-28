@@ -8,8 +8,10 @@
 #include "GrabHand.h"
 #include "SwordContact.h"
 #include "VRRuntime.h"
+#include "CVars.h"
 #include <imgui.h>
 #include <cmath>
+#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -18,6 +20,14 @@ namespace
     std::atomic<int> g_Mode{ 0 };
     std::atomic<float> g_Range{ 8.f };
     std::atomic<int> g_Axes{ 0 };
+    std::atomic<bool> g_Minimal{ false };
+    std::atomic<float> g_Opacity{ 0.5f };
+    //! `c` with its alpha scaled by ReticleOpacity
+    ImU32 Op(ImU32 c)
+    {
+        const float a = (float)((c >> IM_COL32_A_SHIFT) & 0xFF) * g_Opacity.load(std::memory_order_relaxed);
+        return (c & ~IM_COL32_A_MASK) | ((ImU32)(a + 0.5f) << IM_COL32_A_SHIFT);
+    }
     std::mutex g_M; Reticle::Stats g_Stats;
     // Research markers (`vr reticlemark x y z`): world points drawn as crosses, to check the projection against the image.
     std::vector<std::array<float, 3>> g_Marks;
@@ -59,6 +69,7 @@ namespace
         float end[3];
         bool engineTarget = false;
         float pick[3];
+        bool picked = false;            // the grab hand's ray is on something it can take
         const HandAimHook::Stats hs = HandAimHook::GetStats();
         // (+0x108, the tendril's END: +0x1C0, used before, is the curve's middle control point, which HandFx moves
         // with the tendril's start.)
@@ -71,7 +82,7 @@ namespace
         }
         else if (pointer)
         {   // up to the picked object (along the ray, then the ring on the object itself), else the sensor's reach
-            const bool picked = !GrabHand::HeldEntity() && GrabHand::HandHasTarget() && GrabHand::TargetPoint(pick) && Finite3(pick);
+            picked = !GrabHand::HeldEntity() && GrabHand::HandHasTarget() && GrabHand::TargetPoint(pick) && Finite3(pick);
             const float reach = GrabHand::PickRange() > 0.f ? GrabHand::PickRange() : 3.f;
             float len = reach;
             if (picked)
@@ -112,7 +123,8 @@ namespace
             if (!GpuTrace::ProjectWorld(w, ndc)) { n = 0; continue; }     // restart the run past the eye plane
             pts[n++] = ToScreen(ndc, size);
         }
-        if (n >= 2) dl->AddPolyline(pts, n, kColDim[h], 0, 2.0f);
+        const bool minimal = g_Minimal.load(std::memory_order_relaxed);
+        if (n >= 2 && !minimal) dl->AddPolyline(pts, n, Op(kColDim[h]), 0, 2.0f);
 
         // The ring at the end.
         float ndc[2], depth = 0;
@@ -120,10 +132,20 @@ namespace
         st.projValid |= 1 << h;
         const ImVec2 c = ToScreen(ndc, size);
         if (!pointer && h == HandAimHook::GunHand()) GunRay::NoteRing(c.x / size.x, c.y / size.y);   // the gun hand's ring, either mode (test scripts aim with it)
+        if (minimal)
+        {   // MinimalReticle: a white dot ringed in black, a fixed angular size (~0.3 deg across at the headset's density);
+            // three times that while the grab hand's ray is on something it can take
+            const float grow = picked ? 3.f : 1.f;
+            const float r = std::max(2.5f, size.y * 0.0016f) * grow, edge = std::max(1.5f, size.y * 0.0008f) * (picked ? 1.5f : 1.f);
+            dl->AddCircleFilled(c, r + edge, Op(IM_COL32(0, 0, 0, 255)), 16);
+            dl->AddCircleFilled(c, r, Op(IM_COL32(255, 255, 255, 255)), 16);
+            st.drawn++;
+            return;
+        }
         const float rad = size.y * 0.012f;                  // a fixed angular size reads as a reticle; range does not
-        dl->AddCircle(c, rad, kCol[h], 24, 2.0f);
-        if (engineTarget) dl->AddCircleFilled(c, rad, kColHit[h], 24);
-        dl->AddCircleFilled(c, 1.8f, kCol[h], 8);
+        dl->AddCircle(c, rad, Op(kCol[h]), 24, 2.0f);
+        if (engineTarget) dl->AddCircleFilled(c, rad, Op(kColHit[h]), 24);
+        dl->AddCircleFilled(c, 1.8f, Op(kCol[h]), 8);
         st.drawn++;
     }
 
@@ -269,6 +291,54 @@ void Reticle::Draw()
 }
 
 void Reticle::SetMode(int m) { g_Mode = m; }
+
+namespace
+{
+    // The game's own crosshair (ark_ui_crosshair_style 0 off / 1 dot / 2 normal, ark_ui_crosshair_opacity) is the
+    // centre of the game camera's view: with the hands aiming, it marks nothing. Off while the hand reticles are on and
+    // the headset shows the game, and the player's values put back otherwise. Only the live values are written (as
+    // WristHud does with the HUD option): the game's config keeps the player's choice. A value the player picks in the
+    // options meanwhile is taken as their new choice, to put back later.
+    int g_UserStyle = -1; float g_UserOpacity = -1.f; bool g_Forced = false;
+    ULONGLONG g_NextCrossCheck = 0;
+}
+
+void Reticle::Tick()
+{
+    const ULONGLONG now = GetTickCount64();
+    if (now < g_NextCrossCheck || !CVars::Available()) return;
+    g_NextCrossCheck = now + 1000;
+    const bool want = g_Mode.load() != 0 && VRRuntime::GetStatus().running;
+    const int style = CVars::GetInt("ark_ui_crosshair_style", -1);
+    const float opacity = CVars::GetFloat("ark_ui_crosshair_opacity", -1.f);
+    if (style < 0) return;
+    if (want)
+    {
+        if (style != 0 || (opacity > 0.f))
+        {
+            // (only what differs from the forced value is the player's: the other one is still ours)
+            if (style != 0 || g_UserStyle < 0) g_UserStyle = style;
+            if (opacity > 0.f || (g_UserOpacity < 0.f && opacity >= 0.f)) g_UserOpacity = opacity;
+            CVars::SetInt("ark_ui_crosshair_style", 0);
+            if (opacity >= 0.f) CVars::SetFloat("ark_ui_crosshair_opacity", 0.f);
+            if (!g_Forced) LOGI("Reticle: the game's crosshair off while the hand reticles are on (was style {}, opacity {:.2f})", style, opacity);
+            g_Forced = true;
+        }
+    }
+    else if (g_Forced)
+    {
+        if (g_UserStyle >= 0) CVars::SetInt("ark_ui_crosshair_style", g_UserStyle);
+        if (g_UserOpacity >= 0.f) CVars::SetFloat("ark_ui_crosshair_opacity", g_UserOpacity);
+        LOGI("Reticle: the game's crosshair back to the player's setting (style {}, opacity {:.2f})", g_UserStyle, g_UserOpacity);
+        g_Forced = false; g_UserStyle = -1; g_UserOpacity = -1.f;
+    }
+}
+void Reticle::SetStyle(bool minimal, float opacity)
+{
+    g_Minimal = minimal;
+    g_Opacity = opacity < 0.05f ? 0.05f : (opacity > 1.f ? 1.f : opacity);
+    LOGI("Reticle: {} at opacity {:.2f}", minimal ? "a dot where each hand points (MinimalReticle = 1)" : "rays and rings", g_Opacity.load());
+}
 void Reticle::AddMark(const float* w) { std::lock_guard lk(g_M); if (g_Marks.size() < 32) g_Marks.push_back({ w[0], w[1], w[2] }); }
 void Reticle::ClearMarks() { std::lock_guard lk(g_M); g_Marks.clear(); }
 void Reticle::SetAxes(int on) { g_Axes = on; }

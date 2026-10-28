@@ -41,6 +41,12 @@ namespace ScreenMode
     //! `imageKnown` false when there is no record. True = the frame was submitted here (the menu screen); false = the
     //! caller submits the game's picture as usual (the wheel's panel and the fade back in are already set on `xr`).
     bool OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, bool imageKnown);
+    //! Stereo play ([Display] StereoHud): the game's interface, lifted out of both eyes' pictures, on one panel for both
+    //! eyes -- the plane of the picture it was drawn over at HudDistance, seen from where that picture was rendered:
+    //! `quat`/`pos` the head's frame the game camera rendered it as (no eye turn), `tan` its tangent extents (l r u d).
+    //! Render thread, in the XR frame, before the frame is submitted.
+    void PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4]);
+    void SetHud(bool on, float dist);        //!< from the ini, before the first frame
     //! Bring the screen in front of the eyes (a stick click in a menu).
     void RequestRecenter(const char* why);
     //! The controllers just asked the game for a menu (the pause, the journal): the screen comes up now instead of

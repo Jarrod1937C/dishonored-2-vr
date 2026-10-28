@@ -25,6 +25,10 @@ namespace ViewMatrixHook
     //! Head-aim mode: hold the game eye's offset from the body axis fixed in the room (1, default) instead of letting it
     //! swing with the body's yaw (0, the old behaviour; measured as a 1.6 deg world shift over a 60 deg head turn).
     void SetPivotFix(bool on);
+    //! [Display] CameraPitchFix: the game eye's forward/up travel with the game's pitch (a flat screen's neck) measured
+    //! while standing still and taken out of play's view: the headset already moves the eyes with the real neck.
+    void SetPitchFix(bool on);
+    std::string PitchFixStatus();          //!< the measured curve (the heartbeat)
     //! The takedown view, in head-aim mode while PlayerState reports a scripted animation: 0 the game's camera,
     //! 1 the animation's camera plus the head's turn since it began, 2 (the default of vr weapon6dof) rotation from
     //! the head alone with the animation's position, rate-limited to `speed` m/s so its pops become a quick glide.

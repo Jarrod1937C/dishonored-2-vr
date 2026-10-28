@@ -1638,8 +1638,9 @@ void XRSession::SubmitFrame(ID3D11Texture2D* source, int onlyEye)
     // Back from the menu screen in alternating stereo: the other eye's swapchain holds the backdrop, so this one picture
     // goes to both eyes (as mono) and the alternation resumes on the next frame.
     if (m_ResyncEyes) { onlyEye = -1; m_ResyncEyes = false; }
-    const float fade = m_FrameFade < 0.f ? 0.f : (m_FrameFade > 1.f ? 1.f : m_FrameFade);
-    m_FrameFade = 1.f;
+    const float fk = m_FrameFade * m_FrameDim;
+    const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
+    m_FrameFade = 1.f; m_FrameDim = 1.f;
 
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
 
@@ -2004,8 +2005,9 @@ bool XRSession::SubmitPair(ID3D11Texture2D* right, const float quat[4], const fl
     float tanR[4]; memcpy(tanR, tan ? tan : m_SrcTan, 16);
     if (!m_FrameStarted || m_ViewCount != 2 || !OrthoReady() || m_MatchedFov) return false;
     if (!m_PairStaged || m_PairId != pair || !m_PairSrv) return false;
-    const float fade = m_FrameFade < 0.f ? 0.f : (m_FrameFade > 1.f ? 1.f : m_FrameFade);
-    m_FrameFade = 1.f; m_ResyncEyes = false; m_RenderPoseValid = false;
+    const float fk = m_FrameFade * m_FrameDim;
+    const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
+    m_FrameFade = 1.f; m_FrameDim = 1.f; m_ResyncEyes = false; m_RenderPoseValid = false;
     const float poseR[7] = { quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2] };
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
     DrawEye(0, nullptr, m_PairSrv, m_PairPose, m_PairTan, m_PairWarp, fade, projViews[0]);
@@ -2365,7 +2367,7 @@ void XRSession::SubmitScreen(const XRBackdrop& b)
         m_EyePoseValid[i] = false;          // that eye's last image is no longer a picture of the game
     }
     m_RenderPoseValid = false;
-    m_FrameFade = 1.f;
+    m_FrameFade = 1.f; m_FrameDim = 1.f;
     m_Wrist.alpha = 0;                      // no watch over a menu
     m_Panel[1].alpha = 0;                   // nor the wheel's panel
     m_ScreenFrames++;

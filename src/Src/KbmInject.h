@@ -23,6 +23,13 @@ namespace KbmInject
     bool WorldYawOffset(float& deg);
     //! Degrees of turn the stick has added to the head-aim target since start (+ = left). Read by the takedown view.
     float StickTurnTotal();
+    //! [Controls] SnapTurnBlank: black from a snap turn until the headset shows an image of the new heading.
+    void SetSnapBlank(bool on);
+    void SetSnapBlankOpacity(float k);     //!< [Controls] SnapTurnBlankOpacity: 1 = black, 0.3 = 30 % darker (before SetSnapBlank)
+    //! Brightness for the headset image built from view `serial` (a pair's left serial; 0 = unknown): 1 normally, 0 while
+    //! a snap turn is blanked, then a short fade in. Render thread (VRRuntime::OnPresent).
+    float SnapBlankFade(unsigned long long serial);
+    unsigned long long SnapBlanks();       //!< snap turns blanked so far (the heartbeat)
     void Calibrate();
     //! The HMD's yaw jumped without the head moving (a recenter): re-seed the servo instead of turning the game.
     void ResetHeadRef();            //!< measure mouse counts/degree in-game (logs the result)

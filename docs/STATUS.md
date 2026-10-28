@@ -84,6 +84,8 @@ headset.
 | Runtime recenter; position reference reset on every load | Done | Mock | |
 | Tracking loss: last good head and hand pose held | Done | Mock | |
 | Smooth turn (120 deg/s) or snap turn (45 deg) on the right stick | Done | Played (Q3) | `TurnMode`, `SmoothTurnSpeed`, `SnapTurnAngle`. |
+| Snap turn blanks the headset until the picture shows the new heading | Done | Not yet tested | `SnapTurnBlank` (default 1). |
+| The game's pitch "neck" taken out of the view in head-aim mode (no sliding forward / back when nodding) | Done | Not yet tested | `CameraPitchFix` (default 1); measured while standing still, curve on the heartbeat. |
 
 ### 2.3 Controls and button layout
 
@@ -227,6 +229,8 @@ headset.
 | `InfiniteMana` (default 1) | Done | Fixed, unverified | Fills to at least 100 (a save could bring a lowered cap, which left half a bar). |
 | `InfiniteAmmo`, `InfiniteHealth` (default 0) | Done | Mock | |
 | `Reticle` (default 0): two pointing lines, a ring where shots land | Done, off | Mock | |
+| The game's HUD in stereo on one layer for both eyes (it was drawn into each eye's picture and seen double) | Done | Not yet tested | `StereoHud` (default 1), `HudDistance` (default 2 m). |
+| `MinimalReticle` (default 0): only a white dot with a black edge at each ray's end; `ReticleOpacity` (default 0.5) | Done | Not yet tested | |
 | Developer console (`vr ...` commands), `DVR_autoexec.txt`, status file `DVR_heartbeat.txt` (`WriteStatusFile`) | Tools | - | Press Insert to open the overlay. |
 
 **Release 0.5.0 configuration:** synchronised 3D (`Stereo3D = 1`), `DisableMetaASW = 1`, otherwise as 1.0.0.

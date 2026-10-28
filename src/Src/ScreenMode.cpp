@@ -6,6 +6,7 @@
 #include "VRRuntime.h"
 #include "Settings.h"
 #include "Game.h"
+#include "VRMath.h"
 #include <d3d11.h>
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,13 @@ namespace
     std::atomic<int> g_Mode{ 1 };
     std::atomic<bool> g_Flat{ false }, g_Wheel{ false }, g_Lift{ false };
     std::atomic<bool> g_RecenterReq{ false };
+    // [Display] StereoHud / HudDistance: in stereo, the game's interface (drawn into each eye's picture at the same
+    // pixels) is taken out of the pictures and shown on ONE panel for both eyes (PlayHud). The same pixels in two
+    // pictures are not the same direction: each eye's picture is rendered for its own frustum, turned towards that
+    // frustum's centre (wider on the nose side), so a HUD element came out at two directions -- double, and diverging.
+    std::atomic<bool> g_HudOn{ true };
+    std::atomic<float> g_HudDist{ 2.f };
+    std::atomic<unsigned long long> g_HudPanels{ 0 };
     std::mutex g_M;                            // the config and the state below (render thread + the command thread)
 
     struct Cfg
@@ -228,7 +236,8 @@ bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, b
     ID3D11ShaderResourceView* wsrv = WristHud::Texture(wtw, wth, &wgamma);
     g_Flat = g_Kind == kScreen;
     g_Wheel = g_Kind == kWheel;
-    g_Lift = g_Kind == kWheel && g_C.wheel != 0 && wsrv && wtw && wth;
+    g_Lift = (g_Kind == kWheel && g_C.wheel != 0 && wsrv && wtw && wth)
+          || (g_HudOn.load() && g_Kind == kPlay && g_Mode.load() && VRRuntime::Stereo() && wsrv && wtw && wth);   // PlayHud
 
     // ---- what this frame shows ----
     // A picture rendered flat is shown on the screen even once play has resumed (the pipeline is deeper than one
@@ -343,6 +352,36 @@ bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, b
     return false;
 }
 
+void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4])
+{
+    std::lock_guard lk(g_M);
+    if (!g_Lift.load() || g_Kind != kPlay) return;
+    unsigned tw = 0, th = 0; bool gamma = false;
+    ID3D11ShaderResourceView* srv = WristHud::Texture(tw, th, &gamma);
+    if (!srv || !tw || !th) return;
+    const float d = g_HudDist.load();
+    const float l = tan[0], r = tan[1], u = tan[2], dn = tan[3];
+    if (!(r > l) || !(u > dn)) return;
+    XRPanelLayer p;
+    p.srv = srv; p.srcW = tw; p.srcH = th;
+    p.crop[0] = 0.f; p.crop[1] = 0.f; p.crop[2] = (float)tw; p.crop[3] = (float)th;
+    p.premultiplied = true; p.gamma = gamma; p.alpha = 1.f; p.corner = 0.f; p.soft = 0.f;
+    // the plane the picture was rendered on, at d: the interface's pixels are where the picture's are
+    p.width = d * (r - l); p.height = d * (u - dn);
+    const float c[3] = { d * (r + l) * 0.5f, d * (u + dn) * 0.5f, -d };
+    float w[3]; VRMath::QRotate(quat, c, w);
+    for (int i = 0; i < 3; i++) p.pos[i] = pos[i] + w[i];
+    memcpy(p.quat, quat, 16);
+    p.outW = std::min(tw, 4096u); p.outH = std::min(th, 4096u);
+    xr.SetPanelLayer(1, p);
+    g_HudPanels++;
+}
+void ScreenMode::SetHud(bool on, float dist)
+{
+    g_HudOn = on; g_HudDist = std::clamp(dist, 0.5f, 10.f);
+    LOGI("ScreenMode: stereo HUD {} ({:.1f} m)", on ? "on one panel for both eyes (StereoHud = 1)" : "in each eye's picture (StereoHud = 0)", g_HudDist.load());
+}
+
 void ScreenMode::SetMode(int m)
 {
     g_Mode = m ? 1 : 0;
@@ -399,9 +438,9 @@ std::string ScreenMode::Status()
     float c[3] = {}; if (g_Cur.valid) Centre(g_Cur, c);
     return fmt::format("screen on {} kind {} scene {} crop {:.0f} {:.0f} {:.0f} {:.0f} flat {} wheelview {} lift {} alpha {:.2f} entries {} exits {} frames {} screenframes {} flatonly {} "
                        "place yaw {:.1f} pitch {:.1f} dist {:.2f} centre {:.2f} {:.2f} {:.2f} gliding {} recenters {} follows {} "
-                       "backdrop freezes {} none {} dropped {} snapfade {:.2f} expects {} missed {} wheels {} wheelpanels {} wheelalpha {:.2f} wheelyaw {:.1f} wheelpitch {:.1f}",
+                       "backdrop freezes {} none {} dropped {} snapfade {:.2f} expects {} missed {} wheels {} wheelpanels {} wheelalpha {:.2f} wheelyaw {:.1f} wheelpitch {:.1f} hud {} hudpanels {}",
                        g_Mode.load(), KindName(g_Kind), g_Scene, g_LastCrop[0], g_LastCrop[1], g_LastCrop[2], g_LastCrop[3], g_Flat.load() ? 1 : 0, g_Wheel.load() ? 1 : 0, g_Lift.load() ? 1 : 0, g_ScreenAlpha,
                        g_S.entries, g_S.exits, g_S.frames, g_S.screenFrames, g_S.flatOnly,
                        g_Cur.yaw * kR2D, g_Cur.pitch * kR2D, g_Cur.d, c[0], c[1], c[2], g_GlideT >= 0.f ? 1 : 0, g_S.recenters, g_S.follows,
-                       g_S.freezes, g_S.noFreeze, g_S.snapDropped, g_SnapFade, g_S.expects, g_S.expectMissed, g_S.wheels, g_S.wheelPanels, g_WheelAlpha, g_WheelAt.yaw * kR2D, g_WheelAt.pitch * kR2D);
+                       g_S.freezes, g_S.noFreeze, g_S.snapDropped, g_SnapFade, g_S.expects, g_S.expectMissed, g_S.wheels, g_S.wheelPanels, g_WheelAlpha, g_WheelAt.yaw * kR2D, g_WheelAt.pitch * kR2D, g_HudOn.load() ? 1 : 0, g_HudPanels.load());
 }

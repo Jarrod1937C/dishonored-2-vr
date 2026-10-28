@@ -24,6 +24,11 @@ namespace Reticle
     int  Axes();
     void SetRange(float metres);        //!< how far along the ray the ring sits with no engine target (default 8 m)
     float Range();
+    //! [Display] MinimalReticle / ReticleOpacity: `minimal` draws only the end of each ray, as a small white dot ringed
+    //! in black (seen on any background), with no line and no ring; `opacity` (0.05..1) scales the reticle's alpha.
+    void SetStyle(bool minimal, float opacity);
+    //! Once a frame (Present): the game's own crosshair off while the hand reticles are on in VR, back otherwise.
+    void Tick();
     //! Draw into the current ImGui frame's foreground list. Called from Overlay::OnPresent, which owns the frame.
     void Draw();
     struct Stats { unsigned long long frames = 0, drawn = 0; int handValid = 0, projValid = 0, engineTarget = 0; };
