@@ -113,6 +113,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Settings::Load();
     LOGI("settings: {}", Settings::Summary());
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
+    VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();

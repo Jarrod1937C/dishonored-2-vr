@@ -1173,6 +1173,18 @@ Shader identifiers (DXBC checksums) used in code: Scaleform interface VS `7ACC1A
 Things that cost real time. Measured; listed so nobody repeats them.
 
 **Dead ends**
+- **Skipping the right eye's shadow passes in synchronised stereo** (exe+0x32D4B0 for the right eye's view): shadows
+  broke in BOTH eyes. The sun's farther cascades are updated on alternate frames (frame parity, exe+0x32EF1D); in
+  synchronised stereo alternate frames are alternate eyes, so some cascades are only ever updated in the right eye's
+  frames. A pass may be skipped per eye only if the engine simply redoes it every frame.
+- **Writing r_skipDOF / r_skipLensFlares / r_SSSBlurQuality / r_textureUploadTimesliceMs while in VR**: the game hung
+  at its main menu (not narrowed down to one). r_skipDOF and r_skipLensFlares are the game's own menu options
+  (ARK_VISUALSETTING_DOF / _LENS_FLARE); the menu code backs r_skipDOF up into r_skipDofBck and restores it through
+  the setter (exe+0x4F2FC0, exe+0x50F9DE), so a live value can reach the config. Per view, use the render flags
+  instead: view+0x3A37 bit 0 = no DOF (tested by the DOF pass, exe+0x315634), bit 1 = no SSAO (the SSAO pass,
+  exe+0x305BF3), both set from the cvars in the view setup (exe+0x375075 / exe+0x37508F) before the passes run.
+- **The game's ambient-occlusion option** (ARK_VISUALSETTING_HBAO_PLUS, `r_hbao`) chooses NVIDIA HBAO+ or the game's
+  own AO (DWAO, `r_SsaoType 1`); it never turns AO off. Only `r_skipSSAO` (no menu) does.
 - **Moving first-person arms/weapons from the CPU.** Writing the equipment entity's +0x300/+0x30C (or its transform
   component, or `arkTransformSet` of weapon and arm models), skipping `SetOriginAndAxis`, writing cam+0xD8/+0xFC after
   the shake hook, cam+0x25464, or the scene renderView copy ("FP anchor"): the image does not change beyond the idle

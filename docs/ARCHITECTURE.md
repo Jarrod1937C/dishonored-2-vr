@@ -173,15 +173,17 @@ into `vr ...` commands in two batches:
 
 A few settings are read directly by the module that needs them: `RenderScale` (RenderRes), `ControllerPitchOffset`
 and `LogControllerInput` (XRSession), `Haptics` (VRRuntime), `WriteStatusFile` (the heartbeat), `VrGraphicsTweaks`
-(VrTweaks) and the experimental `StereoShadowReuse`, `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
+and `AmbientOcclusion` (VrTweaks) and the experimental `StereoOceanReuse`, `StereoReflectionReuse`, `StereoDecalReuse`
 and `StereoStreamOncePerPair` (StereoSync).
 
-**VrTweaks** ([VrTweaks.cpp](../src/Src/VrTweaks.cpp), ini `VrGraphicsTweaks`, default 1): while the headset shows the
-game, depth of field and lens flares are off (`r_skipDOF`, `r_skipLensFlares`: wrong in a headset), the skin blur takes
-23 taps instead of 92 (`r_SSSBlurQuality 2`) and texture uploads 1.5 ms a frame instead of 3
-(`r_textureUploadTimesliceMs`: at two frames per headset frame the game's budget was half a frame while streaming).
-The two archived ones are written as live values only (nothing reaches the game's config) and held; the other two go
-through the console once. Everything is put back when the headset stops showing the game.
+**VrTweaks** ([VrTweaks.cpp](../src/Src/VrTweaks.cpp)): while the headset shows the game, the main view's own render
+flags (view+0x3A37, set by the engine every frame from `r_skipDOF` / `r_skipSSAO` before the passes run) get "no
+depth of field" (ini `VrGraphicsTweaks`, default 1: in a headset the eyes focus, not the camera) and, if the ini asks,
+"no ambient occlusion" (`AmbientOcclusion = 0`: the game's own option only switches between HBAO+ and its own AO).
+ViewMatrixHook sets them as the main view is built. No cvar is written: the game's options, its config and its own
+backup of the DOF setting (`r_skipDofBck`) stay the player's. A first version wrote cvars (`r_skipDOF`,
+`r_skipLensFlares`, `r_SSSBlurQuality`, `r_textureUploadTimesliceMs`) and the game hung at its main menu; DOF and lens
+flares are also options in the game's own Visuals menu.
 
 ### The VR package and its automatic activation
 
@@ -285,11 +287,12 @@ what the player's game learns later replaces it.
     update budget is halved meanwhile (`r_ILProbeUpdate_MaxUpdatesPerFrame`, per rendered frame: the same rate per
     second as flat play). Experimental, each off by default in the ini: the right eye's frame skips render passes
     that only repeat what the left eye's frame of the same tick just did, the way the engine skips a disabled task
-    (its context marked empty): the shadow maps (`StereoShadowReuse`, exe+0x32D4B0), the ocean's simulation
-    (`StereoOceanReuse`, UPDATE_OCEAN_FFT / UPDATE_OCEAN), the reflection probes' relighting (`StereoReflectionReuse`,
+    (its context marked empty): the ocean's simulation (`StereoOceanReuse`, UPDATE_OCEAN_FFT / UPDATE_OCEAN), the reflection probes' relighting (`StereoReflectionReuse`,
     INDIRECT_LIGHTING_UPDATE_IBL), the decals on NPCs (`StereoDecalReuse`) and the texture streamer
     (`StereoStreamOncePerPair`). A task is the right eye's when its view (task+0x70) is a main view object and that
-    view's matrix names the right view of a pair. Hooks exist only for what the ini asks for. A gate holds only in play: not paused or stopped, no menu,
+    view's matrix names the right view of a pair. Hooks exist only for what the ini asks for. NOT the shadows: skipping
+    them for the right eye (exe+0x32D4B0) broke shadows in both eyes, because the engine updates the sun's farther
+    cascades on alternate frames, which in synchronised stereo are always the same eye's. A gate holds only in play: not paused or stopped, no menu,
     menu screen or player change, no hitch, and 30 Presents after any of those changed (holding a frame while a pause
     menu opened crashed the game's UI). Anything else is a mono view; a stereo health check falls back to mono (logged,
     retried with backoff) when no pair reaches the headset (`vr stereohealth`).
@@ -962,7 +965,7 @@ entries replaced).
 | [PlayerViewHook](../src/Src/PlayerViewHook.cpp) | (disabled) render views of other entities | exe+0x881640 |
 | [BodyView](../src/Src/BodyView.cpp) | body-vs-real instrument, `fov auto` mode | - |
 | [StereoTaa](../src/Src/StereoTaa.cpp) | per-eye TAA in stereo | via GpuTrace context hooks and ViewMatrixHook |
-| [StereoSync](../src/Src/StereoSync.cpp) | synchronised stereo: every second game frame held (Draw only), its gate, input reads deferred | idGameLocal::RunFrame exe+0x8ACDF0, Draw exe+0x8AC710 (called), keyboard / mouse reads exe+0xE1970 / exe+0xE2930, right-eye pass skips (`Stereo*Reuse`: exe+0x32D4B0, exe+0x3053B0, exe+0x305370, exe+0x3102A0, exe+0x340F10, exe+0x34FD00), `r_ILProbeUpdate_MaxUpdatesPerFrame` |
+| [StereoSync](../src/Src/StereoSync.cpp) | synchronised stereo: every second game frame held (Draw only), its gate, input reads deferred | idGameLocal::RunFrame exe+0x8ACDF0, Draw exe+0x8AC710 (called), keyboard / mouse reads exe+0xE1970 / exe+0xE2930, right-eye pass skips (`Stereo*Reuse`: exe+0x3053B0, exe+0x305370, exe+0x3102A0, exe+0x340F10, exe+0x34FD00), `r_ILProbeUpdate_MaxUpdatesPerFrame` |
 | [PipeTrace](../src/Src/PipeTrace.cpp) | frame pipeline trace | - |
 | [KbmInject](../src/Src/KbmInject.cpp) | controllers to keyboard/mouse, modes, head-aim servo, focus | `SendInput`; reads `g_mouseSensitivity`, `g_invertMouseYAxis` |
 | [KeyBinds](../src/Src/KeyBinds.cpp) | the player's key bindings, physical key positions | reads `dishonored2Config.cfg` |
@@ -987,7 +990,7 @@ entries replaced).
 | [WristHud](../src/Src/WristHud.cpp) | interface copy, wrist watch, letterbox removal | via GpuTrace draw hooks; `ark_ui_show_master_hud` |
 | [BinkVideo](../src/Src/BinkVideo.cpp) | is a pre-rendered video playing | `bink2w64.dll` exports (BinkOpen, BinkOpenWithOptions, BinkClose, BinkDoFrame, BinkDoFrameAsync, BinkNextFrame) |
 | [Settings](../src/Src/Settings.cpp) | the ini, turned into commands | - |
-| [VrTweaks](../src/Src/VrTweaks.cpp) | the ini's VR graphics tweaks, while the headset shows the game | `r_skipDOF` (read exe+0x375073), `r_skipLensFlares` (exe+0x375264), `r_SSSBlurQuality`, `r_textureUploadTimesliceMs` |
+| [VrTweaks](../src/Src/VrTweaks.cpp) | VR-only render changes through the main view's render flags (no depth of field, optionally no AO) | view+0x3A37 bits 0 / 1 (DOF pass exe+0x315634, SSAO pass exe+0x305BF3) |
 | [Commands](../src/Src/Commands.cpp) | command channel, console, heartbeat, package activation | engine console (`BufferCommandText`) |
 | [TestAids](../src/Src/TestAids.cpp) | cheats and test aids via the game's own functions | GiveMark exe+0x4C1E50, AddItem exe+0x6156E0, AddEquipmentUpgrade exe+0x4557A0, component typeinfos |
 | [Game](../src/Src/Game.cpp), [GameInfo](../src/Src/GameInfo.cpp), [CVars](../src/Src/CVars.cpp) | engine accessors, build facts, cvars | game local exe+0x39A5290, GetLocalPlayer exe+0x8A8830, command system exe+0x228BAE0 |

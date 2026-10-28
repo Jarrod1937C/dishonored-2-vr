@@ -1,91 +1,54 @@
 #include "pch.h"
 #include "VrTweaks.h"
-#include "CVars.h"
-#include "Game.h"
 #include "VRRuntime.h"
 
 namespace
 {
-    //! One setting. `console`: set through the game's console (the engine reads it through its own path; these two are
-    //! not saved in the game's config) instead of the live value (read where it is used, every frame -- r_skipDOF at
-    //! exe+0x375073, r_skipLensFlares at exe+0x375264 -- and saved in the config: writing only the live value keeps the
-    //! player's own setting out of it).
-    struct Tweak
-    {
-        const char* name; float value; bool isFloat; bool console;
-        float saved = 0.f; bool held = false;
-    };
-    Tweak g_T[] = {
-        { "r_skipDOF",                  1.f,  false, false },
-        { "r_skipLensFlares",           1.f,  false, false },
-        { "r_SSSBlurQuality",           2.f,  false, true },
-        { "r_textureUploadTimesliceMs", 1.5f, true,  true },
-    };
-    std::atomic<bool> g_Enabled{ true };
-    bool g_Active = false;            // render thread only
-    unsigned g_Since = 0;
-    std::mutex g_SM; std::string g_Status = "vrtweaks off";
-
-    float Get(const Tweak& t) { return t.isFloat ? CVars::GetFloat(t.name) : (float)CVars::GetInt(t.name); }
-    std::string Text(const Tweak& t, float v) { return t.isFloat ? fmt::format("{} {}", t.name, v) : fmt::format("{} {}", t.name, (int)v); }
-    void Set(const Tweak& t, float v)
-    {
-        if (t.console) Game::BufferCommandText(Text(t, v).c_str());
-        else if (t.isFloat) CVars::SetFloat(t.name, v);
-        else CVars::SetInt(t.name, (int)v);
-    }
-    void SetStatus(std::string s) { std::lock_guard lk(g_SM); g_Status = std::move(s); }
+    // The main view object's render flags (in its renderView's settings), set by the engine every frame from cvars
+    // before the view's passes run: +0x3A37 bit 0 = no depth of field, bit 1 = no SSAO.
+    constexpr uint32_t kViewFlags = 0x3A37;
+    constexpr uint8_t kNoDof = 0x01, kNoAo = 0x02;
+    std::atomic<bool> g_Enabled{ true }, g_Ao{ true }, g_Active{ false };
+    std::atomic<unsigned long long> g_Views{ 0 };
+    bool g_WasActive = false;   // render thread only
 }
 
 void VrTweaks::SetEnabled(bool on)
 {
     g_Enabled = on;
-    LOGI("VrTweaks: VR graphics tweaks {}", on ? "on while the headset shows the game (VrGraphicsTweaks = 1)" : "off (VrGraphicsTweaks = 0)");
+    LOGI("VrTweaks: depth of field {} in VR (VrGraphicsTweaks = {})", on ? "off" : "as the game has it", on ? 1 : 0);
+}
+
+void VrTweaks::SetAmbientOcclusion(bool on)
+{
+    g_Ao = on;
+    if (!on) LOGI("VrTweaks: ambient occlusion off in VR (AmbientOcclusion = 0)");
 }
 
 void VrTweaks::OnPresent()
 {
-    if (!CVars::Available()) return;
-    const bool want = g_Enabled.load() && VRRuntime::GetStatus().running;
-    if (want && !g_Active)
+    const bool active = (g_Enabled.load() || !g_Ao.load()) && VRRuntime::GetStatus().running;
+    g_Active = active;
+    if (active != g_WasActive)
     {
-        std::string s;
-        for (Tweak& t : g_T)
-        {
-            t.held = CVars::Address(t.name) != 0;
-            if (!t.held) { s += fmt::format(" {} (not found)", t.name); continue; }
-            t.saved = Get(t);
-            Set(t, t.value);
-            s += fmt::format(" {} {} -> {}", t.name, t.saved, t.value);
-        }
-        g_Active = true; g_Since = 0;
-        LOGI("VrTweaks: the headset shows the game: graphics tweaks on:{}", s);
-        SetStatus("vrtweaks on:" + s);
-    }
-    else if (want)
-    {
-        // The options menu (a quality preset) can write the live ones again: they are held. The console ones are set
-        // once (the command runs on a later frame); their live values are logged once, as a check.
-        for (Tweak& t : g_T) if (t.held && !t.console && Get(t) != t.value) Set(t, t.value);
-        if (++g_Since == 300)
-        {
-            std::string s;
-            for (const Tweak& t : g_T) if (t.held) s += fmt::format(" {}={}", t.name, Get(t));
-            LOGI("VrTweaks: live values:{}", s);
-        }
-    }
-    else if (g_Active)
-    {
-        for (Tweak& t : g_T)
-        {
-            if (!t.held) continue;
-            if (t.console || Get(t) == t.value) Set(t, t.saved);    // a value the player changed meanwhile is left
-            t.held = false;
-        }
-        g_Active = false;
-        LOGI("VrTweaks: graphics tweaks off: the game's own values are back");
-        SetStatus("vrtweaks off");
+        g_WasActive = active;
+        LOGI("VrTweaks: {}", active ? "the headset shows the game: VR graphics changes on" : "VR graphics changes off");
     }
 }
 
-std::string VrTweaks::Status() { std::lock_guard lk(g_SM); return g_Status; }
+void VrTweaks::OnMainView(void* view)
+{
+    if (!view || !g_Active.load(std::memory_order_relaxed)) return;
+    uint8_t add = 0;
+    if (g_Enabled.load(std::memory_order_relaxed)) add |= kNoDof;
+    if (!g_Ao.load(std::memory_order_relaxed)) add |= kNoAo;
+    if (!add) return;
+    ((uint8_t*)view)[kViewFlags] |= add;
+    g_Views.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::string VrTweaks::Status()
+{
+    return fmt::format("vrtweaks active {} dof {} ao {} views flagged {}", g_Active.load() ? 1 : 0,
+                       g_Enabled.load() ? "off" : "game", g_Ao.load() ? "game" : "off", g_Views.load());
+}

@@ -16,7 +16,8 @@ namespace Settings
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
-    bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: VrTweaks on while in VR
+    bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
+    bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
 }

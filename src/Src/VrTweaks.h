@@ -1,19 +1,23 @@
 #pragma once
 #include <string>
 
-//! [Display] VrGraphicsTweaks (ini, default on): a few of the game's graphics settings changed while the headset shows
-//! the game, for speed and for how they look in a headset, and put back as soon as it does not (flat play, VR off).
-//! They are a preference, not a fix: each one costs some of the flat game's look.
-//!   - depth of field off (r_skipDOF): a blur at the depth the CAMERA focuses on; in a headset your eyes focus, and
-//!     the blur sits on whatever you look at
-//!   - lens flares off (r_skipLensFlares): a flat screen-space effect, wrong in stereo
-//!   - skin blur at 23 taps instead of 92 (r_SSSBlurQuality 2): the faces' subsurface scattering, done per pixel
-//!   - texture uploads 1.5 ms a frame instead of 3 (r_textureUploadTimesliceMs): at two frames per headset frame the
-//!     game's own budget was half a frame while it streams; fewer hitches, textures sharpen a little later
-//! The live values only: nothing of it reaches the game's config, so flat play keeps the player's own settings.
+//! Graphics changes made only while the headset shows the game, through the main view's own render flags -- the
+//! per-view bits the engine itself derives from r_skipDOF / r_skipSSAO when it sets the view up (exe+0x375075 /
+//! exe+0x37508F) and the passes test when they run. No cvar is written: the game's own options (and its config file,
+//! and its own backup of the DOF setting, r_skipDofBck) are never touched, so flat play is exactly as the player set it.
+//!   - [Display] VrGraphicsTweaks (default 1): no depth of field. It blurs at the depth the CAMERA focuses on; in a
+//!     headset your eyes focus, and the blur sits on whatever you look at. (The DOF pass tests view+0x3A37 bit 0 at
+//!     exe+0x315634 / exe+0x3158F8.)
+//!   - [Display] AmbientOcclusion (default 1): 0 = no ambient occlusion in VR. The game's own option only chooses
+//!     NVIDIA HBAO+ or the game's own AO (ARK_VISUALSETTING_HBAO_PLUS): with it off, the game's AO still runs. (The SSAO
+//!     pass tests view+0x3A37 bit 1 at exe+0x305BF3.)
+//! An earlier version wrote cvars (r_skipDOF, r_skipLensFlares, r_SSSBlurQuality, r_textureUploadTimesliceMs) and hung
+//! the game at its main menu; r_skipDOF and r_skipLensFlares are also the game's own menu options.
 namespace VrTweaks
 {
-    void SetEnabled(bool on);       //!< from the ini (Settings), before the first Present
-    void OnPresent();               //!< applies / restores (render thread)
+    void SetEnabled(bool on);               //!< VrGraphicsTweaks, from the ini before the first Present
+    void SetAmbientOcclusion(bool on);      //!< AmbientOcclusion, from the ini (false = off in VR)
+    void OnPresent();                       //!< follows whether the headset shows the game (render thread)
+    void OnMainView(void* view);            //!< the main view being set up (ViewMatrixHook): its render flags
     std::string Status();
 }

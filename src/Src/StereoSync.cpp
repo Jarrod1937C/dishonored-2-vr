@@ -153,32 +153,36 @@ namespace
     // ---- the right eye's repeated work (experimental: [Advanced] Stereo*Reuse) ----
     // The right eye's frame draws the world of the SAME tick again. The engine's renderer is a list of named passes run
     // as tasks (ENGINE.md, render passes); some of them do not depend on the view and so do, for the right eye, exactly
-    // what the left eye's frame just did: the shadow maps, the ocean's simulation, the reflection probes' relighting, the
-    // decals on NPCs, the texture streamer's uploads. Each can be skipped for a task of the right eye's view (task+0x70
+    // what the left eye's frame just did: the ocean's simulation, the reflection probes' relighting, the decals on NPCs,
+    // the texture streamer's uploads. Each can be skipped for a task of the right eye's view (task+0x70
     // = the view object, one of the main view's; its m_viewMatrix at +0x7450 names the view) the way the engine skips a
     // disabled task (the executor, exe+0x2C5D6C, for task+0xF4 & 0x100) -- and the way the ocean passes skip themselves
     // when there is no ocean: the task's context marked empty (+0x12AD4), nothing recorded. Each one only if the ini
     // asks for it; experimental: whether what the left frame left behind is still intact when the right eye's frame
     // reads it has not been seen in a headset yet. Hooks only for what is asked.
-    enum Reuse { rShadows, rOcean, rReflections, rDecals, rStreaming, rGroups };
-    const char* kReuseKey[rGroups] = { "StereoShadowReuse", "StereoOceanReuse", "StereoReflectionReuse", "StereoDecalReuse", "StereoStreamOncePerPair" };
+    //
+    // NOT the shadow maps (tried as StereoShadowReuse, exe+0x32D4B0: shadows broke in BOTH eyes). The engine updates
+    // the sun's farther cascades on alternate frames (frame parity, exe+0x32EF1D) and keeps the rest in caches; in
+    // synchronised stereo alternate frames are alternate eyes, so the right eye's frames are the ones that update some
+    // cascades -- skipped, those were never updated for either eye. Any pass the engine schedules by frame parity has the
+    // same trap: a pass skipped here must be one that is simply done again every frame.
+    enum Reuse { rOcean, rReflections, rDecals, rStreaming, rGroups };
+    const char* kReuseKey[rGroups] = { "StereoOceanReuse", "StereoReflectionReuse", "StereoDecalReuse", "StereoStreamOncePerPair" };
     std::atomic<bool> g_ReuseOn[rGroups];
     struct ReusePass
     {
-        const char* name; uint32_t rva; int group; bool twoArgs;
+        const char* name; uint32_t rva; int group;
         void* real = nullptr; std::atomic<unsigned long long> run{ 0 }, skipped{ 0 };
     };
     ReusePass g_Pass[] = {
-        { "SHADOWS_WORLD + SHADOWS_DYNAMIC", 0x32D4B0, rShadows, true },     // (task, dynamic): both passes' thunks jump here
-        { "UPDATE_OCEAN_FFT", 0x3053B0, rOcean, false },
-        { "UPDATE_OCEAN", 0x305370, rOcean, false },
-        { "INDIRECT_LIGHTING_UPDATE_IBL", 0x3102A0, rReflections, false },
-        { "UPDATE_NPC_DECALS", 0x340F10, rDecals, false },
-        { "TEXTURE_STREAMER", 0x34FD00, rStreaming, false },
+        { "UPDATE_OCEAN_FFT", 0x3053B0, rOcean },
+        { "UPDATE_OCEAN", 0x305370, rOcean },
+        { "INDIRECT_LIGHTING_UPDATE_IBL", 0x3102A0, rReflections },
+        { "UPDATE_NPC_DECALS", 0x340F10, rDecals },
+        { "TEXTURE_STREAMER", 0x34FD00, rStreaming },
     };
     constexpr int kPasses = (int)(sizeof g_Pass / sizeof g_Pass[0]);
     using Task1Fn = bool(*)(void* task);
-    using Task2Fn = bool(*)(void* task, bool arg);
     //! The view a render task belongs to is the RIGHT eye of a synchronised pair.
     bool RightEyeTask(void* task)
     {
@@ -205,26 +209,19 @@ namespace
         if (SkipTask(r, task)) return false;
         return ((Task1Fn)r.real)(task);
     }
-    template <int I> bool HkTask2(void* task, bool arg)
-    {
-        ReusePass& r = g_Pass[I];
-        if (SkipTask(r, task)) return false;
-        return ((Task2Fn)r.real)(task, arg);
-    }
     void* HookOf(int i)
     {
         switch (i)
         {
-        case 0: return (void*)&HkTask2<0>;
+        case 0: return (void*)&HkTask1<0>;
         case 1: return (void*)&HkTask1<1>;
         case 2: return (void*)&HkTask1<2>;
         case 3: return (void*)&HkTask1<3>;
         case 4: return (void*)&HkTask1<4>;
-        case 5: return (void*)&HkTask1<5>;
         }
         return nullptr;
     }
-    static_assert(kPasses == 6, "HookOf lists every pass");
+    static_assert(kPasses == 5, "HookOf lists every pass");
 
     struct Rec { double t; int held; long long c18[3]; float c20[3]; int c28[3]; float org[3]; int stop; uint32_t in[16]; };
     std::mutex g_LogM;
@@ -461,7 +458,7 @@ bool StereoSync::Command(const std::string& what, std::istringstream& ss)
 bool StereoSync::LastFrameHeld() { return g_LastHeld.load(); }
 void StereoSync::SetReuse(const ReuseFlags& f)
 {
-    g_ReuseOn[rShadows] = f.shadows; g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = f.reflections;
+    g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = f.reflections;
     g_ReuseOn[rDecals] = f.decals; g_ReuseOn[rStreaming] = f.streaming;
 }
 

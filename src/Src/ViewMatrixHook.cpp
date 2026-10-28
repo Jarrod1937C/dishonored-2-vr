@@ -2,6 +2,7 @@
 #include "ViewMatrixHook.h"
 #include "StereoSync.h"
 #include "CameraHook.h"
+#include "VrTweaks.h"
 #include "HandAimHook.h"
 #include "GameInfo.h"
 #include "VRRuntime.h"
@@ -539,6 +540,7 @@ namespace
         // lives at view + 0x39D0 + 0xA8.
         uint8_t* mainView = (uint8_t*)CameraHook::MainView();
         bool isMain = mainView && org == (const float*)(mainView + CameraHook::kRenderRV + CameraHook::kRV_ViewOrg);
+        if (isMain) VrTweaks::OnMainView(mainView);   // its render flags, set by now for this frame (VrTweaks)
         if (isMain && g_Enabled.load() && ScreenMode::FlatRender())
         {   // a menu, a loading screen or a cutscene on the screen in the room: the flat game's own view, no head in it
             {   // and whatever the takedown view was doing is over (a menu is a cut)
