@@ -24,6 +24,7 @@ namespace Settings
     bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
     bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
+    bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     float SwordBodyDepth();                       //!< [Gameplay] SwordBodyDepth: m (the ini says cm) the blade sinks into a body
     float PushStrength();                         //!< [Gameplay] PushStrength: the hand's effective mass, kg
     float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)

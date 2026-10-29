@@ -39,6 +39,12 @@ namespace
     // chosen by that class test at exe+0x4D89D5) -- the push NPCs walking through use too: the door swings away from
     // the pusher.
     constexpr uint32_t kDoorClassRange = 0x39C0350, kMsgDoorPush = 0x138;
+    // Drawers, cabinets (and some doors) carry an arkCpntOpenable (type exe+0x39C59A0, registered exe+0x13BB9B0; vtable
+    // exe+0x1C569C8): +0x1E8 = open now. It is opened and closed by the player's interact on it, which applies the
+    // game's own rules (a lock component refuses it, a key opens it) -- so a hand's grab-and-pull, or its push on an open
+    // one, presses the interact (KbmInject) rather than forcing the state (exe+0x74E4C0(openable, open, animate), the
+    // script's Open / Close, checks no lock).
+    constexpr uint32_t kOpenableType = 0x39C59A0, kOpenableIsOpen = 0x1E8, kGetComponent = 0x877720;
     constexpr uint32_t kEntId = 0xA8, kEntFlags = 0xD1, kEntVelocity = 0x33C, kEntModel = 0xF0, kEntScale = 0x330, kModelBoundsSlot = 0x80;
     constexpr uint32_t kWorldLayers = 0x27, kWorldFlags = 0x100000;
 
@@ -382,6 +388,24 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::unordered_map<void*, double> g_DoorAt;   // game thread: when each door was last pushed
+    //! The openable component of an entity: 1 = one that is open, 0 = closed, -1 = none.
+    int OpenableState(void* ent)
+    {
+        if (!ent) return -1;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            const uint8_t* c = ((FnGet)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kOpenableType), 2);
+            if (!c) return -1;
+            return c[kOpenableIsOpen] ? 1 : 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+    std::mutex g_TouchM;
+    Collision::Touch g_TouchPub[2];
+    double g_TouchAt[2] = {};
+    struct CloseReq { uint32_t id = 0; double at = 0; } g_CloseReq[2];   // under g_TouchM
+    std::atomic<bool> g_Openables{ false };
     bool Dynamic(void* ent)
     {
         uint8_t f = 0;
@@ -427,6 +451,22 @@ void Collision::SetPush(bool on, float m)
 {
     g_Push = on; g_HandMass = fminf(10.f, fmaxf(0.1f, m));
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
+}
+void Collision::SetOpenables(bool on) { g_Openables = on; LOGI("Collision: drawers and cabinets {}", on ? "open by grabbing and pulling, close by pushing (with HandCollision)" : "use the interact button only"); }
+bool Collision::Touched(int hand, Touch& out)
+{
+    const int h = hand & 1;
+    std::lock_guard lk(g_TouchM);
+    out = g_TouchPub[h];
+    return out.valid && Now() - g_TouchAt[h] < 0.12;
+}
+bool Collision::TakeCloseRequest(int hand, uint32_t* id)
+{
+    const int h = hand & 1;
+    std::lock_guard lk(g_TouchM);
+    if (!g_CloseReq[h].id || Now() - g_CloseReq[h].at > 0.3) { g_CloseReq[h] = CloseReq{}; return false; }
+    *id = g_CloseReq[h].id; g_CloseReq[h] = CloseReq{};
+    return true;
 }
 void Collision::SetDoors(bool on) { g_Doors = on; LOGI("Collision: doors {}", on ? "open when a hand pushes them (with HandCollision)" : "only open with the interact button"); }
 bool Collision::HandsOn() { return g_Hands.load(); }
@@ -528,6 +568,39 @@ void Collision::Tick()
                 VRRuntime::Vibrate(h, 0.35f, 0.04f);
             }
         }
+        // what this hand touches (the first contact with an entity), for KbmInject's grab-and-pull on drawers and cabinets;
+        // pushing an OPEN one (not a door: those have their own push) asks for the interact that closes it
+        {
+            Touch tch;
+            for (int i = 0; i < nc && !tch.valid; i++)
+            {
+                void* e = cents[i];
+                if (!e) continue;
+                tch.valid = true; tch.ent = e; memcpy(tch.n, cs[i].n, 12);
+                SafeRead(&tch.id, (uint8_t*)e + kEntId, 4);
+                const int os = g_Openables.load() ? OpenableState(e) : -1;
+                tch.openable = os >= 0; tch.open = os == 1;
+                if (tch.open && !IsDoor(e) && S.valid && dt > 1e-4 && dt < 0.1)
+                {
+                    int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
+                    if (pi >= 0)
+                    {
+                        float v[3]; for (int k = 0; k < 3; k++) v[k] = (goal[pi][k] - S.prevRaw[pi][k]) / (float)dt;
+                        const float into = -Dot(v, cs[i].n);
+                        const float d[3] = { goal[pi][0] - cs[i].p[0], goal[pi][1] - cs[i].p[1], goal[pi][2] - cs[i].p[2] };
+                        const float past = cs[i].clear - Dot(d, cs[i].n);
+                        auto it = g_DoorAt.find(e);
+                        if ((into >= C.doorSpeed || past >= C.doorPress) && (it == g_DoorAt.end() || now - it->second >= C.doorGap))
+                        {
+                            g_DoorAt[e] = now;
+                            std::lock_guard lk(g_TouchM); g_CloseReq[h] = CloseReq{ tch.id, now };
+                            LOGI("Collision: {} hand pushed an open drawer / cabinet {} (id {:#x}) at {:.2f} m/s: close it", h ? "right" : "left", e, tch.id, into);
+                        }
+                    }
+                }
+            }
+            std::lock_guard lk(g_TouchM); g_TouchPub[h] = tch; g_TouchAt[h] = now;
+        }
         // pushes: what the real hand drives into a loose object (relative to the object's own velocity)
         if (g_Push.load() && S.valid && dt > 1e-4 && dt < 0.1 && nc > 0)
         {
@@ -535,7 +608,7 @@ void Collision::Tick()
             for (int i = 0; i < nc; i++)
             {
                 void* e = cents[i];
-                if (!Dynamic(e) || IsDoor(e)) continue;
+                if (!Dynamic(e) || IsDoor(e) || OpenableState(e) >= 0) continue;
                 bool dup = false; for (int k = 0; k < npushed; k++) if (pushed[k] == e) dup = true;
                 if (dup) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }

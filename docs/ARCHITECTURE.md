@@ -918,6 +918,11 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   ARK_MSG_DOOR_PUSH (0x138, payload the player's entity id) -- what Windblast sends, and the push NPCs walk through
   doors with. At most once per 1.5 s per door. Whether the door refuses the push while locked is the game's handler's
   decision (not yet confirmed: the log line `pushed door` says each push).
+- **Drawers and cabinets** (`PullToOpen`): each hand's first contact with an entity is published (`Collision::Touched`)
+  with whether it carries an arkCpntOpenable and is open (+0x1E8). KbmInject: the grabbing grip closing while the hand
+  touches a CLOSED openable that the pointer has picked does not press interact; pulling the hand back 6 cm along the
+  contact's normal (grip held) taps it. A push on an OPEN one (not a door) like a door push asks for the tap that
+  closes it (`TakeCloseRequest`, only when the pointer has it). The interact is the game's: locks and keys apply.
 - A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
 
 ### GrabHand: holding objects in the hand

@@ -932,6 +932,11 @@ nearly straight down; a ray that lands on a placed mine places nothing).
 - **Message ids** are the ARK_MSG_* enum (names table at exe+0x2381F98, 0x18-byte entries, value = index - 1:
   ARK_MSG_NONE = -1). 0xE6 ATTACK_BLOCKED, 0xFA IMPULSE, 0x138 DOOR_PUSH, 0x149 VELOCITY_IMPULSE (payload 0x1C,
   ten senders, not yet decoded: a mass-independent push).
+- **Openables** (drawers, cabinets, some doors): arkCpntOpenable, type exe+0x39C59A0 (registered exe+0x13BB9B0, GetType
+  exe+0x8EB600, vtable exe+0x1C569C8); +0x1E8 = open; a state machine at +0x40 (current at +0x48: Closed / Animated /
+  Opened, arkStateOpenable_*). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event
+  exe+0x39ACAC0 / 0x39ACB10 to the entity, starts the animation) without any lock check: the scripts' Open / Close
+  (exe+0x7933D0 / 0x793570, a Kiscule node registered at exe+0x7932B0) call it; +0xD8 is a scripted state (0 / 1 / 2).
 - **Doors**: arkDoor (RTTI vtable exe+0x1CB7C68) is told apart by its class id range at exe+0x39C0350 / +4 (tested by
   Windblast exe+0x4D89D5, and at exe+0x38FC51, 0x3B29E9 (interaction), 0x3CFF28, 0x4C7DA9, 0x5F9FBA, 0x6B7B07,
   0x801102, 0x86E91F, 0x8DC9A8). Windblast opens a door with exe+0x4D7E80: ARK_MSG_DOOR_PUSH {pusher's entity id, or

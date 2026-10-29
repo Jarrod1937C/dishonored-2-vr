@@ -131,6 +131,7 @@ static DWORD WINAPI InitThread(LPVOID)
     SwordContact::SetBodySink(Settings::SwordBodyDepth());
     Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     Collision::SetDoors(Settings::PushDoors());
+    Collision::SetOpenables(Settings::PullToOpen());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

@@ -11,6 +11,7 @@
 #include "MeleeAim.h"
 #include "ThrowGesture.h"
 #include "GrabHand.h"
+#include "Collision.h"
 #include "KeyBinds.h"
 #include "CVars.h"
 #include "ScreenMode.h"
@@ -422,6 +423,8 @@ namespace
     bool g_GripF = false;                         //!< ...and is the game's interact key, held down with the grip
     bool g_TrigLets = false;                      //!< this press of the grabbing hand's trigger let the object go
     bool g_WasHolding = false; double g_HoldEndedAt = -1;
+    // PullToOpen: the grip closed on a drawer / cabinet the hand touches waits for the pull before it presses interact
+    struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; } g_Pull;
     void Hold(Slot s, bool want)
     {
         if (g_TapUntil[s] > 0) { if (want) g_TapUntil[s] = 0; else return; }   // a tap in flight ends on its own
@@ -1282,14 +1285,52 @@ void KbmInject::Tick()
     // and stopped (reported from the headset, on the corpses save). Held like a keyboard player holds F, the game
     // itself decides tap or long press. A carried corpse is dropped with F too, and it is not a HoldObject.
     const bool carrying = PlayerState::Running("CarryCorpse");
+    // Pull to open (Collision): the hand ON a closed drawer / cabinet / door the pointer has picked does not interact at
+    // the grip; the pull does (the hand drawn back ~6 cm from the front while the grip stays closed), as a tap.
+    Collision::Touch touch;
+    const bool onOpenable = !holding && !carrying && Collision::Touched(grabHand, touch) && touch.openable && !touch.open
+                         && GrabHand::TargetId() == (int)touch.id;
+    float handNow[3], handRot[9];
+    const bool handOk = GpuTrace::RawHandPose(grabHand, handNow, handRot);
     if (pressed & grabGrip)
     {
         g_GripTakes = holding || carrying || GrabHand::HandHasTarget();
         g_GripF = g_GripTakes && !holding;
-        if (g_GripF) LOGI("KbmInject: {} grip {}: interact, F held with the grip", grabSide, carrying ? "carrying a corpse" : "on a picked interactable");
+        if (g_GripF && onOpenable && handOk)
+        {
+            g_GripF = false;
+            g_Pull = Pull{ true, { handNow[0], handNow[1], handNow[2] }, { touch.n[0], touch.n[1], touch.n[2] }, g_Now, touch.id };
+            LOGI("KbmInject: {} grip on a closed drawer / cabinet (id {:#x}): pull it to open", grabSide, touch.id);
+        }
+        else if (g_GripF) LOGI("KbmInject: {} grip {}: interact, F held with the grip", grabSide, carrying ? "carrying a corpse" : "on a picked interactable");
         else if (holding && relMode == 2) letGo(false, "grip", 0.f);
     }
-    else if (!(live & grabGrip)) { if (g_GripF) LOGI("KbmInject: {} grip released: F up", grabSide); g_GripTakes = g_GripF = false; }
+    else if (!(live & grabGrip))
+    {
+        if (g_GripF) LOGI("KbmInject: {} grip released: F up", grabSide);
+        if (g_Pull.armed) LOGI("KbmInject: {} grip let go of the drawer / cabinet without pulling it", grabSide);
+        g_GripTakes = g_GripF = false; g_Pull.armed = false;
+    }
+    if (g_Pull.armed && handOk)
+    {
+        const float d[3] = { handNow[0] - g_Pull.start[0], handNow[1] - g_Pull.start[1], handNow[2] - g_Pull.start[2] };
+        const float out = d[0] * g_Pull.n[0] + d[1] * g_Pull.n[1] + d[2] * g_Pull.n[2];
+        if (out >= 0.06f)
+        {
+            Tap(kF); g_Pull.armed = false;
+            VRRuntime::Vibrate(grabHand, 0.4f, 0.05f);
+            LOGI("KbmInject: {} hand pulled the drawer / cabinet {:.0f} cm: interact (the game opens it)", grabSide, out * 100.f);
+        }
+        else if (g_Now - g_Pull.at > 4.0 || sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) > 0.5f) g_Pull.armed = false;
+    }
+    {   // a push on an open one: the interact that closes it, when the pointer has it
+        uint32_t cid = 0;
+        if (Collision::TakeCloseRequest(grabHand, &cid) && !holding && GrabHand::TargetId() == (int)cid && !g_Held[kF])
+        {
+            Tap(kF);
+            LOGI("KbmInject: {} hand pushed the open drawer / cabinet (id {:#x}) shut: interact", grabSide, cid);
+        }
+    }
     // Once the press has become a hold the key has done its job: F is the hold's "drop", and `vr grabrelease 1` taps it
     // when the grip opens, which needs the key up beforehand.
     if (holding && g_GripF) { g_GripF = false; LOGI("KbmInject: {} grip took an object: F up", grabSide); }

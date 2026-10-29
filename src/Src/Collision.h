@@ -25,6 +25,12 @@ namespace Collision
     void SetWeapons(bool on);                  //!< [Gameplay] WeaponCollision (the sword, the left hand's guns, characters' bodies)
     void SetPush(bool on, float handMass);     //!< [Gameplay] PushObjects / PushStrength (the hand's effective mass, kg)
     void SetDoors(bool on);                    //!< [Gameplay] PushDoors: a hand pushing a door opens it (the game's own push)
+    void SetOpenables(bool on);                //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
+    //! What a hand touched this frame (its first contact with an entity), fresh within ~0.1 s.
+    struct Touch { bool valid = false; void* ent = nullptr; uint32_t id = 0; bool openable = false, open = false; float n[3] = {}; };
+    bool Touched(int hand, Touch& out);
+    //! A push on an open drawer / cabinet asks for the interact that closes it: its entity id, once.
+    bool TakeCloseRequest(int hand, uint32_t* id);
     bool HandsOn();
     bool WeaponsOn();
 
