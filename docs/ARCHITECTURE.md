@@ -737,7 +737,10 @@ Which pose the palm takes depends on what the hand holds (what it holds comes fr
 - **The player's fingers** (`FingerTracking`, with `Layout = index` on an Index): XRSession reads each finger's curl
   (`XRInputState::fingerCurl`, 0 straight .. 1 fist) from `XR_EXT_hand_tracking` when the runtime offers it (the
   bends at each finger's three joints, motion range unobstructed; SteamVR builds the skeleton from the Index's finger
-  sensors), else from the controller's own sensors (the trigger finger by its touch and pull, the other three by the
+  sensors; each finger is mapped between an open and a closed bend of its own, learned in use because that skeleton
+  drifts during a session: the closed bend is pinned at the moments the grip's FORCE sensor or the trigger pulled to the
+  end say the hand is closed, the open bend follows the straightest seen in the last 30-60 s, the two never less than
+  80 deg apart (thumb 40); the ranges are logged once a minute), else from the controller's own sensors (the trigger finger by its touch and pull, the other three by the
   squeeze's curl, the thumb by its touch on any control). An empty hand, and a hand with a power while no power is
   being used, then takes `RestPass` with each bone blended by ITS finger's curl. Which bone is which finger is read off
   the open hand and the fist (`ClassifyFingers`): the four fingers bend about one axis, across the knuckles, and the
@@ -922,7 +925,8 @@ whether it changed. Heartbeat line `holster`.
 real controller cannot be stopped, so the DRAWN hand is, with whatever it holds as one rigid piece:
 
 - **Game thread** (`Collision::Tick`, once a frame from HandAimHook's aim update next to GunRay): each collision point
-  (the palm; with weapons, 5 samples through the long axis of the held weapon model's box, plus the ends of a wide
+  (the palm; while the hand holds nothing, its fingers too: a point over their middle and two at the tips, reaching
+  ~10 cm ahead of the palm when open and drawn in to the knuckles as the grip's curl closes the hand; with weapons, 5 samples through the long axis of the held weapon model's box, plus the ends of a wide
   second axis) is swept with the game's own Havok ray cast from where it was DRAWN last frame to where the controller
   puts it now, sliding along what it hits (up to 3 legs). Each surface met is published as a contact plane tied to that
   point in the hand's frame. After a snap turn or a teleport, or when a point is new, the sweep starts at the eye.

@@ -97,6 +97,9 @@ namespace
     struct Cfg
     {
         float palmR = 0.045f;        // m: the palm's clearance
+        // the fingers of an empty hand (the hand's frame: x ahead, y to the left, z up), open; they draw in as it closes
+        float fingerMid = 0.06f, fingerTip = 0.095f, fingerSpread = 0.022f;
+        float fingerR = 0.025f, fingerTipR = 0.018f;
         float itemRMin = 0.012f, itemRMax = 0.035f;
         float maxSep = 0.35f;        // m: the drawn hand further than this from the real one lets go (it passes through)
         float jumpYaw = 6.f;         // deg of the camera's yaw in one tick (a snap turn): start again from the eye
@@ -235,7 +238,7 @@ namespace
     }
 
     // ---- the points of a hand and its item ----
-    constexpr int kMaxPts = 10, kMaxContacts = 16;
+    constexpr int kMaxPts = 13, kMaxContacts = 16;
     struct Pt { float local[3]; float r; };
     struct Pub { Collision::Contact c[kMaxContacts]; int n = 0; double at = 0; };
     std::mutex g_PubM;
@@ -291,13 +294,30 @@ namespace
         return true;
     }
 
-    //! The points that collide for this hand, in its frame. The palm always (hands on); with weapons on, samples along
-    //! the item's model box: its long axis (5 points through the middle of the box) and, for a wide item (a crossbow's
-    //! limbs), the two ends of the second axis. A sword whose box cannot be read uses the measured blade (0.14 - 0.69 m).
-    int BuildPoints(int h, const float hr[9], const float ht[3], bool item, const float* wo, const float* wa, void* ent, Pt* out)
+    //! The points that collide for this hand, in its frame. The palm always (hands on), and while the hand holds no
+    //! item its fingers: one point over the middle of the fingers and two at the tips (index and little finger sides),
+    //! reaching ~10 cm ahead of the palm when the hand is open and drawn in to the knuckles as it closes (the grip's
+    //! curl, `curl` 0..1, what closes the drawn fingers too). A hand holding something has its fingers round it: the
+    //! item's own points stand for them. With weapons on, samples along the item's model box: its long axis (5 points
+    //! through the middle of the box) and, for a wide item (a crossbow's limbs), the two ends of the second axis. A
+    //! sword whose box cannot be read uses the measured blade (0.14 - 0.69 m). The palm stays point 0.
+    int BuildPoints(int h, const float hr[9], const float ht[3], bool item, const float* wo, const float* wa, void* ent, float curl, Pt* out)
     {
         int n = 0;
-        if (g_Hands.load()) { out[n].local[0] = out[n].local[1] = out[n].local[2] = 0.f; out[n].r = C.palmR; n++; }
+        if (g_Hands.load())
+        {
+            out[n].local[0] = out[n].local[1] = out[n].local[2] = 0.f; out[n].r = C.palmR; n++;
+            if (!item)
+            {
+                const float c = std::clamp(curl, 0.f, 1.f);
+                auto lerp = [&](float open, float closed) { return open + (closed - open) * c; };
+                const float mid[3] = { lerp(C.fingerMid, 0.045f), 0.f, lerp(-0.005f, -0.02f) };
+                const float tipX = lerp(C.fingerTip, 0.05f), tipZ = lerp(-0.01f, -0.035f);
+                const float tips[2][3] = { { tipX, C.fingerSpread, tipZ }, { tipX - 0.012f, -C.fingerSpread, tipZ } };
+                memcpy(out[n].local, mid, 12); out[n].r = C.fingerR; n++;
+                for (const auto& t : tips) { memcpy(out[n].local, t, 12); out[n].r = C.fingerTipR; n++; }
+            }
+        }
         if (!item || !g_Weapons.load()) return n;
         // the item's frame: wo + l.x * fwd + l.y * left + l.z * up (wa rows)
         auto add = [&](const float l[3], float r) {
@@ -616,6 +636,8 @@ void Collision::Tick()
     for (int k = 0; k < BodyHide::aCount; k++) if (an[k].valid && an[k].ent) skip[nskip++] = an[k].ent;
     if (void* held = GrabHand::HeldEntity()) skip[nskip++] = held;
 
+    float curl[2] = {};                         // how far each hand is closed (the grip's curl: the drawn fingers' too)
+    { XRInputState xin; if (VRRuntime::GetInput(xin)) { curl[0] = xin.gripL; curl[1] = xin.gripR; } }
     for (int h = 0; h < 2; h++)
     {
         HandState& S = g_H[h];
@@ -624,7 +646,7 @@ void Collision::Tick()
         float wo[3], wa[9]; void* ent = nullptr;
         const bool item = GpuTrace::HandItemDraws(h) > 0 && GpuTrace::RawItemPose(h, wo, wa, &ent);
         Pt pts[kMaxPts];
-        const int np = BuildPoints(h, hr, ht, item, wo, wa, ent, pts);
+        const int np = BuildPoints(h, hr, ht, item, wo, wa, ent, curl[h], pts);
         if (np != S.npts || ent != S.item) { S.valid = false; S.npts = np; S.item = ent; }
         if (jump) S.valid = false;
 

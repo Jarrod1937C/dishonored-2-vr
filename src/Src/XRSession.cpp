@@ -2910,6 +2910,47 @@ namespace
         const float d = std::clamp((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (nu * nv), -1.f, 1.f);
         return acosf(d) * 57.29578f;
     }
+
+    // Each finger's range, learned as it is used. SteamVR's Index finger skeleton drifts: its capacitive sensors settle
+    // during a session (warmth, a hand resting on them) and the skeleton's open and closed hands creep together -- a fist
+    // reading 150 degrees instead of 230 -- and the fingers, mapped against fixed angles, then barely moved. So each
+    // finger maps between an OPEN and a CLOSED reference of its own (bend in degrees, summed over its joints):
+    //  - closed: never below the most bent seen; and pinned to the bend at the moments the hand is unmistakably closed,
+    //    measured by sensors the drift does not touch: the grip's FORCE (the squeeze's force sensor: middle, ring and
+    //    little finger round the handle) and the trigger pulled to the end (its potentiometer: the index finger). With
+    //    no such moment (the thumb) it creeps (over ~45 s) down to the MOST bent seen in the last 30-60 s;
+    //  - open: never above the straightest seen, and creeping (over ~45 s) up to the STRAIGHTEST seen in the last
+    //    30-60 s (a hand whose sensors now read "a little bent" when open is then read as open again; a finger held
+    //    half bent for a few seconds does not become the new "open");
+    //  - never less than kMinSpan apart (noise is not stretched into motion). They start at the old fixed angles (open 0,
+    //    a fist 230; the thumb 110), so a fresh session moves as before until the hand teaches it.
+    struct FingerRange
+    {
+        float open = 0.f, closed = 0.f;
+        float winMin[2] = { 1e9f, 1e9f }, winMax[2] = { -1e9f, -1e9f };   // the extremes of this 30 s and the last
+    };
+    FingerRange g_FR[2][5];
+    bool g_FRInit = false;
+    double g_FRLast = 0, g_FRBucketAt = 0;
+    int g_FingerSrcWas[2] = {};
+    unsigned long long g_FingerSrcSwitches[2] = {}, g_FingerAnchors[2] = {};
+    double g_FRLogAt = 0;
+    constexpr float kFistBend = 230.f, kThumbBend = 110.f, kMinSpan = 80.f, kThumbMinSpan = 40.f, kCreepSeconds = 45.f;
+    constexpr double kBucketSeconds = 30.0;
+    double FRNow() { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); LARGE_INTEGER c; QueryPerformanceCounter(&c); return (double)c.QuadPart / (double)f.QuadPart; }
+    float LearnAndMap(FingerRange& r, float a, bool anchorClosed, float dt, bool thumb)
+    {
+        const float creep = std::min(1.f, dt / kCreepSeconds);
+        r.winMin[0] = std::min(r.winMin[0], a); r.winMax[0] = std::max(r.winMax[0], a);
+        const float straightest = std::min(r.winMin[0], r.winMin[1]), mostBent = std::max(r.winMax[0], r.winMax[1]);
+        if (a < r.open) r.open = a; else if (straightest > r.open) r.open += (straightest - r.open) * creep;
+        if (anchorClosed) r.closed += (a - r.closed) * std::min(1.f, dt / 0.3f);   // the hand is closed now: this is a fist
+        else if (a > r.closed) r.closed = a;
+        else if (thumb && mostBent < r.closed) r.closed += (mostBent - r.closed) * creep;
+        const float minSpan = thumb ? kThumbMinSpan : kMinSpan;
+        if (r.closed - r.open < minSpan) r.closed = r.open + minSpan;
+        return std::clamp((a - r.open) / (r.closed - r.open), 0.f, 1.f);
+    }
 }
 
 //! The fingers' curl (XRInputState::fingerCurl), while FingerTracking is on and an Index is bound. From hand tracking
@@ -2943,6 +2984,19 @@ void XRSession::ReadFingers()
         XrActionStateBoolean st = { XR_TYPE_ACTION_STATE_BOOLEAN };
         return XR_SUCCEEDED(xrGetActionStateBoolean(g.session, &gi, &st)) && st.isActive && st.currentState;
     };
+    if (!g_FRInit)
+    {
+        for (auto& hand : g_FR) for (int f = 0; f < 5; f++) hand[f] = FingerRange{ 0.f, f ? kFistBend : kThumbBend };
+        g_FRInit = true;
+    }
+    const double nowS = FRNow();
+    const float dt = g_FRLast > 0 ? (float)std::clamp(nowS - g_FRLast, 0.0, 0.1) : 0.f;
+    g_FRLast = nowS;
+    if (nowS - g_FRBucketAt > kBucketSeconds)
+    {   // a new 30 s window: the one ending becomes "the last"
+        g_FRBucketAt = nowS;
+        for (auto& hand : g_FR) for (FingerRange& r : hand) { r.winMin[1] = r.winMin[0]; r.winMax[1] = r.winMax[0]; r.winMin[0] = 1e9f; r.winMax[0] = -1e9f; }
+    }
     for (int h = 0; h < 2; h++)
     {
         float* c = m_Input.fingerCurl[h];
@@ -2964,15 +3018,21 @@ void XRSession::ReadFingers()
                     if (!(j[k].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) { ok = false; break; }
                 if (ok)
                 {
-                    c[0] = std::clamp((Bend(j, XR_HAND_JOINT_THUMB_METACARPAL_EXT, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT)
-                                     + Bend(j, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT, XR_HAND_JOINT_THUMB_TIP_EXT)) / 110.f, 0.f, 1.f);
+                    // the moments the hand is surely closed, from sensors the finger sensing's drift does not touch
+                    const float force = h ? m_Input.gripPressR : m_Input.gripPressL, trig = h ? m_Input.triggerR : m_Input.triggerL;
+                    const bool fist = force > 0.6f, trigger = trig > 0.92f;
+                    if (fist || trigger) g_FingerAnchors[h]++;
+                    const float thumbA = Bend(j, XR_HAND_JOINT_THUMB_METACARPAL_EXT, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT)
+                                       + Bend(j, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT, XR_HAND_JOINT_THUMB_TIP_EXT);
+                    c[0] = LearnAndMap(g_FR[h][0], thumbA, false, dt, true);
                     for (int f = 0; f < 4; f++)
                     {
                         const int m = XR_HAND_JOINT_INDEX_METACARPAL_EXT + f * 5;   // metacarpal, proximal, intermediate, distal, tip
                         const float a = Bend(j, m, m + 1, m + 2) + Bend(j, m + 1, m + 2, m + 3) + Bend(j, m + 2, m + 3, m + 4);
-                        c[1 + f] = std::clamp(a / 230.f, 0.f, 1.f);
+                        c[1 + f] = LearnAndMap(g_FR[h][1 + f], a, f == 0 ? trigger : fist, dt, false);
                     }
                     m_Input.fingerSrc[h] = 1;
+                    if (g_FingerSrcWas[h] != 1) { if (g_FingerSrcSwitches[h]++ < 20) LOGI("XRSession: {} fingers from hand tracking", h ? "right" : "left"); g_FingerSrcWas[h] = 1; }
                     continue;
                 }
             }
@@ -2984,6 +3044,20 @@ void XRSession::ReadFingers()
         c[1] = onTrig ? 0.3f + 0.5f * std::clamp(trig, 0.f, 1.f) : 0.f;
         c[2] = c[3] = c[4] = std::clamp(curl, 0.f, 1.f);
         m_Input.fingerSrc[h] = 2;
+        if (g_FingerSrcWas[h] != 2 && (g.hand[h] || g_FingerSrcWas[h] == 0))
+        {   // hand tracking lost (or none): the controllers' touch sensors stand in, three groups instead of five fingers
+            if (g_FingerSrcSwitches[h]++ < 20) LOGI("XRSession: {} fingers from the controller's touch sensors{}", h ? "right" : "left", g.hand[h] ? " (hand tracking gave no valid joints)" : "");
+            g_FingerSrcWas[h] = 2;
+        }
+    }
+    if (nowS - g_FRLogAt > 60.0 && (m_Input.fingerSrc[0] == 1 || m_Input.fingerSrc[1] == 1))
+    {   // what each finger's range has become: a closed reference far below a fist is the drift being made up for
+        g_FRLogAt = nowS;
+        for (int h = 0; h < 2; h++)
+            if (m_Input.fingerSrc[h] == 1)
+                LOGI("XRSession: {} finger ranges (bend open-closed, deg): thumb {:.0f}-{:.0f} index {:.0f}-{:.0f} middle {:.0f}-{:.0f} ring {:.0f}-{:.0f} little {:.0f}-{:.0f}; {} closed-hand moments",
+                     h ? "right" : "left", g_FR[h][0].open, g_FR[h][0].closed, g_FR[h][1].open, g_FR[h][1].closed, g_FR[h][2].open, g_FR[h][2].closed,
+                     g_FR[h][3].open, g_FR[h][3].closed, g_FR[h][4].open, g_FR[h][4].closed, g_FingerAnchors[h]);
     }
 }
 
