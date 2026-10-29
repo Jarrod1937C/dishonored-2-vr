@@ -6,6 +6,7 @@
 #include "BodyHide.h"
 #include "GrabHand.h"
 #include "VRRuntime.h"
+#include "Game.h"
 #include <cmath>
 #include <sstream>
 #include <unordered_map>
@@ -449,6 +450,100 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::atomic<bool> g_Items{ false };
+    // Food: eaten where it lies (the game's interact on it eats it), never stored. An item's loot component
+    // (arkCpntLoot) lists what it gives in m_items (an idList at loot+0x28: entries of 0x18 bytes, the item's
+    // arkDeclInventoryItem first); an item decl's type is at +0x60 (TYPE_MISC 0, COIN 1, PLAYER_WEAPONRY 2, NPC_WEAPONRY 3,
+    // AMMO 4, BONE_CHARM 5, CONSUMABLE 6, RUNE 7, SHRINE 8, POWER 9, ARMOR 10, MISSIONITEM 11, NOTE_DOCUMENT 12,
+    // AUDIOGRAPH 13). Food is told as a CONSUMABLE the player cannot carry: no room for it in the inventory's item table
+    // (inventory+0x38, count +0x40, entries of 0x38: decl first, base capacity at +0x24) -- elixirs are consumables too,
+    // with room for 10.
+    constexpr uint32_t kLootItems = 0x28, kLootInfoStride = 0x18, kItemDeclType = 0x60, kTypeCoin = 1, kTypeConsumable = 6;
+    constexpr uint32_t kInvTable = 0x38, kInvTableCount = 0x40, kInvTableStride = 0x38, kInvTableCapacity = 0x24;
+    std::atomic<uint32_t> g_ClassifyId{ 0 };
+    std::atomic<int> g_FoodState{ -1 };
+    //! An object's class name (MSVC RTTI) equals `want` (".?AV...@@").
+    bool ClassIs(const void* obj, const char* want)
+    {
+        __try
+        {
+            const uintptr_t base = GameInfo::Base();
+            const uintptr_t vt = *(const uintptr_t*)obj;
+            if (vt < base || vt - base > 0x4000000) return false;
+            const uint8_t* col = *(const uint8_t* const*)(vt - 8);
+            if (*(const uint32_t*)col != 1) return false;
+            const char* name = (const char*)(base + *(const uint32_t*)(col + 12) + 0x10);
+            return strcmp(name, want) == 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    //! The item decls an item entity gives (its loot's m_items), at most `max`. 0 when it has no loot component.
+    int LootDecls(void* ent, const void** out, int max)
+    {
+        int n = 0;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            const uintptr_t base = GameInfo::Base();
+            const uint8_t* loot = ((FnGet)(base + kGetComponent))(ent, (const void*)(base + kLootType), 2);
+            if (!loot) return 0;
+            const uint8_t* list = *(const uint8_t* const*)(loot + kLootItems);
+            const int count = *(const int*)(loot + kLootItems + 8) & 0xFFFFFF;
+            for (int i = 0; list && i < count && i < 8 && n < max; i++)
+                out[n++] = *(const void* const*)(list + (size_t)i * kLootInfoStride);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return n;
+    }
+    //! The base capacity the player's inventory has for an item decl: -1 when the table does not know it.
+    int Capacity(uint8_t* inv, const void* decl)
+    {
+        __try
+        {
+            const uint8_t* t = *(const uint8_t* const*)(inv + kInvTable);
+            const int n = *(const int*)(inv + kInvTableCount) & 0xFFFFFF;
+            for (int i = 0; t && i < n && i < 20000; i++)
+                if (*(const void* const*)(t + (size_t)i * kInvTableStride) == decl) return *(const int*)(t + (size_t)i * kInvTableStride + kInvTableCapacity);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return -1;
+    }
+    std::string DeclName(const void* decl)
+    {
+        char buf[160] = {};
+        const char* p = nullptr;
+        if (SafeRead(&p, (const uint8_t*)decl + 8, 8) && p)
+            for (int i = 0; i < 159; i++) { char c = 0; if (!SafeRead(&c, p + i, 1) || c < 32 || c > 126) break; buf[i] = c; }
+        return std::string(buf);
+    }
+    //! The player's inventory component (arkCpntInventory), or null. (No C++ objects here: __try, C2712.)
+    uint8_t* PlayerInventory()
+    {
+        void* player = Game::LocalPlayer();
+        if (!player) return nullptr;
+        using FnGet = uint8_t* (*)(void*, const void*, int);
+        __try { return ((FnGet)(GameInfo::Base() + kGetComponent))(player, (const void*)(GameInfo::Base() + BodyHide::kEquipCpntTypeInfo), 2); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    //! 2 = food (eaten where it is: never stored), 1 = kept (stored), 0 = cannot tell. Logs what it read.
+    int ClassifyFood(void* ent)
+    {
+        const void* decls[8]; const int n = LootDecls(ent, decls, 8);
+        if (!n) { LOGI("Collision: the item has no loot list (a mission item?): kept, not eaten"); return 1; }
+        uint8_t* inv = PlayerInventory();
+        int food = 0, kept = 0, known = 0; std::string what;
+        for (int i = 0; i < n; i++)
+        {
+            if (!decls[i] || !ClassIs(decls[i], ".?AVarkDeclInventoryItem@@")) continue;
+            known++;
+            int type = -1; SafeRead(&type, (const uint8_t*)decls[i] + kItemDeclType, 4);
+            const int cap = inv ? Capacity(inv, decls[i]) : -1;
+            what += fmt::format(" [{} type {} room {}]", DeclName(decls[i]), type, cap);
+            if (type == (int)kTypeConsumable && cap <= 0) food++; else kept++;
+        }
+        const int r = !known ? 0 : food && !kept ? 2 : 1;
+        LOGI("Collision: item gives{}: {}", what.empty() ? " (nothing readable)" : what, r == 2 ? "FOOD (eaten, never stored: only at the mouth)" : r == 1 ? "kept (stored behind the back, or at the mouth)" : "cannot tell (either place takes it)");
+        return r;
+    }
     std::atomic<bool> g_Dials{ false };
     std::atomic<uint64_t> g_DialSteps{ 0 };
     //! The 10-stage usable (a safe's dial) of an entity, or null.
@@ -574,6 +669,8 @@ void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on
 bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
 uint32_t Collision::PointerItem() { return g_PointerItem.load(); }
 void Collision::WatchItem(uint32_t id) { g_WatchState = -1; g_WatchId = id; }
+void Collision::ClassifyItem(uint32_t id) { g_FoodState = -1; g_ClassifyId = id; }
+int Collision::ItemFood() { return g_FoodState.load(); }
 int Collision::ItemPresent() { return g_WatchState.load(); }
 void Collision::SetOpenables(bool on) { g_Openables = on; LOGI("Collision: drawers and cabinets {}", on ? "open by grabbing and pulling, close by pushing (with HandCollision)" : "use the interact button only"); }
 bool Collision::Touched(int hand, Touch& out)
@@ -620,6 +717,11 @@ void Collision::Tick()
     if (jump) g_Resets++;
 
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+    if (const uint32_t cid = g_ClassifyId.exchange(0))
+    {   // an item just taken by hand: food (to the mouth only) or something to keep?
+        void* ce = BodyHide::EntityById((int)cid);
+        g_FoodState = ce ? ClassifyFood(ce) : 0;
+    }
     if (const uint32_t wid = g_WatchId.load())
     {   // the item being stored: gone from the world (taken, eaten) or still there (refused)
         void* we = BodyHide::EntityById((int)wid);

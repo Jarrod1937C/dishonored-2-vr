@@ -430,7 +430,7 @@ namespace
     // PullToOpen: the grip closed on a drawer / cabinet the hand touches waits for the pull before it presses interact
     struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; } g_Pull;
     // PhysicalPickup: an item grabbed by hand, on its way to the back (stored) or the mouth (eaten)
-    struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; } g_Carry;
+    struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; bool foodToldBack = false; } g_Carry;
     struct Verify { uint32_t id = 0; double at = -1; } g_Verify;   // the store's interact sent: did the game take it?
     double g_CarryClearAt = -1;                                     // when a returning item's drawing is handed back
     //! The item goes back where it was taken from (refused, let go, out of reach): it flies there, then is drawn as is.
@@ -1405,6 +1405,7 @@ void KbmInject::Tick()
             const float in2[3] = { touch.p[0] - touch.n[0] * 0.02f, touch.p[1] - touch.n[1] * 0.02f, touch.p[2] - touch.n[2] * 0.02f };
             GrabHand::LockSensor(in2);
             g_Carry = Carry{ true, touch.id, g_Now, -1 };
+            Collision::ClassifyItem(touch.id);      // food is eaten at the mouth only (it cannot be stored)
             g_CarryClearAt = -1; g_Verify = Verify{};
             BodyHide::SetCarryEntity(touch.ent); GpuTrace::SetCarry(grabHand);   // drawn in the hand from now on
             VRRuntime::Vibrate(grabHand, 0.25f, 0.03f);
@@ -1433,7 +1434,17 @@ void KbmInject::Tick()
     }
     if (g_Carry.on)
     {
-        const int zone = CarryZone(in, grabHand);
+        int zone = CarryZone(in, grabHand);
+        if (zone == 1 && Collision::ItemFood() == 2)
+        {   // food behind the back: it cannot be stored (the game's interact would eat it there): it waits for the mouth
+            if (!g_Carry.foodToldBack)
+            {
+                g_Carry.foodToldBack = true;
+                VRRuntime::Vibrate(grabHand, 0.2f, 0.1f);
+                LOGI("KbmInject: item id {:#x} is food: it cannot be stored, bring it to your mouth to eat it", g_Carry.id);
+            }
+            zone = 0;
+        }
         if (zone && g_Carry.zoneAt < 0) g_Carry.zoneAt = g_Now;
         if (!zone) g_Carry.zoneAt = -1;
         if (zone && GrabHand::TargetId() == (int)g_Carry.id && !g_Held[kF])

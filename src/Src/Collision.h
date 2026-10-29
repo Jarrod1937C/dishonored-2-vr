@@ -40,6 +40,10 @@ namespace Collision
     //! -1 not checked yet. The game thread checks once a frame.
     void WatchItem(uint32_t id);
     int ItemPresent();
+    //! Tell whether an item (by id) is food -- eaten where it is, never stored -- on the next Tick: ItemFood() = 2 food,
+    //! 1 kept, 0 cannot tell, -1 not yet.
+    void ClassifyItem(uint32_t id);
+    int ItemFood();
     void SetOpenables(bool on);                //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     //! What a hand touched this frame (its first contact with an entity), fresh within ~0.1 s.
     struct Touch { bool valid = false; void* ent = nullptr; uint32_t id = 0; bool openable = false, open = false, item = false; float n[3] = {}, p[3] = {}; };

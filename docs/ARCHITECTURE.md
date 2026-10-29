@@ -964,6 +964,11 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   (Collision::WatchItem): gone = taken; still in the world after 0.7 s = refused (e.g. a full inventory) -- the item then
   flies back to its place (0.35 s, GpuTrace::ReturnCarry) and is drawn there again, as it is when let go.
   An item picked from afar (Collision::PointerItem) is not taken by the grip, the Index trigger or X.
+  **Food** is eaten where it lies by the game's interact, never stored, so it is taken only at the mouth: on the grab
+  the game thread classifies the item (Collision::ClassifyItem): its loot's m_items (arkCpntLoot+0x28, idList of 0x18
+  entries, the arkDeclInventoryItem first), each decl's type (+0x60, TYPE_CONSUMABLE = 6) and the room the player's
+  inventory table has for it (entry +0x24): a consumable with no room is food (elixirs have room for 10). Behind the
+  back food only buzzes; the log names each decl with its type and room.
 - **Safe dials** (`SwipeDials`): a contact with an entity whose arkCpntUsableWithStateList has exactly 10 stages (a
   combination wheel) accumulates the raw point's vertical motion while the hand stays on it; every 3.5 cm queues a step
   (at most 3), applied one a frame once the wheel has stopped turning (+0x30 bit 1): up = the game's next stage
