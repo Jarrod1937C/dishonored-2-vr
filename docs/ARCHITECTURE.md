@@ -875,24 +875,30 @@ opened, plus the player's own velocity, capped, and the spawn point is the hand.
 grenade as in the game. Mines and spring razors keep the game's placement, aimed with the hand (power aim above).
 `HandVelocity` is also used by GrabHand's throw.
 
-### Holster: the pistol at the hip, the crossbow on the back, the last power on the chest
+### Holster: weapons drawn from and put away on the body
 
-[Holster.cpp](../src/Src/Holster.cpp) (`HolsterWeapons`). KbmInject tells where the LEFT hand is on the body: from the
-neck (the eyes less 11 cm along the head's up and 9 cm along its forward, so looking down at the hip or sitting down
-moves nothing) in the torso's frame (the head's heading, followed only past 35 degrees and then over ~2 s, so a glance
-aside does not swing the zones round). The left hip is 28-85 cm below the neck, 10-55 cm to the left and within 9 cm
-behind / 22 cm in front of it; the back is anything more than 9 cm behind it, up to 35 cm above; the chest is 5-42 cm below the neck, within 20 cm of
-the middle, up to 30 cm in front (it wins over the hip where they meet). A left-grip squeeze
-there, with that weapon owned and not already in the hand, asks Holster for it and is swallowed for as long as it is
-held (no power wheel); with the weapon already out the grip opens the wheel as anywhere (a hand hanging at the side is in
-the hip zone). A light buzz when the hand reaches a holster whose weapon is not already out.
+[Holster.cpp](../src/Src/Holster.cpp) (`HolsterWeapons`). KbmInject tells where a hand is on the body: from the neck
+(the eyes less 11 cm along the head's up and 9 cm along its forward, so looking down at the hip or sitting down moves
+nothing) in the torso's frame (the head's heading, followed only past 35 degrees and then over ~2 s, so a glance aside
+does not swing the zones round). Hip height is 28-85 cm below the neck, from 9 cm behind it to 25 cm in front.
+- LEFT hand (left grip): the RIGHT hip (5-55 cm to the right: the pistol, a cross draw); the back, anything more than
+  9 cm behind the neck up to 35 cm above it (the crossbow); the chest, 5-35 cm below the neck, within 20 cm of the
+  middle, up to 30 cm in front (the last power; it wins over the hip where they meet).
+- RIGHT hand (right grip): the LEFT hip (5-55 cm to the left: the sword).
+
+A squeeze in a holster whose weapon the player has, or holds in that hand, asks Holster for it and is swallowed for as
+long as it is held (no power wheel, no block, no take). A light buzz when a hand reaches a holster it can use. Each is a
+toggle: with that weapon (on the chest: any power) in the hand, the same move puts it away and leaves the hand empty.
 
 On the game thread Holster reads the inventory's equipment list (arkCpntInventory+0x58: the entries that have an
 equipment entity), picks the entries whose item component is a gun / crossbow (the one last seen in the left hand when
 there are several, one per ammunition) or, for the chest, the power last seen in the left hand (powers are told by their
-item's name, models/powers/...; before any was seen, the first one owned), and posts ARK_MSG_INVENTORY_EQUIP_ITEM {decl, flags 0} to the player: what the
-scripts send to equip a left-hand item, after which the player's equip state changes the weapon with its animation.
-It then checks the left hand (inventory+0x70) for 2 s and logs whether the weapon came. Heartbeat line `holster`.
+item's name, models/powers/...; before any was seen, the first one owned), or the sword (exe+0x614DD0(inv, type 1, hand
+0), as the script node finds it), and posts ARK_MSG_INVENTORY_EQUIP_ITEM {decl, flags} to the player (flags 0 for the
+left hand, 5 for the sword: what the script node sends). Putting away posts ARK_MSG_INVENTORY_UNEQUIP_ITEM {0, m_slot,
+m_instant 0}: m_slot 1 for the left hand, 0 for the right (the script node's values), retried with 2 (EQUIP_RIGHT_HAND
+in the enum) if the sword is still out 1.2 s later. It then watches the hand (inventory+0x70 / +0x68) for 2 s and logs
+whether it changed. Heartbeat line `holster`.
 
 ---
 
@@ -1149,7 +1155,7 @@ entries replaced).
 | [SwordContact](../src/Src/SwordContact.cpp) | the drawn blade's contacts | via MeleeAim |
 | [NpcSkel](../src/Src/NpcSkel.cpp) | characters' current skeletons (ragdolls included) | reads entity+0x360 -> pose array +0x2D8 |
 | [ThrowGesture](../src/Src/ThrowGesture.cpp) | grenades thrown with the hand's velocity | call site exe+0x63333C |
-| [Holster](../src/Src/Holster.cpp) | pistol drawn from the hip, crossbow from the back, last power from the chest | ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D) to the player |
+| [Holster](../src/Src/Holster.cpp) | weapons drawn from / put away on the body: pistol, crossbow, last power, sword | ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D) to the player |
 | [GrabHand](../src/Src/GrabHand.cpp) | held objects in the hand, selection, throw, carrying | interaction sensor exe+0x3B8D60 / exe+0x3B8430, call site exe+0x83E473, joint queries via HandFx |
 | [PointerRay](../src/Src/PointerRay.cpp) | the stable per-hand pointer | - |
 | [Reticle](../src/Src/Reticle.cpp) | per-hand reticle and debug axes (ImGui) | - |

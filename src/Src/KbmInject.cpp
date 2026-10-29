@@ -455,8 +455,9 @@ namespace
         if (fabsf(rx) < 0.12f && ry > -0.22f && ry < 0.02f && rz > -0.02f && rz < 0.20f) return 2;   // at the mouth
         return 0;
     }
-    // [Gameplay] HolsterWeapons: where the LEFT hand is on the body -- 1 at the left hip (the pistol), 2 behind the back
-    // (the crossbow), 3 on the chest (the last power), 0 elsewhere. Measured from the NECK (the eyes less a head-and-neck offset in the head's own frame,
+    // [Gameplay] HolsterWeapons: where a hand is on the body. The LEFT hand: 1 at the RIGHT hip (the pistol, a cross
+    // draw), 2 behind the back (the crossbow), 3 on the chest (the last power). The RIGHT hand: 4 at the LEFT hip (the
+    // sword). 0 elsewhere. Measured from the NECK (the eyes less a head-and-neck offset in the head's own frame,
     // so looking down at the hip does not move it, and sitting or standing changes nothing) in the TORSO's frame: the
     // head's heading, which the torso follows only once the head is turned more than 35 degrees from it (and slowly
     // after that), so a glance to the side does not swing the hip round to the back.
@@ -475,10 +476,10 @@ namespace
         d = wrap(head - g_TorsoYaw);
         g_TorsoYaw = wrap(g_TorsoYaw + d * (float)std::min(1.0, g_Dt / 2.0));
     }
-    int HolsterZone(const XRInputState& in, float rel[3])
+    int HolsterZone(const XRInputState& in, int hand, float rel[3])
     {
         rel[0] = rel[1] = rel[2] = 0;
-        const XRHandPose& h = in.hand[0];
+        const XRHandPose& h = in.hand[hand & 1];
         const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
         if (!h.valid || !hp.valid || !g_TorsoOk) return 0;
         float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
@@ -489,13 +490,17 @@ namespace
         const float d[3] = { h.posX - neck[0], h.posY - neck[1], h.posZ - neck[2] };
         rel[0] = d[0] * right[0] + d[2] * right[2]; rel[1] = d[1]; rel[2] = d[0] * f[0] + d[2] * f[2];
         const float rx = rel[0], ry = rel[1], rz = rel[2];
+        const bool hipHeight = ry > -0.85f && ry < -0.28f && rz >= -0.09f && rz < 0.25f;
+        if (hand)
+            return hipHeight && rx < -0.05f && rx > -0.55f ? 4 : 0;                                      // the left hip
         if (rz < -0.09f && ry > -0.85f && ry < 0.35f && fabsf(rx) < 0.45f) return 2;                 // behind the back / over the shoulder
-        if (ry > -0.42f && ry < -0.05f && fabsf(rx) < 0.20f && rz >= -0.09f && rz < 0.30f) return 3;   // on the chest
-        if (ry > -0.85f && ry < -0.28f && rx < -0.10f && rx > -0.55f && rz >= -0.09f && rz < 0.22f) return 1;   // the left hip
+        if (ry > -0.35f && ry < -0.05f && fabsf(rx) < 0.20f && rz >= -0.09f && rz < 0.30f) return 3;   // on the chest
+        if (hipHeight && rx > 0.05f && rx < 0.55f) return 1;                                         // the right hip
         return 0;
     }
-    bool g_HolsterGrip = false;                   //!< this squeeze of the left grip drew a weapon: it does nothing else
-    int g_HolsterZoneWas = 0;
+    bool g_HolsterGrip = false;                   //!< this squeeze of the left grip drew / put away: it does nothing else
+    bool g_SwordGrip = false;                     //!< this squeeze of the right grip drew / put away the sword: the same
+    int g_HolsterZoneWas = 0, g_SwordZoneWas = 0;
     double g_HolsterLogAt = -10;
     void Hold(Slot s, bool want)
     {
@@ -1369,7 +1374,28 @@ void KbmInject::Tick()
     const bool itemsByHand = Collision::ItemsOn();
     const bool onItem = itemsByHand && !holding && !carrying && Collision::Touched(grabHand, touch) && touch.item
                      && GrabHand::TargetId() == (int)touch.id;
-    if (pressed & grabGrip)
+    // [Gameplay] HolsterWeapons, the right hand: its grip squeezed at the LEFT hip draws the sword, or puts it away when
+    // it is out (the hand is then empty). That squeeze does nothing else -- no block, no take -- until the grip opens.
+    TorsoTick(VRRuntime::GetHeadPose());
+    {
+        float rel[3] = {};
+        const bool usable = Holster::Enabled() && !holding && !carrying;
+        const int hz = usable ? HolsterZone(in, 1, rel) : 0;
+        const bool out = Holster::InHand(Holster::kSword);
+        const bool can = hz && (out || Holster::Owns(Holster::kSword));
+        if (hz != g_SwordZoneWas) { if (can) VRRuntime::Vibrate(1, 0.15f, 0.02f); g_SwordZoneWas = hz; }
+        if ((pressed & kVGripR) && can)
+        {
+            g_SwordGrip = true;
+            Holster::Request(Holster::kSword);
+            VRRuntime::Vibrate(1, 0.5f, 0.04f);
+            LOGI("KbmInject: right grip at the left hip (hand {:.2f} {:.2f} {:.2f} m from the neck: right, up, forward): {} the sword",
+                 rel[0], rel[1], rel[2], out ? "put away" : "draw");
+        }
+        else if ((pressed & kVGripR) && hz) LOGI("KbmInject: right grip at the left hip, but there is no sword: grip as usual");
+        if (!(live & kVGripR)) g_SwordGrip = false;
+    }
+    if ((pressed & grabGrip) && !(grabHand == 1 && g_SwordGrip))
     {
         g_GripTakes = holding || carrying || GrabHand::HandHasTarget();
         g_GripF = g_GripTakes && !holding;
@@ -1494,35 +1520,35 @@ void KbmInject::Tick()
     g_WasHolding = holding;
     const bool afterHold = g_HoldEndedAt >= 0 && g_Now - g_HoldEndedAt < 0.8;
     const bool letsL = grabHand == 0 && g_TrigLets, letsR = grabHand == 1 && g_TrigLets;
-    // [Gameplay] HolsterWeapons: the left GRIP squeezed with the left hand at the left hip draws the pistol, behind the
-    // back the crossbow, on the chest the last power held (Holster: the game's own equip). That squeeze does nothing else -- no power wheel -- until the
-    // grip opens. A weapon already in the hand is not drawn again: the grip then opens the wheel as anywhere else (a
-    // hand hanging at the side is in the hip zone). A light buzz as the hand reaches a holster whose weapon it can draw.
+    // [Gameplay] HolsterWeapons: the left GRIP squeezed with the left hand at the RIGHT hip draws the pistol, behind the
+    // back the crossbow, on the chest the last power held (Holster: the game's own equip); the same move with that
+    // weapon (or, on the chest, any power) already in the hand puts it away. That squeeze does nothing else -- no power
+    // wheel -- until the grip opens. A light buzz as the hand reaches a holster it can draw from or put away into.
     {
-        TorsoTick(VRRuntime::GetHeadPose());
         float rel[3] = {};
         const bool usable = Holster::Enabled() && !holding && !takesL;
-        const int hz = usable ? HolsterZone(in, rel) : 0;
+        const int hz = usable ? HolsterZone(in, 0, rel) : 0;
         const int kind = hz == 1 ? Holster::kPistol : hz == 2 ? Holster::kCrossbow : Holster::kMagic;
-        const char* where = hz == 1 ? "left hip" : hz == 2 ? "back" : "chest";
-        const char* what = hz == 1 ? "pistol" : hz == 2 ? "crossbow" : "last power";
+        const char* where = hz == 1 ? "right hip" : hz == 2 ? "back" : "chest";
+        const char* what = hz == 1 ? "pistol" : hz == 2 ? "crossbow" : hz == 3 ? "power" : "?";
+        const bool out = hz && Holster::InHand(kind);
+        const bool can = hz && (out || Holster::Owns(kind));
         if (hz != g_HolsterZoneWas)
         {
-            if (hz && Holster::Owns(kind) && !Holster::InHand(kind)) VRRuntime::Vibrate(0, 0.15f, 0.02f);
+            if (can) VRRuntime::Vibrate(0, 0.15f, 0.02f);
             g_HolsterZoneWas = hz;
         }
         if (pressed & kVGripL)
         {
-            if (hz && Holster::Owns(kind) && !Holster::InHand(kind))
+            if (can)
             {
                 g_HolsterGrip = true;
                 Holster::Request(kind);
                 VRRuntime::Vibrate(0, 0.5f, 0.04f);
-                LOGI("KbmInject: left grip at the {} (hand {:.2f} {:.2f} {:.2f} m from the neck: right, up, forward): draw the {}",
-                     where, rel[0], rel[1], rel[2], what);
+                LOGI("KbmInject: left grip at the {} (hand {:.2f} {:.2f} {:.2f} m from the neck: right, up, forward): {} the {}",
+                     where, rel[0], rel[1], rel[2], out ? "put away" : "draw", what);
             }
-            else if (hz && !Holster::Owns(kind)) LOGI("KbmInject: left grip at the {}, but there is no {} to draw: power wheel as usual", where, what);
-            else if (hz) LOGI("KbmInject: left grip at the {}: {} already in the hand: power wheel as usual", where, hz == 3 ? "a power is" : what);
+            else if (hz) LOGI("KbmInject: left grip at the {}, but there is no {} to draw: power wheel as usual", where, what);
             else if (usable && (rel[1] < -0.2f || rel[2] < 0.f) && g_Now - g_HolsterLogAt > 2.0)
             {   // near a holster but not in one: where the hand was, for tuning the zones
                 g_HolsterLogAt = g_Now;
@@ -1531,7 +1557,7 @@ void KbmInject::Tick()
         }
         if (!(live & kVGripL)) g_HolsterGrip = false;
     }
-    Hold(kMMB,   (live & kVGripL) != 0 && !takesL && !holding && !g_HolsterGrip);   // L grip : power wheel (or take / draw, above)
+    Hold(kMMB,   (live & kVGripL) != 0 && !takesL && !holding && !g_HolsterGrip);   // L grip : power wheel (or take / holster, above)
     // The sword by gesture (SwordGesture): a swing taps the attack, the fist by the right ear holds it (the power
     // attack's charge) until a thrust lets go, the fist at the left shoulder blocks. The trigger and the grip keep
     // doing all of it as well.
@@ -1539,7 +1565,7 @@ void KbmInject::Tick()
     // out of it (a swing would throw the bottle).
     // (the sword's button: the right trigger, or with the Index layout the right trackpad)
     const bool trigR = indexPads ? ((live & kVPadUse) != 0 && !holding) : ((live & kVTrigR) != 0 && !holding && !letsR);
-    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR;
+    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip;
     // The blade strikes what it touches (SwordContact): before the gestures, so a contact during a charged thrust
     // releases it this same tick.
     MeleeAim::NoteTrigger(trigR);

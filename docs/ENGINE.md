@@ -1065,7 +1065,11 @@ the game does not simulate; skip = INTERACT held (ENTER does nothing).
   used)}. Senders: the script node ActionPlayerInventory's Equip (exe+0x534760: the sword with flags (x & ~2) | 5, then
   with `m_bothHands` its `m_leftHandEquipment` with the three bits clear) and the inventory's own update (exe+0x619B93:
   bit 2 set, bit 1 = inv+0x190 bit 1), for the requests queued at inv+0x128 (exe+0x6143C0 queues one: what the AddItem
-  node's `m_autoEquip` does). Unequip: 0x9E {0, int hand (1 right, 0 left), byte}. The player's equip change ends in
+  node's `m_autoEquip` does). Unequip: 0x9E
+  (arkMsgInventoryUnequipItem: m_decl @0, arkEquipmentSlot_t m_slot @8, bool m_instant @0xC); the node sends m_decl 0
+  with m_slot 1 and, for both hands, also 0. The enum arkEquipmentSlot_t reads EQUIP_NONE 0, EQUIP_LEFT_HAND 1,
+  EQUIP_RIGHT_HAND 2, EQUIP_HEAD 3... while the inventory numbers its hand slots 0 right, 1 left: which numbering m_slot
+  takes for the right hand is not confirmed (Holster tries 0, then 2). The player's equip change ends in
   exe+0x835E00 (unequips, exe+0x614B20 into the slot, then the script events equipLeftHandItem / equipRightHandItem);
   the path from the message to it is not traced. Done: ARK_MSG_INVENTORY_ITEM_EQUIPPED 0x9F {decl, equipment decl}.
 - **`AddItem(inv, arkDeclInventoryItem*, int count)` exe+0x6156E0**: creates the power component for a power (the wheel

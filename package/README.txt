@@ -225,9 +225,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
                SwipeDials = 1 (with HandCollision: slide your hand up / down a safe's number wheel to turn it)
                SlideWindows = 1 (with HandCollision: slide your right hand up / down a window to raise / lower it)
-               HolsterWeapons = 1 (left hand at the left hip + left grip: draw the pistol; behind the back:
-                                 the crossbow; on the chest: the last power. A light buzz tells you the
-                                 hand is at a holster)
+               HolsterWeapons = 1 (grip at a holster: left hand to the right hip = pistol, behind the
+                                 back = crossbow, chest = last power; right hand to the left hip =
+                                 sword. Again with it in the hand = put it away. A light buzz tells
+                                 you the hand is at a holster)
                PhysicalPickup = 0 (experimental, with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)

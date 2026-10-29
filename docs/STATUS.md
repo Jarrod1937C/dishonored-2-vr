@@ -148,7 +148,7 @@ headset.
 | Power effects come out of the drawn hand | Done for Far Reach and Blink | Mock | Other powers' effects are unverified. |
 | Every power tried, including possession of humans (needs the upgrade) and rats | Done | Mock | Possession: yaw servo on the camera, pitch from the head, level roll, head translation scaled by the host's eye height. The host's arms are not drawn. Shadow Walk: camera only, the game's own arms. |
 | Grenades thrown with the hand's velocity (`ThrowGestures`) | Done | Mock | About 0.3 s between letting go and the throw (the game's animation). |
-| Pistol drawn from the left hip, crossbow from behind the back, the last power from the chest, with the left grip (`HolsterWeapons`) | Done, experimental | Not yet tested | The zones are first guesses: each press logs where the hand was. The equip is the scripts' message (0x9D, flags 0); its flags are not decoded. |
+| Holsters (`HolsterWeapons`): left grip at the right hip = pistol, behind the back = crossbow, chest = last power; right grip at the left hip = sword; again = put away | Done, experimental | Not yet tested | The zones are first guesses: each press logs where the hand was. Equip / unequip are the scripts' messages (0x9D / 0x9E); the equip flags and the right hand's unequip slot (0 or 2) are not confirmed. |
 | Power wheel on a panel; the world stays in VR | Done | Validated (Q3) | Picking with the stick sometimes lands on the neighbouring slot (correct it by eye before releasing). |
 
 ### 2.7 Grabbing and carrying
