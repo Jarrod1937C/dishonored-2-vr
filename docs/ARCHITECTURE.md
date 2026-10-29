@@ -982,7 +982,10 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   at entity+0x20) holds "window". The grabbing hand's vertical travel while it touches one is accumulated; 6 cm up on a
   closed one (or down on an open one) asks KbmInject for the interact tap (the same request as a push on an open
   drawer, honoured only when the pointer has that entity). Without an open state (a door) each swipe toggles, never
-  twice the same way in a row. Windows are left out of the door push and the push-to-close. The first-contact log
+  twice the same way in a row. The sliding part is often out of reach (an open sash sits recessed behind the fixed
+  one: the hand swiping down meets the fixed sash or the frame), so the window the pointer has picked also counts
+  while the hand touches anything within 1.2 m of the window's origin, or is within 35 cm of it; the palm's travel.
+  Windows are left out of the door push and the push-to-close. The first-contact log
   line now prints the touched entity's name.
 - **Layers**: the casts take the world (0-2), RIGID_BODY (3), MOVER (5), INTERACTABLE (15) and PICKUP (23), with the
   melee sweeps' flag 0x100000 (was the sword's world sweep, 0x27, which left loose props out).

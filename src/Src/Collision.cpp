@@ -587,6 +587,7 @@ namespace
     struct WinSwipe { void* ent = nullptr; float acc = 0.f; double lastAt = 0, movedAt = 0; float prev[3] = {}; bool prevOk = false; int lastDir = 0; };
     WinSwipe g_Win[2];                          // game thread
     constexpr float kWindowSwipe = 0.06f;       // m of the hand along the window, up or down
+    constexpr float kWindowReach = 1.2f, kWindowNear = 0.35f;   // m from the picked window's origin (see below)
     //! The entity's level name into `buf` (printable characters only; empty when unreadable). Kept free of C++ objects:
     //! MSVC refuses __try in a function that has to unwind one (C2712).
     void ReadEntityName(void* ent, char (&buf)[128])
@@ -905,10 +906,37 @@ void Collision::Tick()
                 const int os = OpenableState(e);
                 if ((os >= 0 || IsDoor(e)) && NameHas(EntityName(e), "window")) { wi = i; wstate = os; }
             }
-            if (wi >= 0)
+            void* we = wi >= 0 ? cents[wi] : nullptr;
+            int pi = -1;
+            if (we) { for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[wi].local, 12)) { pi = k; break; } }
+            else if (np > 0)
+            {   // The sliding part is often out of reach: an open sash sits recessed behind the fixed one, so the hand
+                // swiping down to close it meets the fixed sash or the frame (another entity, or the level itself). So
+                // the window the pointer has picked counts too, while the hand rests on something (any contact) within
+                // kWindowReach of the window's origin, or is within kWindowNear of it in the air; the palm's travel.
+                const int tid = GrabHand::TargetId();
+                void* te = tid > 0 && tid != 0x3FFF0010 ? BodyHide::EntityById(tid) : nullptr;
+                float o[3];
+                if (te && GrabHand::TargetPoint(o))
+                {
+                    const int os = OpenableState(te);
+                    if ((os >= 0 || IsDoor(te)) && NameHas(EntityName(te), "window"))
+                    {
+                        const float d[3] = { goal[0][0] - o[0], goal[0][1] - o[1], goal[0][2] - o[2] };
+                        const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                        if ((nc > 0 && dist < kWindowReach) || dist < kWindowNear)
+                        {
+                            we = te; wstate = os; pi = 0;
+                            if (W.ent != we || now - W.lastAt > 0.3)
+                                LOGI("Collision: {} hand at window '{}' by the pointer ({}, {:.0f} cm from its origin)", h ? "right" : "left",
+                                     EntityName(te), nc > 0 ? "resting on something" : "in the air", dist * 100.f);
+                        }
+                    }
+                }
+            }
+            if (we)
             {
-                int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[wi].local, 12)) { pi = k; break; }
-                if (W.ent != cents[wi] || now - W.lastAt > 0.3) { W = WinSwipe{}; W.ent = cents[wi]; }
+                if (W.ent != we || now - W.lastAt > 0.3) { W = WinSwipe{}; W.ent = we; }
                 if (pi >= 0)
                 {
                     if (W.prevOk) W.acc += goal[pi][2] - W.prev[2];
@@ -922,11 +950,11 @@ void Collision::Tick()
                     const bool want = wstate >= 0 ? (dir > 0 ? wstate == 0 : wstate == 1) : dir != W.lastDir;
                     if (want)
                     {
-                        uint32_t id = 0; SafeRead(&id, (uint8_t*)cents[wi] + kEntId, 4);
+                        uint32_t id = 0; SafeRead(&id, (uint8_t*)we + kEntId, 4);
                         { std::lock_guard lk(g_TouchM); g_CloseReq[h] = CloseReq{ id, now }; }
                         W.movedAt = now; W.lastDir = dir; g_WindowMoves++;
                         LOGI("Collision: {} hand slid {} on window '{}' (id {:#x}, {}): interact", h ? "right" : "left", dir > 0 ? "UP" : "DOWN",
-                             EntityName(cents[wi]), id, wstate < 0 ? "a door" : wstate ? "open" : "closed");
+                             EntityName(we), id, wstate < 0 ? "a door" : wstate ? "open" : "closed");
                     }
                     W.acc = 0.f;
                 }
