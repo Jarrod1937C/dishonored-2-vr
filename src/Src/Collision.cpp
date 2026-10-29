@@ -8,6 +8,7 @@
 #include "VRRuntime.h"
 #include "Game.h"
 #include <cmath>
+#include <algorithm>
 #include <sstream>
 #include <unordered_map>
 
@@ -598,8 +599,9 @@ namespace
     //! The entity's level name, or "".
     std::string EntityName(void* ent)
     {
-        char buf[128];
+        char buf[128] = {};
         ReadEntityName(ent, buf);
+        buf[127] = 0;
         return std::string(buf);
     }
     bool NameHas(const std::string& s, const char* what)
