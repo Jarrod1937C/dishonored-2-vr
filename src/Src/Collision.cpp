@@ -335,6 +335,13 @@ namespace
             float w[3]; for (int i = 0; i < 3; i++) w[i] = wo[i] + l[0] * wa[i] + l[1] * wa[3 + i] + l[2] * wa[6 + i];
             ToLocal(hr, ht, w, out[n].local); out[n].r = r; n++;
         };
+        if (h == 1)
+        {   // The right hand holds the sword (Dishonored's right hand holds nothing else): the measured blade, as
+            // SwordContact sweeps it (0.14 - 0.69 m along the item's forward axis) -- reported, the sword went straight
+            // through solid objects; the model box alone is not trusted to lie along the blade.
+            for (int i = 0; i < 6; i++) { const float l[3] = { 0.14f + 0.55f * (float)i / 5.f, 0.f, 0.f }; add(l, 0.025f); }
+            return n;
+        }
         float mn[3], mx[3];
         if (ent && ItemBox(ent, mn, mx))
         {
@@ -735,6 +742,11 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
     }
     std::unordered_map<void*, int> g_DoorMem;      // game thread: 1 = a hand pushed it open, 0 = a hand closed it
+    // Cabinet fronts (IsUsableFront) have no state to read: each interact on one toggles it, and the mod sees them all
+    // (the grip's pull, the trigger, a hand's push): the state is counted here, from closed. Under g_FrontM.
+    std::mutex g_FrontM;
+    std::unordered_map<uint32_t, int> g_FrontOpen;
+    int FrontState(uint32_t id) { std::lock_guard lk(g_FrontM); auto it = g_FrontOpen.find(id); return it == g_FrontOpen.end() ? 0 : it->second; }
     int DoorOpen(void* door, const char** how);
     //! What the grip can pull: a drawer / cabinet (its openable) or a door (not a window): 1 open, 0 closed, -1 neither.
     int OpenOrNot(void* e)
@@ -743,7 +755,9 @@ namespace
         if (IsDoor(e)) { if (IsWindowEnt(e)) return -1; const char* how = ""; return DoorOpen(e, &how); }
         const int os = OpenableState(e);
         if (os >= 0) return os;
-        return IsUsableFront(e) ? 0 : -1;     // (its state is not known: every pull is an interact, open or close)
+        if (!IsUsableFront(e)) return -1;
+        uint32_t id = 0; SafeRead(&id, (uint8_t*)e + kEntId, 4);
+        return FrontState(id);                // counted from the interacts on it (closed at first)
     }
     //! 1 open, 0 closed; `how` says where that came from (for the log).
     int DoorOpen(void* door, const char** how)
@@ -926,6 +940,15 @@ bool Collision::TakeCloseRequest(int hand, uint32_t* id, float point[3])
     return true;
 }
 std::string Collision::PointerDescribe() { std::lock_guard lk(g_TouchM); return g_PointerDesc; }
+void Collision::NoteInteract(uint32_t id)
+{
+    if (!id || id == 0x3FFF0010u) return;
+    void* e = BodyHide::EntityById((int)id);
+    if (!e || !IsUsableFront(e)) return;
+    int now = 0;
+    { std::lock_guard lk(g_FrontM); if (g_FrontOpen.size() > 256) g_FrontOpen.clear(); now = g_FrontOpen[id] ^= 1; }
+    LOGI("Collision: cabinet front '{}' (id {:#x}) interacted with: counted {} now", EntityName(e), id, now ? "OPEN" : "closed");
+}
 std::string Collision::Describe(void* ent) { return DescribeEnt(ent); }
 bool Collision::IsWindow(uint32_t id)
 {
@@ -1009,7 +1032,16 @@ void Collision::Tick()
         const bool item = GpuTrace::HandItemDraws(h) > 0 && GpuTrace::RawItemPose(h, wo, wa, &ent);
         Pt pts[kMaxPts];
         const int np = BuildPoints(h, hr, ht, item, wo, wa, ent, curl[h], pts);
-        if (np != S.npts || ent != S.item) { S.valid = false; S.npts = np; S.item = ent; }
+        if (np != S.npts || ent != S.item)
+        {
+            S.valid = false;
+            LOGI("Collision: {} hand now collides with {} points{}", h ? "right" : "left", np,
+                 item && np > (g_Hands.load() ? 1 : 0) ? fmt::format(" (holding {}: its points from {:.2f} to {:.2f} m ahead of the palm)", DescribeEnt(ent),
+                                                                    pts[g_Hands.load() ? 1 : 0].local[0], pts[np - 1].local[0])
+                      : item ? fmt::format(" (holding {}: no points of its own)", DescribeEnt(ent))
+                      : std::string(" (empty hand)"));
+            S.npts = np; S.item = ent;
+        }
         if (jump) S.valid = false;
 
         float goal[kMaxPts][3];
@@ -1263,6 +1295,15 @@ void Collision::Tick()
                         if ((into >= C.doorSpeed || past >= C.doorPress) && (it == g_DoorAt.end() || now - it->second >= C.doorGap))
                         {   // closed directly (either hand, no pointer needed): closing needs no key
                             g_DoorAt[e] = now;
+                            if (IsUsableFront(e))
+                            {   // a cabinet front has no openable: the game's interact on it, aimed where the hand pushed
+                                const float at[3] = { cs[i].p[0] - cs[i].n[0] * 0.02f, cs[i].p[1] - cs[i].n[1] * 0.02f, cs[i].p[2] - cs[i].n[2] * 0.02f };
+                                RequestInteract(h, tch.id, at, now);
+                                VRRuntime::Vibrate(h, 0.3f, 0.04f);
+                                LOGI("Collision: {} hand pushed the open cabinet front '{}' (id {:#x}) at {:.2f} m/s, {:.0f} cm past its surface: interact to close it",
+                                     h ? "right" : "left", EntityName(e), tch.id, into, past * 100.f);
+                                continue;
+                            }
                             const bool ok = CloseOpenable(e);
                             if (ok) VRRuntime::Vibrate(h, 0.3f, 0.04f);
                             LOGI("Collision: {} hand pushed an open drawer / cabinet {} (id {:#x}) at {:.2f} m/s: {}", h ? "right" : "left", e, tch.id, into,
@@ -1339,7 +1380,7 @@ bool Collision::Apply(int hand, const float r[9], float t[3], float applied[3])
         const double now = Now();
         std::lock_guard lk(g_PubM);
         if (g_Pub[h].n && now - g_Pub[h].at < C.stale) for (int i = 0; i < g_Pub[h].n; i++) cs[n++] = g_Pub[h].c[i];
-        if (g_Weapons.load() && g_Body[h].n && now - g_Body[h].at < C.stale) for (int i = 0; i < g_Body[h].n; i++) cs[n++] = g_Body[h].c[i];
+        if (g_Body[h].n && now - g_Body[h].at < C.stale) for (int i = 0; i < g_Body[h].n; i++) cs[n++] = g_Body[h].c[i];
     }
     if (!n) return false;
     float off[3];

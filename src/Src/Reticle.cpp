@@ -295,6 +295,19 @@ void Reticle::Draw()
         if (mode == 3 || gun != (HandAimHook::PowerHand() & 1)) DrawHand(gun, dl, size, st);
         else DrawHand(gun ^ 1, dl, size, st);
     }
+    {   // [Gameplay] KnockoutBlow: while a knockout is possible, a BLUE dot where to strike (the back of the guard's
+        // head; MeleeAim::KnockoutAim) -- a blow with either hand, open or closed, the sword's pommel or the pistol,
+        // landing near it knocks him out
+        float kp[3], ndc[2];
+        if (MeleeAim::KnockoutAim(kp) && GpuTrace::ProjectWorld(kp, ndc))
+        {
+            const ImVec2 c = ToScreen(ndc, size);
+            const float r = std::max(4.f, size.y * 0.004f);
+            dl->AddCircleFilled(c, r + std::max(1.5f, size.y * 0.0008f), IM_COL32(0, 0, 0, 255), 20);
+            dl->AddCircleFilled(c, r, IM_COL32(0, 90, 255, 255), 20);
+            st.drawn++;
+        }
+    }
     if (g_Axes.load()) { DrawAxes(0, dl, size, st); DrawAxes(1, dl, size, st); DrawHeld(dl, size); DrawSword(dl, size); }
     {
         std::lock_guard lk(g_M);

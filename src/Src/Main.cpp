@@ -128,6 +128,7 @@ static DWORD WINAPI InitThread(LPVOID)
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
+    MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());
     KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
     Collision::SetHands(Settings::HandCollision());

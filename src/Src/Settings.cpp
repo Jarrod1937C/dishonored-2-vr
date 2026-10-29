@@ -45,6 +45,7 @@ namespace
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
+        { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
         { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
@@ -258,6 +259,7 @@ bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
 bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
+float Settings::KnockoutSoundVolume() { return F("gameplay.knockoutsoundvolume"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }

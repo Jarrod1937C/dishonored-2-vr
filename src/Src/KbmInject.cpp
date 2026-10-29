@@ -1499,7 +1499,7 @@ void KbmInject::Tick()
     uint32_t pickOpenable = 0;
     const bool nearItem = !onItem && itemsByHand && !holding && !carrying && Collision::PointerItem() == (uint32_t)pickId && pickDist < 0.25f;
     const bool nearOpenable = !onOpenable && !holding && !carrying && Collision::PointerOpenable(&pickOpenable) == 0 && pickOpenable == (uint32_t)pickId
-                           && pickDist < 0.45f && handOk;
+                           && pickDist < 0.65f && handOk;   // (from the front's middle: a cabinet's side door is gripped ~0.5 m from it)
     int holdKind = 0;
     const bool nearHoldable = !holding && Collision::PointerHoldable(&holdKind) == (uint32_t)pickId && pickId > 0
                            && pickDist < (holdKind == 2 ? 0.9f : 0.45f);
@@ -1529,6 +1529,9 @@ void KbmInject::Tick()
             float in2[3];
             if (onItem) for (int k = 0; k < 3; k++) in2[k] = touch.p[k] - touch.n[k] * 0.02f;
             else memcpy(in2, pickPt, 12);
+            // the sensor is held on the item's middle, not where the hand met it: measured, a pouch lying on a folder,
+            // locked on the touched point, had the sensor find the folder -- the pouch never went into the backpack
+            if (onItem && GrabHand::TargetId() == (int)iid) { float c[3]; if (GrabHand::TargetPoint(c)) memcpy(in2, c, 12); }
             GrabHand::LockSensor(in2);
             g_Carry = Carry{ true, iid, g_Now, -1 };
             Collision::ClassifyItem(iid);           // food is eaten at the mouth only (it cannot be stored)
@@ -1600,7 +1603,7 @@ void KbmInject::Tick()
         }
         else if (zone && g_Now - g_Carry.zoneAt > 0.6)
         {
-            LOGI("KbmInject: item id {:#x} could not be taken: the sensor no longer finds it (out of reach?) -- it goes back", g_Carry.id);
+            LOGI("KbmInject: item id {:#x} could not be taken: the sensor, held on it, has {} -- it goes back", g_Carry.id, Collision::PointerDescribe());
             g_Carry.on = false; CarryReturn();
         }
         else if (g_Now - g_Carry.at > 7.0) { g_Carry.on = false; CarryReturn(); LOGI("KbmInject: item id {:#x} carried too long: it goes back", g_Carry.id); }
@@ -1638,7 +1641,7 @@ void KbmInject::Tick()
         }
         if (out >= 0.06f)
         {
-            Tap(kF); g_Pull.armed = false;
+            Tap(kF); g_Pull.armed = false; Collision::NoteInteract(g_Pull.id);
             VRRuntime::Vibrate(grabHand, 0.4f, 0.05f);
             LOGI("KbmInject: {} hand pulled the drawer / cabinet {:.0f} cm: interact (the game opens it)", grabSide, out * 100.f);
         }
@@ -1669,7 +1672,7 @@ void KbmInject::Tick()
             const char* side = g_Ia.hand ? "right" : "left";
             if (hit && !g_Held[kF])
             {
-                Tap(kF);
+                Tap(kF); Collision::NoteInteract((uint32_t)tid);
                 VRRuntime::Vibrate(g_Ia.hand, 0.3f, 0.04f);
                 LOGI("KbmInject: {} hand's interact on id {:#x} (door / window): sent, the sensor picked {:#x} after {:.0f} ms", side, g_Ia.id, (uint32_t)tid, (g_Now - g_Ia.at) * 1000.0);
                 if (!g_Carry.on) GrabHand::UnlockSensor(); g_Ia = Interact{};
@@ -1691,6 +1694,7 @@ void KbmInject::Tick()
     // items left notes unreadable and pouches untakeable ("interactions using trigger are sometimes broken now")
     const bool itemAimed = false;
     const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
+    if (trigUse && (pressed & kVTrigR)) Collision::NoteInteract((uint32_t)GrabHand::TargetId());   // (a cabinet front's count)
     if (indexPads && (pressed & kVTrigR))
     {   // reported: "the right trigger does nothing" -- what each press did, for the log (the first 200)
         static int logged = 0;

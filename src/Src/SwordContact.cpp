@@ -308,6 +308,8 @@ namespace
     //! a fast swing whose raw blade crosses a bone's axis is not pushed out the far side (it used to pass through then,
     //! and a point deeper than 22 cm was let go: reported, "it should always collide").
     float g_EntryN[16][3]; bool g_EntryOn[16] = {};
+    Collision::Contact g_BladeCs[16]; int g_BladeN = 0;          // this tick's blade contacts (the right hand's)
+    Collision::Contact g_HandCs[2][16]; int g_HandN[2] = {};     // this tick's hand contacts (HandBodies)
     void BodyContacts(const float (*cur)[3], int n)
     {
         Collision::Contact cs[16]; int nc = 0;
@@ -357,7 +359,104 @@ namespace
                 }
         }
         for (int i = 0; i < 16; i++) if (!inside[i]) g_EntryOn[i] = false;   // out of every body: the next entry decides again
-        Collision::SetBodyContacts(1, cs, nc);
+        memcpy(g_BladeCs, cs, sizeof(Collision::Contact) * nc); g_BladeN = nc;
+    }
+    // [Gameplay] HandCollision: the hands stop at characters' bodies as the blade does -- reported, "my hands pass
+    // through guards", and a knockout blow felt floaty for it. Each hand's palm and fingers (the points Collision uses
+    // for the world) against the bone capsules of the characters near; a point keeps the side it came in from while it
+    // stays inside. Not on a body that is down (a ragdoll: the hands carry and search those).
+    float g_HandEntryN[2][4][3]; bool g_HandEntryOn[2][4] = {};
+    double g_HandBodyLog = -10;
+    void HandBodies(double t)
+    {
+        static const float kLocal[4][3] = { { 0.f, 0.f, 0.f }, { 0.06f, 0.f, -0.005f }, { 0.095f, 0.022f, -0.01f }, { 0.083f, -0.022f, -0.01f } };
+        static const float kR[4] = { 0.045f, 0.025f, 0.018f, 0.018f };
+        for (int h = 0; h < 2; h++)
+        {
+            g_HandN[h] = 0;
+            float hr[9], ht[3];
+            bool inside[4] = {};
+            if (GpuTrace::RawHandPose(h, ht, hr))
+            {
+                for (const Target& tg : g_Targets)
+                {
+                    if (!tg.skel || tg.sk < 0 || tg.sk >= (int)g_Skels.size()) continue;
+                    uint8_t f = 0; SafeCopy(&f, (const uint8_t*)tg.ent + 0xD1, 1);
+                    if (f & 0x28) continue;
+                    const NpcSkel::Skel& s = g_Skels[tg.sk];
+                    for (int i = 0; i < 4 && g_HandN[h] < 16; i++)
+                    {
+                        float p[3]; for (int k = 0; k < 3; k++) p[k] = hr[k * 3] * kLocal[i][0] + hr[k * 3 + 1] * kLocal[i][1] + hr[k * 3 + 2] * kLocal[i][2] + ht[k];
+                        bool inReach = true;
+                        for (int k = 0; k < 3; k++) if (p[k] < s.lo[k] - 0.4f || p[k] > s.hi[k] + 0.4f) inReach = false;
+                        if (!inReach) continue;
+                        int bj = -1; float bpen = 0.f; float bq[3] = {};
+                        for (int j = 0; j < s.n; j++)
+                        {
+                            const float* a = s.p[j]; const float* b = s.link[j] >= 0 ? s.p[s.link[j]] : s.p[j];
+                            float ab[3], ap[3]; Sub(b, a, ab); Sub(p, a, ap);
+                            const float l = Dot(ab, ab);
+                            float u = l > 1e-9f ? Dot(ap, ab) / l : 0.f; u = fminf(1.f, fmaxf(0.f, u));
+                            const float q[3] = { a[0] + ab[0] * u, a[1] + ab[1] * u, a[2] + ab[2] * u };
+                            float d[3]; Sub(p, q, d);
+                            const float pen = s.r[j] + kR[i] - Len(d);
+                            if (pen > bpen) { bpen = pen; bj = j; memcpy(bq, q, 12); }
+                        }
+                        if (bj < 0) continue;
+                        inside[i] = true;
+                        float un[3];
+                        if (g_HandEntryOn[h][i]) memcpy(un, g_HandEntryN[h][i], 12);
+                        else
+                        {
+                            float nrm[3]; Sub(p, bq, nrm); const float nl = Len(nrm);
+                            if (nl < 1e-3f) continue;
+                            for (int k = 0; k < 3; k++) un[k] = nrm[k] / nl;
+                            memcpy(g_HandEntryN[h][i], un, 12); g_HandEntryOn[h][i] = true;
+                            if (t - g_HandBodyLog > 2.0)
+                            {
+                                g_HandBodyLog = t;
+                                LOGI("SwordContact: {} hand stopped at the body of {} ({:.0f} cm in)", h ? "right" : "left", Collision::Describe(tg.ent), bpen * 100.f);
+                            }
+                        }
+                        Collision::Contact& c = g_HandCs[h][g_HandN[h]++];
+                        for (int k = 0; k < 3; k++) { c.n[k] = un[k]; c.p[k] = bq[k] + un[k] * s.r[bj]; }
+                        c.clear = kR[i];
+                        memcpy(c.local, kLocal[i], 12);
+                    }
+                }
+            }
+            for (int i = 0; i < 4; i++) if (!inside[i]) g_HandEntryOn[h][i] = false;
+        }
+    }
+    //! The body contacts of this tick to Collision: each hand's own, and the blade's with the right hand's.
+    void PublishBodies()
+    {
+        Collision::Contact cs[16]; int n = 0;
+        for (int i = 0; i < g_HandN[1] && n < 16; i++) cs[n++] = g_HandCs[1][i];
+        for (int i = 0; i < g_BladeN && n < 16; i++) cs[n++] = g_BladeCs[i];
+        Collision::SetBodyContacts(1, cs, n);
+        Collision::SetBodyContacts(0, g_HandCs[0], g_HandN[0]);
+    }
+    //! The characters near and their bones this frame (once per tick: the hands and the blade share them).
+    double g_BodiesAt = -1;
+    void RefreshBodies(const float eye[3], double t)
+    {
+        if (g_BodiesAt == t) return;
+        g_BodiesAt = t;
+        if (g_LastScan < 0 || t - g_LastScan > C.scanSec || t < g_LastScan) { ScanTargets(eye, false); g_LastScan = t; }
+        g_Skels.clear(); g_Skels.reserve(8);
+        for (size_t i = 0; i < g_Targets.size();)
+        {
+            Target& tg = g_Targets[i];
+            bool ok = RefreshPose(tg);
+            if (ok && tg.skel)
+            {   // the bones as they are this frame (a guard swinging at you, a body falling)
+                g_Skels.emplace_back();
+                if (NpcSkel::Get(tg.ent, g_Skels.back())) tg.sk = (int)g_Skels.size() - 1;
+                else { g_Skels.pop_back(); ok = false; }
+            }
+            if (ok) i++; else { g_Targets[i] = g_Targets.back(); g_Targets.pop_back(); }
+        }
     }
     float SkelDist(const NpcSkel::Skel& s, const float* p)
     {   // distance from the body's surface (negative inside)
@@ -572,28 +671,23 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
         g_SeenHits = h; g_SeenAccepted = a;
     }
     HandTrack(in, t);
+    // the bodies the hands (and below, the blade) stop at: published on every way out of this tick
+    g_BladeN = 0;
+    struct PublishAtEnd { ~PublishAtEnd() { PublishBodies(); } } publishAtEnd;
+    {
+        float he[3], hv[9];
+        if (Collision::HandsOn() && HandAimHook::RealCamera(he, hv)) { RefreshBodies(he, t); HandBodies(t); }
+        else g_HandN[0] = g_HandN[1] = 0;
+    }
     if (!g_On.load() || !active) { g_PrevValid = false; g_AirAt = -1; return o; }
 
     float wo[3], wa[9], eye[3], view[9];
     // the blade where the REAL hand holds it: Collision may stop the drawn one at a body, and the strike is still the swing's
     const bool sword = GpuTrace::HandItemDraws(1) != 0 && GpuTrace::WeaponTargetPoseRaw(1, wo, wa);
-    if (!sword || !HandAimHook::RealCamera(eye, view)) { g_PrevValid = false; g_AirAt = -1; Collision::SetBodyContacts(1, nullptr, 0); std::lock_guard lk(g_DbgM); g_Dbg.blade = false; return o; }
+    if (!sword || !HandAimHook::RealCamera(eye, view)) { g_PrevValid = false; g_AirAt = -1; std::lock_guard lk(g_DbgM); g_Dbg.blade = false; return o; }
     g_Frames++;
 
-    if (g_LastScan < 0 || t - g_LastScan > C.scanSec || t < g_LastScan) { ScanTargets(eye, false); g_LastScan = t; }
-    g_Skels.clear(); g_Skels.reserve(8);
-    for (size_t i = 0; i < g_Targets.size();)
-    {
-        Target& tg = g_Targets[i];
-        bool ok = RefreshPose(tg);
-        if (ok && tg.skel)
-        {   // the bones as they are this frame (a guard swinging at you, a body falling)
-            g_Skels.emplace_back();
-            if (NpcSkel::Get(tg.ent, g_Skels.back())) tg.sk = (int)g_Skels.size() - 1;
-            else { g_Skels.pop_back(); ok = false; }
-        }
-        if (ok) i++; else { g_Targets[i] = g_Targets.back(); g_Targets.pop_back(); }
-    }
+    RefreshBodies(eye, t);
 
     const int n = (int)fminf(fmaxf(C.samples, 2.f), (float)kMaxSamples);
     float cur[kMaxSamples][3];
