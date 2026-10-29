@@ -814,6 +814,29 @@ Fire sequence (gun exe+0x44EBD0, crossbow around exe+0x62B6xx):
 - So what is struck is what the invisible, flat-animated sword's cast sweeps in front of the camera ~0.25 s after the
   click, chosen by a cone around the slot-40 direction. Opening the window at a contact or ending the slot-41 sweep at
   the contact point makes the object a candidate on the next frame but the strike only PUSHES it (cause not found).
+- **Where the damage is.** The per-frame hit check's character path (a candidate in the cone that dwelt 0.09 s) only
+  sends the player's state machine events 0x27 / 0x28 (exe+0x630810), closes the window and plays the hit (slot 34,
+  exe+0x62FEC0: blood, impact, a hit event). The DAMAGE is the strike, vtable **slot 39**: the player's exe+0x62E550
+  (an actor target: slot 33 adjusts the scale), then the base exe+0x634320(comp, hit record, bool needs the window,
+  bool close on a hit, float damage scale, qword 0). It skips a target already in comp+0x33D0 (count +0x33D8, cleared
+  when the window closes, exe+0x634890), needs slot 35 (exe+0x630890) to accept it, builds the damage (exe+0x780260
+  from the weapon's decl, slot 32; amount = the attack's table entry (comp+0x70, -1 = 1) x the scale x decl+0x5C,
+  exe+0x780A80), sends it (exe+0x884920), plays the hit (slot 34), records the target (exe+0x630540) and, if asked and
+  slot 43 agrees, closes the window. The game calls it from the swing's animation (exe+0x62CB80 / the per-type
+  handlers exe+0x6355F0, exe+0x6357D0, which also test the target's block / parry) on a record of the sweep's lists.
+  Hit records: 0x88 bytes, +0x18 the physics body, +0x20 -> +0x10 the entity, +0x28 non-null, +0x30 the point, +0x3C
+  the normal, +0x48 the sweep's direction.
+- **Block / parry.** exe+0x62CB80(comp, target) walks list comp+0x2298 for the target's record and picks the handler by
+  the target's class id (its type info +0x60, from vtable slot 0): the range in the globals exe+0x39CE2C0 / +4 (NPCs)
+  -> exe+0x6355F0(comp, record, entity); exe+0x39CE350 / +4 (the player class: an NPC's sword on the player) ->
+  exe+0x6357D0. A strike that lands sends event 0xE7. exe+0x6355F0: the target's combat component (exe+0x877720(ent,
+  &type exe+0x39B3F70, 2); null = strike) holds a state at +0xC8, the entity it is about at +0xCC (an id, exe+0x6DC560)
+  and a block type at +0xD4. The attack's def (comp+8) +0x180 == 0 = unblockable: strike. State 3 about the attacker
+  (exe+0x596D60): nothing at all. State 5 about the attacker (exe+0x596DA0) = BLOCKING: a d100 roll (exe+0x8AC110)
+  against a chance read from the target's component exe+0x39EDB90 -> parry exe+0x636140(comp, ent), else the player's
+  slot 36 (exe+0x6302E0, the blocked recoil: events 0x27 / 0x28 on the player), then the sparks exe+0x635F30(comp,
+  record) and the window closes (SetActive 0); no damage. Otherwise the combat component's +0x210 set = nothing, else
+  the strike (slot 39) with scale 1.0 (exe+0x1F697B0).
 - A slash from behind on an unaware guard becomes `Assassination` (kills even with `ark_god_npc 1`).
 - **The sword trail** is a ribbon along the animated sword's path: three non-indexed 26-vertex draws, vertex shaders
   DXBC `364e76313eb849ec` / `3fea51d57d8fff32` / `412fe65bec01fc06`. Skipping them removes it and nothing else.

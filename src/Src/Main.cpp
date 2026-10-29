@@ -122,6 +122,7 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     KbmInject::SetGripThreshold(Settings::GripThreshold());
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
+    MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

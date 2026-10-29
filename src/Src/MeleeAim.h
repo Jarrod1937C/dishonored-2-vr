@@ -41,6 +41,15 @@ namespace MeleeAim
     //! Open the attack window on the next hit check of a running Slash that has not hit yet (the contact's strike), for
     //! up to `maxWait` seconds (a click that starts the Slash may still be on its way).
     void RequestOpen(float maxWait);
+    //! [Gameplay] SwordBladeDamage / SwordDamageScale: a blade contact on a character strikes it directly (the game's own
+    //! strike, on a record of its physics sweep run into the contact), damage scaled by the blade's speed -- no Slash.
+    void SetBladeDamage(bool on, float scale);
+    bool BladeDamage();
+    //! Strike `ent` (an entity the blade touched) as soon as the sweep has a record of it: returns the request's serial.
+    unsigned BladeStrike(void* ent, float bladeSpeed);
+    //! 0 none, 1 pending, 2 landed, 3 ended without landing (no record in time, or the game refused it), 4 the target
+    //! defended itself (blocked or parried, as against the game's swing).
+    int BladeStrikeState(unsigned serial);
     bool SlashRunning();             //!< the player's Slash state is running (seen at the last Present)
     bool HitThisSlash();             //!< this Slash already hit something (a click now would be dropped, and one hit per swing)
     //! The running Slash's attack window: 0 = not opened yet (it opens ~0.2 s after the click), 1 = open, 2 = closed.

@@ -17,6 +17,8 @@ namespace Settings
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
     bool FingerTracking();                        //!< [Controls] FingerTracking, with Layout = index (XRSession, GpuTrace)
+    bool SwordBladeDamage();                      //!< [Gameplay] SwordBladeDamage: the blade strikes what it touches itself (MeleeAim)
+    float SwordDamageScale();                     //!< [Gameplay] SwordDamageScale: x the blade's damage
     float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)
     bool SnapTurnBlank();                         //!< [Controls] SnapTurnBlank: black during a snap turn (KbmInject)
     bool StereoHud();                             //!< [Display] StereoHud: the game's HUD on one panel for both eyes (ScreenMode)

@@ -141,7 +141,9 @@ namespace
         {
             for (const char* n : { "Choke", "DropChoke", "Assassination", "NpcFatality", "BloodthirstyFatality", "SyncAnim" })
                 if (int c = FindState(n); c >= 0) g_Anim[c] = kView | kTakeover;
-            if (int c = FindState("Slash"); c >= 0) g_Anim[c] = kView;
+            // (kLoco: the eye stays where play puts it -- with play's eye pivot and pitch correction. As a plain view-only
+            // state the eye came from the animation, without those: it jumped a few cm at every swing's start and end.)
+            if (int c = FindState("Slash"); c >= 0) g_Anim[c] = kView | kLoco;
             if (int c = FindState("Cinematic"); c >= 0) g_Anim[c] = kView | kCine;
             // The hard landing (the development notes, Espacio 02 14/10 19:26:29, an 8 m drop): CatFall crouches the camera
             // 1 m, pitches it to -35 with 8 deg of roll and turns it 14 deg, and its blend-out (already EquipChange,

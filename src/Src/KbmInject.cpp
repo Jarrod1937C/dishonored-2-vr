@@ -1038,7 +1038,7 @@ void KbmInject::Tick()
         if (g_QuickSlots.load() == 2 && (int)in.pad != was)
         {
             was = in.pad ? 1 : 0;
-            LOGI("KbmInject: Index layout {}", in.pad ? "on: left trackpad = quick slots (edges) and menu (middle), right trackpad = interact, left B / A = health / mana potion"
+            LOGI("KbmInject: Index layout {}", in.pad ? "on: right trigger = interact, right trackpad = sword, left trackpad = quick slots (edges) and menu (middle), left B / A = health / mana potion"
                                                       : "asked for, but no trackpads are bound (not an Index controller): the default layout");
         }
     }
@@ -1216,7 +1216,7 @@ void KbmInject::Tick()
     {
         for (int i = 0; i < kCount; i++) if (i != kF && g_Held[i] && g_TapUntil[i] == 0) Hold((Slot)i, false);
         SwordGesture::Reset(); SwordContact::Reset();
-        const bool skip = (live & (kXRBtnA | kXRBtnX | kVPadUse)) != 0;   // (the Index layout's right trackpad is F too)
+        const bool skip = (live & (kXRBtnA | kXRBtnX | kVPadUse)) != 0;   // (and the Index layout's right trackpad)
         if (skip && !g_Held[kF]) { g_Count.skips++; LOGI("KbmInject: cutscene: skip (F held with {})", (live & kXRBtnA) ? "A" : (live & kXRBtnX) ? "X" : "the right trackpad"); }
         Hold(kF, skip);
         MenuButton(live, g_QuickSlots.load() != 0);
@@ -1293,8 +1293,10 @@ void KbmInject::Tick()
     // Once the press has become a hold the key has done its job: F is the hold's "drop", and `vr grabrelease 1` taps it
     // when the grip opens, which needs the key up beforehand.
     if (holding && g_GripF) { g_GripF = false; LOGI("KbmInject: {} grip took an object: F up", grabSide); }
-    Hold(kF, (!quick && (live & kXRBtnX) != 0) || g_GripF     // the grabbing grip (above), (old) X : interact
-             || (indexPads && (live & kVPadUse) != 0));          // Index layout: the right trackpad
+    // Index layout: the right TRIGGER is interact (on what the right hand's pointer picked), held like a key; the sword
+    // strikes by gesture and by the blade's contact (its button is the right trackpad). Not while it lets an object go.
+    const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets);
+    Hold(kF, (!quick && (live & kXRBtnX) != 0) || g_GripF || trigUse);   // the grabbing grip (above), (old) X, Index trigger : interact
     if (holding && relMode == 1 && (released & grabGrip))
     {
         float speed = 0; const bool thr = GrabHand::ReleaseThrows(&speed);
@@ -1322,7 +1324,9 @@ void KbmInject::Tick()
     // doing all of it as well.
     // Holding an object the game puts the sword away and its attack button is the object's throw: the right hand stays
     // out of it (a swing would throw the bottle).
-    const bool trigR = (live & kVTrigR) != 0 && !holding && !letsR, gripR = (live & kVGripR) != 0 && !holding && !takesR;
+    // (the sword's button: the right trigger, or with the Index layout the right trackpad)
+    const bool trigR = indexPads ? ((live & kVPadUse) != 0 && !holding) : ((live & kVTrigR) != 0 && !holding && !letsR);
+    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR;
     // The blade strikes what it touches (SwordContact): before the gestures, so a contact during a charged thrust
     // releases it this same tick.
     MeleeAim::NoteTrigger(trigR);

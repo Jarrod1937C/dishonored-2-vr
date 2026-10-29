@@ -115,7 +115,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Left stick ........................ move.  Click: sprint (on until you stop)
    Right stick ....................... turn (smooth; snap in DishonoredVR.ini).  Click: zoom
    Right trigger ..................... sword / right-hand weapon
-   Swing your RIGHT ARM .............. strike with the sword (what the blade touches is hit)
+   Swing your RIGHT ARM .............. strike with the sword (what the blade touches is hit; with
+                                       SwordBladeDamage = 1 the blade itself strikes, harder the
+                                       faster it moves; a guard can still block or parry it)
    Fist by your right ear, blade
      forward, then thrust ............ power attack (lower the blade to cancel it)
    Fist at your left shoulder ........ block (the right grip blocks too)
@@ -175,8 +177,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        (with the wheel open: assign the highlighted item to it;
                                        in menus: the arrows)
    Left trackpad, press its middle ... menu button (short: journal, hold: pause)
-   Right trackpad, press ............. interact: take / use / open what your RIGHT hand points at
-                                       (the right grip still does too); in cutscenes: skip
+   Right trigger ..................... interact: take / use / open what your RIGHT hand points at
+                                       (the right grip still does too). The sword strikes by
+                                       swinging your arm
+   Right trackpad, press ............. the sword's attack button (hold: power attack); in
+                                       cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
    Right A / B ....................... jump / crouch, as above
    Your fingers (FingerTracking = 1) .. the in-game fingers of a hand with a power (or with

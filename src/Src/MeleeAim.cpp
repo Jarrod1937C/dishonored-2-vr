@@ -384,8 +384,184 @@ namespace
         if (g_TraceLeft.load() > 0 && IsPlayerMelee(comp)) LOGI("meleetrace: VETO -> {} (an enemy in front: the strike waits for it)", r);
         return r;
     }
+    // ---- the blade's own strikes ([Gameplay] SwordBladeDamage) ----
+    // What deals a sword's damage is the component's strike, vtable slot 39 (the player's exe+0x62E550: its attack
+    // modifiers, then the base strike exe+0x634320(comp, hit record, needs the window, close it on a hit, damage scale,
+    // 0)): it skips a target already struck in this window (comp+0x33D0, cleared by closing the window, exe+0x634890),
+    // asks slot 35 whether the target may be struck, builds the damage (the attack's table entry x the scale x the
+    // weapon's base, exe+0x780A80), sends it (exe+0x884920), plays the hit (slot 34: blood, impact) and records the
+    // target (exe+0x630540). The game calls it from the swing's animation, ~0.25 s after the click, on a hit record of
+    // its physics sweep (lists comp+0x78 / +0x1188 / +0x2298, 0x88-byte records: +0x18 the body, +0x20 -> +0x10 the
+    // entity, +0x30 the point). The per-frame hit check only plays the hit -- the "push" an early window gave.
+    // A blade contact on a character therefore strikes it HERE, on the game thread: the attack window is opened so the
+    // sweep runs (slot 41, steered to end at the contact), and as soon as a record of the touched character comes back
+    // the strike is called on it, scaled by the blade's speed. No Slash, no click: the blade is the attack.
+    std::atomic<bool> g_Direct{ false };
+    std::atomic<float> g_DirectScale{ 1.f };
+    struct DirReq { void* ent = nullptr; float mul = 1.f; long long at = 0; bool opened = false; unsigned serial = 0; };
+    std::mutex g_DirM; DirReq g_Dir;
+    std::atomic<unsigned> g_DirSerial{ 0 }, g_DirDone{ 0 }, g_DirLanded{ 0 }, g_DirDefended{ 0 };   // the last request, the last finished, the last that struck
+    std::atomic<uint64_t> g_DirAsked{ 0 }, g_DirStruck{ 0 }, g_DirRefused{ 0 }, g_DirExpired{ 0 };
+    constexpr double kDirWait = 0.35;      // s: the sweep's record of the touched character must come back by then
+    constexpr int kSlotStrike = 39;
+    using FnStrike = bool (*)(void*, void*, uint8_t, uint8_t, float, uint64_t);
+    //! A hit record of `ent` in the sweep's lists, or null.
+    uint8_t* RecordOf(void* comp, void* ent)
+    {
+        static const uint32_t lists[3][2] = { { 0x78, 0x80 }, { 0x1188, 0x1190 }, { 0x2298, 0x22A0 } };
+        for (const auto& l : lists)
+        {
+            uint8_t* arr = *(uint8_t**)((uint8_t*)comp + l[0]);
+            const int n = (int)(*(const uint32_t*)((uint8_t*)comp + l[1]) & 0xFFFFFF);
+            for (int i = 0; arr && i < n && i < 256; i++)
+            {
+                uint8_t* e = arr + (size_t)i * 0x88;
+                const uint8_t* b = *(const uint8_t* const*)(e + 0x20);
+                void* owner = b ? *(void* const*)(b + 0x10) : nullptr;
+                if (owner == ent || (!owner && BodyEntity(*(const uint32_t*)(e + 0x18)) == ent)) return e;
+            }
+        }
+        return nullptr;
+    }
+    // A guard can still DEFEND against the blade. The game's swing does not call the strike directly: exe+0x62CB80 runs
+    // each record of a character through a per-class handler first -- NPCs (class ids between the globals exe+0x39CE2C0
+    // and +4) go to exe+0x6355F0(comp, record, entity), which reads the target's combat component (component type
+    // exe+0x39B3F70, at +0xC8 its state, +0xCC who it faces): state 5 against the player = BLOCKING -- a roll against
+    // the target's parry chance either parries (exe+0x636140) or blocks (the player's slot 36: the recoil), then the
+    // sparks (exe+0x635F30) and the window closes, no damage; state 3 against the player = no effect at all; otherwise
+    // (and when the attack is not blockable, comp+8 -> +0x180 == 0) the strike, slot 39, at x1. The blade's strike goes
+    // through that handler too; the strike under it (exe+0x62E550, hooked) gets the blade's scale instead of the x1.
+    constexpr uint32_t kNpcHandler = 0x6355F0, kStrikePlayer = 0x62E550, kGetComponent = 0x877720;
+    constexpr uint32_t kCombatType = 0x39B3F70, kNpcClassRange = 0x39CE2C0;
+    using FnHandler = bool (*)(void*, void*, void*);
+    using FnGetComponent = uint8_t* (*)(void*, const void*, int);
+    FnStrike g_RealStrike = nullptr;
+    thread_local bool t_InDefend = false;
+    thread_local float t_DefMul = 1.f;
+    thread_local int t_DefStruck = -1;                       // -1 the strike was not called, 0 it refused, 1 it struck
+    std::atomic<uint64_t> g_DirBlocked{ 0 }, g_DirIgnored{ 0 };
+    bool StrikeHook(void* comp, void* rec, uint8_t needWin, uint8_t closeOnHit, float scale, uint64_t q)
+    {
+        if (!t_InDefend || !IsPlayerMelee(comp)) return g_RealStrike(comp, rec, needWin, closeOnHit, scale, q);
+        const bool r = g_RealStrike(comp, rec, needWin, closeOnHit, t_DefMul, q);
+        t_DefStruck = r ? 1 : 0;
+        return r;
+    }
+    //! Is `ent` an NPC (the class range the game's swing sends through the defending handler)?
+    bool IsNpcClass(void* ent)
+    {
+        __try
+        {
+            using FnType = const uint8_t* (*)(void*);
+            const uint8_t* ti = ((FnType)(*(void***)ent)[0])(ent);
+            if (!ti) return false;
+            const int id = *(const int*)(ti + 0x60);
+            const int* range = (const int*)(GameInfo::Base() + kNpcClassRange);
+            return id >= range[0] && id <= range[1];
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    //! The target's combat state against the player: its state (+0xC8), or -1 without a combat component.
+    int CombatState(void* ent, bool* facesPlayer)
+    {
+        *facesPlayer = false;
+        __try
+        {
+            const uint8_t* c = ((FnGetComponent)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kCombatType), 2);
+            if (!c) return -1;
+            *facesPlayer = *(const uint32_t*)(c + 0xCC) != 0;
+            return *(const int*)(c + 0xC8);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+    //! The blade's strike through the game's own defence: 1 struck, 0 the strike refused, 2 defended (blocked, parried
+    //! or ignored by the target), -1 the handler could not be called (strike directly instead).
+    int DefendedStrike(void* comp, uint8_t* rec, void* ent, float mul, int* stateOut)
+    {
+        bool faces = false;
+        *stateOut = CombatState(ent, &faces);
+        t_InDefend = true; t_DefMul = mul; t_DefStruck = -1;
+        bool called = false;
+        __try { ((FnHandler)(GameInfo::Base() + kNpcHandler))(comp, rec, ent); called = true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        t_InDefend = false;
+        if (!called) return -1;
+        return t_DefStruck < 0 ? 2 : t_DefStruck;
+    }
+    bool CallStrike(void* comp, uint8_t* rec, float mul)
+    {
+        __try
+        {
+            const FnStrike fn = (FnStrike)(*(void***)comp)[kSlotStrike];
+            return fn(comp, rec, 0, 1, mul, 0);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void DirectStep(void* comp)
+    {
+        DirReq r; { std::lock_guard lk(g_DirM); r = g_Dir; }
+        if (!r.ent) return;
+        const long long now = Qpc();
+        const double age = (double)(now - r.at) / (double)QpcFreq();
+        uint8_t& flags = *((uint8_t*)comp + kActiveFlags);
+        auto finish = [&](bool closeIfOurs) {
+            if (closeIfOurs && r.opened && (flags & 1) && !g_SlashRunning.load()) g_RealSetActive(comp, 0, 0, 0, 1.f);
+            std::lock_guard lk(g_DirM); if (g_Dir.serial == r.serial) g_Dir = DirReq{};
+            g_DirDone = r.serial;
+        };
+        if (age > kDirWait)
+        {
+            g_DirExpired++;
+            LOGI("MeleeAim: blade strike: the sweep brought back no record of the touched character in {:.0f} ms (window {}, records {} / {} / {})", age * 1000.0,
+                 flags & 1, *(uint32_t*)((uint8_t*)comp + 0x80) & 0xFFFFFF, *(uint32_t*)((uint8_t*)comp + 0x1190) & 0xFFFFFF, *(uint32_t*)((uint8_t*)comp + 0x22A0) & 0xFFFFFF);
+            finish(true);
+            return;
+        }
+        if (!(flags & 1))
+        {   // the sweep runs while the window is open: open it (from this thread, as the contacts always did)
+            g_RealSetActive(comp, 1, 0, 0, g_LastF.load());
+            if (!r.opened) { std::lock_guard lk(g_DirM); if (g_Dir.serial == r.serial) g_Dir.opened = true; r.opened = true; }
+        }
+        uint8_t* rec = RecordOf(comp, r.ent);
+        if (!rec) return;                                  // next frame: the sweep's results arrive a frame later
+        const float* p = (const float*)(rec + 0x30);
+        // an NPC defends itself the way it does against the game's swing (the handler reads the attack at comp+8)
+        int how = -1, state = -1;
+        if (IsNpcClass(r.ent) && *(void**)((uint8_t*)comp + 8)) how = DefendedStrike(comp, rec, r.ent, r.mul, &state);
+        if (how == 2)
+        {
+            if (state == 5) g_DirBlocked++; else g_DirIgnored++;
+            LOGI("MeleeAim: blade strike {} at ({:.2f},{:.2f},{:.2f}) (combat state {}), {:.0f} ms after the contact", state == 5 ? "BLOCKED / PARRIED by the target" : "ignored by the target",
+                 p[0], p[1], p[2], state, age * 1000.0);
+            g_HitThisSlash = true;
+            { std::lock_guard lk(g_DirM); if (g_Dir.serial == r.serial) g_Dir = DirReq{}; }
+            g_DirDefended = r.serial; g_DirDone = r.serial;
+            if (r.opened && (flags & 1) && !g_SlashRunning.load()) g_RealSetActive(comp, 0, 0, 0, 1.f);
+            return;
+        }
+        const bool ok = how >= 0 ? how == 1 : CallStrike(comp, rec, r.mul);
+        if (ok)
+        {
+            g_DirStruck++; g_DirLanded = r.serial; g_HitThisSlash = true; g_Hits++; g_LastHitAt = now;
+            LOGI("MeleeAim: blade strike LANDED at ({:.2f},{:.2f},{:.2f}), damage x{:.2f}, {:.0f} ms after the contact", p[0], p[1], p[2], r.mul, age * 1000.0);
+        }
+        else
+        {
+            g_DirRefused++;
+            LOGI("MeleeAim: blade strike refused by the game at ({:.2f},{:.2f},{:.2f}) (struck already in this window, or not a target)", p[0], p[1], p[2]);
+        }
+        finish(!ok);   // a strike that landed closed the window itself
+    }
+
     void HitCheckHook(void* comp, void* a, void* b, void* c)
     {
+        if (g_Direct.load(std::memory_order_relaxed) && IsPlayerMelee(comp))
+        {
+            DirectStep(comp);
+            // while a blade strike waits for its record, the game's own check stays out: it would only play the hit (the
+            // push) on the touched character and close the window, and the strike would then be refused
+            if (g_DirDone.load() != g_DirSerial.load()) return;
+        }
         if (IsPlayerMelee(comp))
         {
             if (g_Shape42Left.load() > 0 && (*((uint8_t*)comp + kActiveFlags) & 1))
@@ -460,7 +636,8 @@ namespace
                 const float back = *(float*)(*(uint8_t**)((uint8_t*)comp + 8) + 0x17C);
                 const float range = *(float*)((uint8_t*)comp + 0x33C8);
                 const float len = range > 0.5f && range < 10.f ? range : 3.f;
-                const int mode = g_SweepMode.load();
+                int mode = g_SweepMode.load();
+                if (g_Direct.load() && g_DirDone.load() != g_DirSerial.load()) mode = 2;   // a blade strike: the sweep runs into the contact
                 if (mode == 1)
                 {   // the game's start (behind the animated weapon, by the camera), our end: the sweep runs into the touched point
                     float d[3]; for (int i = 0; i < 3; i++) { end[i] = P[i] - axis[i] * back; d[i] = end[i] - start[i]; }
@@ -558,6 +735,8 @@ bool MeleeAim::Install()
     DetourAttach(&(PVOID&)g_RealVeto, VetoHook);
     g_RealGather = (FnGather)(base + kGather);
     DetourAttach(&(PVOID&)g_RealGather, GatherHook);
+    g_RealStrike = (FnStrike)(base + kStrikePlayer);
+    DetourAttach(&(PVOID&)g_RealStrike, StrikeHook);
     LOGI("MeleeAim: cone test exe+0x{:X} hooked: detour={}", kConeTest, DetourTransactionCommit());
     g_Installed = true;
     LOGI("MeleeAim: {} of {} melee call sites redirected (view axis -> right controller)", g_Patched, kNumSites);
@@ -576,6 +755,29 @@ void MeleeAim::AddHitBox(const HitBox& b)
     std::lock_guard lk(g_BoxM);
     g_Boxes.erase(std::remove_if(g_Boxes.begin(), g_Boxes.end(), [&](const auto& e) { return now - e.second >= keep; }), g_Boxes.end());
     if (g_Boxes.size() < 16) g_Boxes.push_back({ b, now });
+}
+void MeleeAim::SetBladeDamage(bool on, float scale)
+{
+    g_Direct = on; g_DirectScale = scale < 0.1f ? 0.1f : (scale > 5.f ? 5.f : scale);
+    LOGI("MeleeAim: {} (damage x{:.2f})", on ? "the blade strikes what it touches itself (SwordBladeDamage = 1): its damage scales with the blade's speed" : "the blade's contacts click the game's attack (SwordBladeDamage = 0)", g_DirectScale.load());
+}
+bool MeleeAim::BladeDamage() { return g_Direct.load(); }
+unsigned MeleeAim::BladeStrike(void* ent, float bladeSpeed)
+{
+    // the game's own strike is x1; a blade at 4 m/s (a firm slash) is x1, a light 2 m/s touch x0.5, a hard 8 m/s swing x2
+    const float mul = std::clamp(bladeSpeed / 4.f, 0.4f, 2.f) * g_DirectScale.load();
+    std::lock_guard lk(g_DirM);
+    g_Dir = DirReq{}; g_Dir.ent = ent; g_Dir.mul = mul; g_Dir.at = Qpc(); g_Dir.serial = ++g_DirSerial;
+    g_DirAsked++;
+    return g_Dir.serial;
+}
+int MeleeAim::BladeStrikeState(unsigned serial)
+{
+    if (!serial) return 0;
+    if (g_DirLanded.load() == serial) return 2;
+    if (g_DirDefended.load() == serial) return 4;
+    if (g_DirDone.load() == serial) return 3;
+    return g_DirSerial.load() == serial ? 1 : 3;
 }
 void MeleeAim::RequestOpen(float maxWait)
 {
@@ -670,7 +872,9 @@ std::string MeleeAim::Stats()
     o << (g_On.load() ? "on" : "off") << " origin " << (g_Origin.load() ? "hand" : "head") << " sites " << g_Patched
       << " calls " << calls << " redirected " << red << " gesture " << g_GestRedirects.load()
       << " | filter " << g_Filter.load() << " mode " << g_FilterMode.load() << " opens " << g_Opens.load() << " hits " << g_Hits.load() << " early " << g_HitsEarly.load()
-      << " accepted " << g_Accepted.load() << " rejected " << g_Rejected.load() << " suppressed " << g_Suppressed.load() << " cones " << g_ConeCalls.load() << " byid " << g_ById.load() << " bybox " << g_ByBox.load() << " otherent " << g_OtherEnt.load() << " sweeps " << g_SweepsMoved.load() << " velset " << g_VelSet.load() << " bladeaim " << g_BladeAim.load() << " forced " << g_Forced.load() << " window " << g_WindowPhase.load();
+      << " accepted " << g_Accepted.load() << " rejected " << g_Rejected.load() << " suppressed " << g_Suppressed.load() << " cones " << g_ConeCalls.load() << " byid " << g_ById.load() << " bybox " << g_ByBox.load() << " otherent " << g_OtherEnt.load() << " sweeps " << g_SweepsMoved.load() << " velset " << g_VelSet.load() << " bladeaim " << g_BladeAim.load() << " forced " << g_Forced.load() << " window " << g_WindowPhase.load()
+      << " blade asked " << g_DirAsked.load() << " struck " << g_DirStruck.load() << " blocked " << g_DirBlocked.load() << " ignored " << g_DirIgnored.load()
+      << " refused " << g_DirRefused.load() << " expired " << g_DirExpired.load();
     return o.str();
 }
 

@@ -721,10 +721,13 @@ namespace
                                 pivL[0] = cg * dx + sg * dy; pivL[1] = -sg * dx + cg * dy;       // in the camera's yaw frame
                                 if (g_PitchFix.load())
                                 {   // the game's neck out of play's eye (g_PitchFix): forward here, the height below
+                                    // learned in play only; applied in play and to a moving state's eye (kLoco: a sword swing,
+                                    // a slide), which is play's -- else the eye jumped by it as such a state began and ended
                                     const bool play = !g_AnimViewOn.load() && !KbmInject::Possessing();
                                     const float pitch = asinf(Clampf(a[2], -1.f, 1.f)) * kR2D;
                                     PfStep(pitch, pivL[0], o[2] - pl.org[2], pl.org, play, pitchCorrF, pitchCorrZ);
-                                    if (play) pivL[0] -= pitchCorrF; else pitchCorrF = pitchCorrZ = 0.f;
+                                    if (KbmInject::Possessing()) pitchCorrF = pitchCorrZ = 0.f;
+                                    pivL[0] -= pitchCorrF;
                                 }
                                 pivFull[0] = ca * pivL[0] - sa * pivL[1] - dx; pivFull[1] = sa * pivL[0] + ca * pivL[1] - dy;
                                 pivOk = true;
@@ -748,6 +751,7 @@ namespace
                         // hand-back's glide carries it over to play's
                         o[0] += pivLoco[0] + (pivFull[0] - pivLoco[0]) * ao.blend;
                         o[1] += pivLoco[1] + (pivFull[1] - pivLoco[1]) * ao.blend;
+                        o[2] -= pitchCorrZ;
                     }
                     if (g_PossessView.load() && KbmInject::Possessing() && !g_AnimViewOn.load())
                     {   // Inside a host the camera sways with the host's walk and idle (measured pitch +-1.5, roll

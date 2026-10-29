@@ -33,6 +33,8 @@ namespace
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
+        { "gameplay.swordbladedamage",  Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: the blade's contact strikes by itself (experimental)
+        { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
         { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr },
@@ -227,6 +229,8 @@ bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
 bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
+bool Settings::SwordBladeDamage() { return B("gameplay.swordbladedamage"); }
+float Settings::SwordDamageScale() { return F("gameplay.sworddamagescale"); }
 float Settings::GripThreshold() { return F("controls.gripthreshold"); }
 bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }

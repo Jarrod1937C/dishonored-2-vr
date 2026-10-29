@@ -599,8 +599,9 @@ curl on an Index) still closes the drawn hand. A runtime that binds nothing to `
 controller keeps the default layout). A trackpad press is force past 0.5 (released below 0.3), its meaning fixed by
 where it began (`PadBits`): the left pad's middle (radius 0.45) is the menu button -- replacing the force-anywhere
 binding the other layouts use -- and its top / right / bottom / left are quick slots 1-4 at once (`PadQuick`; with the
-wheel open they assign, in menus they are the arrows). The right pad is F (interact on what the right hand's pointer
-picked; in a cutscene, skip). The left B / A (X / Y on an Index) are the health / mana potions (`PadPotions`), the
+wheel open they assign, in menus they are the arrows). The right TRIGGER is F (interact on what the right hand's
+pointer picked, held like a key; not while it lets a held object go), and the right pad is the sword's button (MELEE,
+held = the power attack's charge; in a cutscene, skip): the sword's strikes are the gestures and the blade's contacts. The left B / A (X / Y on an Index) are the health / mana potions (`PadPotions`), the
 wheel's B / A without the wheel.
 
 `vr quickslots 0` (ini `Layout = classic`) restores the older layout (Y lean, X interact, menu short = pause). In a
@@ -852,6 +853,17 @@ needs: the 30-degree cone test (exe+0x62F900), the attack window's activation (e
   controller in the room) clicks the attack, aims it at the contact, and restricts what that Slash may hit to the
   touched entity (MeleeAim's cone filter). A swing that touches nothing still plays the Slash and its sound but hits
   nothing. Haptics mark touch, contact and impact.
+- **The blade's own strikes** (`SwordBladeDamage`, experimental, `SwordDamageScale`): a contact on a character does not
+  click the attack. MeleeAim strikes it on the game thread, in the hit check's hook: it opens the attack window (so the
+  physics sweep runs, steered by slot 41 to end at the contact along the blade's motion, the attack axis aimed at the
+  contact), keeps the game's own hit check out meanwhile (it would only play the hit, the "push", and close the window),
+  and as soon as the sweep's lists hold a record of the touched character calls the component's strike (vtable slot 39)
+  on it with the damage scale `clamp(blade speed / 4 m/s, 0.4, 2) x SwordDamageScale`. The strike closes the window
+  itself. No record within 0.35 s, or a refused strike: the game's attack is clicked instead, as before.
+  An NPC still defends itself: the strike goes through the game's own per-NPC handler (exe+0x6355F0, the one the
+  swing's exe+0x62CB80 uses), so a guard that is blocking the player blocks or parries the blade (the recoil, the
+  sparks, no damage), and a hook on the player's strike (exe+0x62E550) swaps the handler's x1 for the blade's scale. A
+  defended strike is final (no fallback click).
 
 ### ThrowGesture: grenades by hand
 

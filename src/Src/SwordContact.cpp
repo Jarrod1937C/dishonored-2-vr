@@ -452,6 +452,19 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
     Out o;
     const double t = Now();
     auto awaitSlash = [&]() { g_AwaitSince = t; g_LastClick = t; g_AwaitSerial = MeleeAim::SlashSerial(); g_Reclicks = 0; };
+    // A blade strike (SwordBladeDamage) that could not be made -- no record of the character came back, or the game
+    // refused it: the game's attack instead, as without it.
+    static unsigned bladeSerial = 0;
+    if (bladeSerial)
+    {
+        const int st = MeleeAim::BladeStrikeState(bladeSerial);
+        if (st == 2 || st == 4) bladeSerial = 0;   // landed, or the guard blocked it: the block stands
+        else if (st == 3)
+        {
+            bladeSerial = 0;
+            if (!MeleeAim::SlashRunning() && g_TapUntil < 0) { o.tap = true; g_Taps++; awaitSlash(); LOGI("SwordContact: the blade strike could not be made: the game's attack instead"); }
+        }
+    }
     // A contact that came while the running Slash could not carry it any more: click as soon as that Slash is over.
     if (g_TapUntil >= 0)
     {
@@ -608,7 +621,12 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             g_AirAt = -1;   // this swing has its click
             const char* how;
             const int win = MeleeAim::WindowPhase();
-            if (SwordGesture::Charging()) { SwordGesture::ReleaseCharge(); g_Releases++; how = "releases the charged attack"; }
+            if (MeleeAim::BladeDamage() && tg.skel && !SwordGesture::Charging())
+            {   // the blade is the attack: the game's strike on this character, scaled by the blade's speed (MeleeAim)
+                bladeSerial = MeleeAim::BladeStrike(tg.ent, bestSpeed);
+                how = "the blade strikes it itself (no Slash)";
+            }
+            else if (SwordGesture::Charging()) { SwordGesture::ReleaseCharge(); g_Releases++; how = "releases the charged attack"; }
             else if (MeleeAim::SlashRunning() && !MeleeAim::HitThisSlash() && win < 2)
             {
                 if (C.early > 0.5f) { MeleeAim::RequestOpen(C.pendMax); g_Opens++; }
