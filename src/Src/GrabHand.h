@@ -29,6 +29,9 @@ namespace GrabHand
     //! The picked object's origin (world), while there is one; for the reticle.
     bool TargetPoint(float out[3]);
     int TargetId();                              //!< the sensor's pick (spawn id), 0x3FFF0010 = none
+    //! The sensor's CARRY pick (sensor+0x88): what the interact would pick up and hold -- a bottle, a glass, a body --
+    //! as opposed to what it only uses (a door, a lever, a note). 0x3FFF0010 = none.
+    int CarryTargetId();
     //! PhysicalPickup: aim the interaction sensor from the eye at this world point (an item being carried) instead of
     //! along the hand's pointer, until UnlockSensor (or 8 s).
     void LockSensor(const float point[3]);

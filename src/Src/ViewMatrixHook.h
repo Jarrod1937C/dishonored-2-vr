@@ -53,6 +53,9 @@ namespace ViewMatrixHook
     //! Inside a possessed host: the game's yaw, the head's pitch, level roll (1, default), or the game's camera (0).
     void SetPossessView(bool on);
     std::string AnimStats();
+    //! PhysicalCrouch (for the log): the game camera's learned standing height over the feet, its height now, and the
+    //! lift the view gets (m).
+    void CrouchInfo(float* standCamH, float* camH, float* lift);
     struct Stats { unsigned long long calls = 0, mainCalls = 0, applied = 0; float lastOrg[3] = {}, lastFwd[3] = {}; };
     Stats GetStats();
 

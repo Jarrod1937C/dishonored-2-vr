@@ -62,6 +62,11 @@ namespace KbmInject
     Stats GetStats();
     //! Inside a possessed host (EnterPossessedHost began it; the arms coming back, death or a load end it).
     bool Possessing();
+    //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
+    //! character (the game's crouch key), standing up stands it.
+    void SetPhysicalCrouch(bool on, float depth);
+    //! The game's crouch now is the one the real head made (ViewMatrixHook keeps the view at the head's height then).
+    bool PhysicalCrouchOwns();
     //! `vr scenemenus 0|1` (menus over the world: the character choice, a black market; the development notes) and
     //! `vr tapkey <KEY> [ms]` (one key by the game's name, sent the way the controllers send theirs: a test aid --
     //! Focus-Key.ps1's keybd_event ESC is NOT seen the same way, measured). True when `what` was one of them.

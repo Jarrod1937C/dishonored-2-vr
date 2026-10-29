@@ -55,6 +55,11 @@ namespace MeleeAim
     //! [Gameplay] KnockoutBlow: while the takedown is offered, a hard blow to the back of the target's head knocks him
     //! out (the game's choke knockout, without its animation).
     void SetKnockoutBlow(bool on);
+    //! [Gameplay] FinisherAnimations: false = a finishing blow is an ordinary blow (no synchronised kill animation) and
+    //! no kill cam; true = the game's.
+    void SetFinishers(bool on);
+    //! A knockout blow would count now: the takedown is offered, or was within the last 1.5 s on a target still there.
+    bool KnockoutReady();
     //! A stealth kill is on offer now (the game's "kill" prompt): the game's attack would be the takedown.
     bool KillOffered(void** target = nullptr);
     bool SlashRunning();             //!< the player's Slash state is running (seen at the last Present)

@@ -180,9 +180,17 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        (with the wheel open: assign the highlighted item to it;
                                        in menus: the arrows)
    Left trackpad, press its middle ... menu button (short: journal, hold: pause)
-   Right trigger ..................... interact: take / use / open what your RIGHT hand points at
-                                       (the right grip still does too). The sword strikes by
-                                       swinging your arm
+   Right trigger ..................... interact: use / open / take what your RIGHT hand points at.
+                                       The sword strikes by swinging your arm
+   Right grip ........................ physical only: take what your hand is AT (a bottle, a cup,
+                                       a body; an item with PhysicalPickup), grab a drawer, cabinet
+                                       or door to pull it open. An object stays in your hand while
+                                       you hold the grip: open it to drop it (or throw it by moving
+                                       your hand). With the sword out it blocks; otherwise it never
+                                       draws a weapon
+   Crouch for real ................... the character crouches (PhysicalCrouch); stand up to stand
+   Doors and windows ................. push a door with either hand to open it, push an open one
+                                       to close it; slide either hand up / down on a window
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir

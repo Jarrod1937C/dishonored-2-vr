@@ -20,12 +20,16 @@ namespace
     // ActionPlayerInventory equips as "the sword": type 1, hand 0).
     constexpr uint32_t kInvFindEquip = 0x614DD0;
     // The entity messages: exe+0x8112C0(queue = exe+0x810240() + 0xC8E8, type, payload size, the player's id).
-    // ARK_MSG_INVENTORY_EQUIP_ITEM 0x9D {arkDeclInventoryItem*, flags}: the script node sends the sword with flags 5 and its
-    // left-hand equipment with 0. ARK_MSG_INVENTORY_UNEQUIP_ITEM 0x9E (arkMsgInventoryUnequipItem: m_decl @0, m_slot @8,
-    // bool m_instant @0xC): the node sends m_decl 0 and m_slot 1 (the left hand: the inventory's own numbering) and, for
-    // both hands, also 0 (the right).
+    // ARK_MSG_INVENTORY_EQUIP_ITEM 0x9D {arkDeclInventoryItem*, flags}, handled by the player's exe+0x7F8D60: flags bit 0 =
+    // only into an empty hand, bit 1 = instant (EQUIPCHANGE_INSTANT_EQUIP), bit 2 = EQUIPCHANGE_THIS_HAND_ONLY (0x100 of
+    // arkPlayerStateEquipChange's flags). Without bit 2 the change re-equips BOTH hands, the way the game always pairs
+    // them (measured: drawing the pistol brought the sword back too) -- so every draw here sends kEquipThisHand.
+    // ARK_MSG_INVENTORY_UNEQUIP_ITEM 0x9E (arkMsgInventoryUnequipItem: m_decl @0, m_slot @8, bool m_instant @0xC), handled
+    // by exe+0x7F9140: with m_decl 0, m_slot 1 empties the left hand (player state 0x40), 4 a special slot, 0x10 nothing,
+    // anything else the right hand (state 0x35).
     constexpr uint32_t kMsgSystem = 0x810240, kMsgPost = 0x8112C0, kMsgQueue = 0xC8E8, kMsgEquipItem = 0x9D, kMsgUnequipItem = 0x9E;
     constexpr uint32_t kEntId = 0xA8;
+    constexpr uint64_t kEquipThisHand = 4;
     // int arkCpntInventory::GetQuantity(inventory, decl) (TestAids::kInvQuantity)
     constexpr uint32_t kInvQuantity = 0x615310;
     constexpr int kKinds = 4;
@@ -36,8 +40,7 @@ namespace
     std::atomic<bool> g_Owns[kKinds] = {}, g_InHand[kKinds] = {};
     const void* g_LastDecl[kKinds] = {};     // game thread: the item of that kind last seen in its hand
     double g_LastPost = -10, g_LastScan = -10;
-    // the draw / holster sent, checked until it shows (or 2 s); a right hand that will not let go of the sword with
-    // m_slot 0 is tried once more with 2 (EQUIP_RIGHT_HAND in the arkEquipmentSlot_t enum)
+    // the draw / holster sent, checked until it shows (or 2 s)
     struct Pending { int kind = -1; bool draw = true; double at = 0; const void* decl = nullptr; int slot = -1; } g_Pending;
     std::atomic<unsigned long long> g_Requests{ 0 }, g_Posts{ 0 }, g_Done{ 0 }, g_NotDone{ 0 }, g_Missing{ 0 };
 
@@ -151,7 +154,7 @@ namespace
             uint64_t* pl = ((FnPost)(GameInfo::Base() + kMsgPost))(sys + kMsgQueue, kMsgEquipItem, 0x10, playerId);
             if (!pl) return false;
             pl[0] = (uint64_t)(uintptr_t)decl;
-            pl[1] = flags;
+            pl[1] = flags;     // only the low byte is read
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -217,11 +220,6 @@ void Holster::Tick()
                  g_Pending.draw ? "" : fmt::format(", m_slot {}", g_Pending.slot));
             g_Pending = Pending{};
         }
-        else if (!g_Pending.draw && k == kSword && g_Pending.slot == 0 && now - g_Pending.at > 1.2 && pid && PostUnequip(pid, 2))
-        {
-            LOGI("Holster: the sword is still in the right hand 1.2 s after the unequip with m_slot 0: trying m_slot 2");
-            g_Pending.slot = 2; g_Pending.at = now;
-        }
         else if (now - g_Pending.at > 2.0)
         {
             g_NotDone++;
@@ -248,7 +246,7 @@ void Holster::Tick()
     {
         if (!s.sword) { g_Missing++; LOGI("Holster: no sword in the inventory: nothing drawn"); return; }
         const void* decl = nullptr; SafeRead(&decl, s.sword + kEntryDecl, 8);
-        if (!decl || !PostEquip(pid, decl, 5)) { LOGI("Holster: the equip message for the sword could not be posted"); return; }
+        if (!decl || !PostEquip(pid, decl, kEquipThisHand)) { LOGI("Holster: the equip message for the sword could not be posted"); return; }
         g_Posts++; g_LastPost = now;
         g_Pending = Pending{ req, true, now, decl, -1 };
         LOGI("Holster: drawing the sword: {}", DeclName(decl));
@@ -268,7 +266,7 @@ void Holster::Tick()
     if (!pick) for (const Entry& x : s.w) if (x.kind == req && x.count > 0) { pick = x.decl; break; }
     if (!pick && req != kMagic) for (const Entry& x : s.w) if (x.kind == req) { pick = x.decl; break; }
     if (!pick) { g_Missing++; LOGI("Holster: no {} in the inventory: nothing drawn", KindName(req)); return; }
-    if (!PostEquip(pid, pick, 0)) { LOGI("Holster: the equip message for the {} could not be posted", KindName(req)); return; }
+    if (!PostEquip(pid, pick, kEquipThisHand)) { LOGI("Holster: the equip message for the {} could not be posted", KindName(req)); return; }
     g_Posts++; g_LastPost = now;
     g_Pending = Pending{ req, true, now, pick, -1 };
     LOGI("Holster: drawing the {}: {}{} (the inventory has:{})", KindName(req), DeclName(pick),

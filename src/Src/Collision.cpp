@@ -64,6 +64,11 @@ namespace
     // the melee sweeps' (bodies a weapon meets).
     constexpr uint32_t kWorldLayers = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5) | (1u << 15) | (1u << 23);
     constexpr uint32_t kWorldFlags = 0x100000;
+    // Loose props (fruit, cups, bottles, plates), drawers and items do not all carry that flag: reported from the
+    // headset, the hands stopped at walls and tables but went through every object. So a second cast takes the props'
+    // layers (RIGID_BODY, MOVER, INTERACTABLE, PICKUP) with no flag required, and the nearer hit of the two counts.
+    constexpr uint32_t kPropLayers = (1u << 3) | (1u << 4) | (1u << 5) | (1u << 15) | (1u << 23);
+    constexpr uint32_t kPropFlags = 0;
 
     struct alignas(16) RayQuery
     {
@@ -103,7 +108,10 @@ namespace
         float fingerMid = 0.06f, fingerTip = 0.095f, fingerSpread = 0.022f;
         float fingerR = 0.025f, fingerTipR = 0.018f;
         float itemRMin = 0.012f, itemRMax = 0.035f;
-        float maxSep = 0.35f;        // m: the drawn hand further than this from the real one lets go (it passes through)
+        // m: the drawn hand further than this from the real one lets go (it passes through). Was 0.35: a fast slash or
+        // punch pushed the hand back further than that at once, and the blade or fist went through what it met (reported:
+        // "they should always collide"). Now only a safety net -- a hand left behind a wall by a teleport or a fall.
+        float maxSep = 1.5f;
         float jumpYaw = 6.f;         // deg of the camera's yaw in one tick (a snap turn): start again from the eye
         float jumpPos = 0.5f;        // m of the camera in one tick (a blink, a load)
         float stale = 0.08f;         // s: contacts older than this are dropped
@@ -425,6 +433,23 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::unordered_map<void*, double> g_DoorAt;   // game thread: when each door was last pushed
+    //! Close an open openable (a drawer, a cabinet, a door) the way the scripts' Close does (exe+0x793570): if it is
+    //! open, exe+0x74E4C0(openable, false, animate). Closing needs no key, so no lock check is missing here (opening
+    //! still goes through the game's interact). True when it was open and is now closing.
+    constexpr uint32_t kOpenableSet = 0x74E4C0;
+    bool CloseOpenable(void* ent)
+    {
+        if (!ent) return false;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            uint8_t* c = ((FnGet)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kOpenableType), 2);
+            if (!c || !c[kOpenableIsOpen]) return false;
+            ((void (*)(void*, bool, bool))(GameInfo::Base() + kOpenableSet))(c, false, true);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     //! The openable component of an entity: 1 = one that is open, 0 = closed, -1 = none.
     int OpenableState(void* ent)
     {
@@ -438,9 +463,26 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
     }
-    bool IsItem(void* ent)
+    // Characters: class ids between the globals exe+0x39CE2C0 / +4 (MeleeAim's test). A guard knocked out carries
+    // loot (his pockets) and was taken for an item -- the grip and the trigger then refused to carry him.
+    constexpr uint32_t kNpcClassRange = 0x39CE2C0;
+    bool IsCharacter(void* ent)
     {
         if (!ent) return false;
+        __try
+        {
+            using FnType = const uint8_t* (*)(void*);
+            const uint8_t* ti = ((FnType)(*(void***)ent)[0])(ent);
+            if (!ti) return false;
+            const int id = *(const int*)(ti + 0x60);
+            const int* range = (const int*)(GameInfo::Base() + kNpcClassRange);
+            return id >= range[0] && id <= range[1];
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    bool IsItem(void* ent)
+    {
+        if (!ent || IsCharacter(ent)) return false;
         __try
         {
             using FnGet = uint8_t* (*)(void*, const void*, int);
@@ -458,6 +500,7 @@ namespace
     // AUDIOGRAPH 13). Food is told as a CONSUMABLE the player cannot carry: no room for it in the inventory's item table
     // (inventory+0x38, count +0x40, entries of 0x38: decl first, base capacity at +0x24) -- elixirs are consumables too,
     // with room for 10.
+    constexpr uint32_t kLootDefs = 0x68, kLootDefStride = 0x10;
     constexpr uint32_t kLootItems = 0x28, kLootInfoStride = 0x18, kItemDeclType = 0x60, kTypeCoin = 1, kTypeConsumable = 6;
     constexpr uint32_t kInvTable = 0x38, kInvTableCount = 0x40, kInvTableStride = 0x38, kInvTableCapacity = 0x24;
     std::atomic<uint32_t> g_ClassifyId{ 0 };
@@ -489,8 +532,21 @@ namespace
             if (!loot) return 0;
             const uint8_t* list = *(const uint8_t* const*)(loot + kLootItems);
             const int count = *(const int*)(loot + kLootItems + 8) & 0xFFFFFF;
-            for (int i = 0; list && i < count && i < 8 && n < max; i++)
+            for (int i = 0; list && i < count && i < 8 && n + 1 < max; i++)
+            {   // (the item decl's place in an entry is not certain: both of its first two fields are handed on, RTTI decides)
                 out[n++] = *(const void* const*)(list + (size_t)i * kLootInfoStride);
+                out[n++] = *(const void* const*)(list + (size_t)i * kLootInfoStride + 8);
+            }
+            // measured: the component's own list is empty on items lying in the world -- what they give is the loot
+            // decl's m_itemDefs (decl = loot+0x08; an idList at decl+0x68 of 0x10-byte arkDeclLootinfo)
+            const uint8_t* decl = *(const uint8_t* const*)(loot + 0x08);
+            const uint8_t* defs = decl ? *(const uint8_t* const*)(decl + kLootDefs) : nullptr;
+            const int nd = decl ? *(const int*)(decl + kLootDefs + 8) & 0xFFFFFF : 0;
+            for (int i = 0; defs && i < nd && i < 8 && n + 1 < max; i++)
+            {
+                out[n++] = *(const void* const*)(defs + (size_t)i * kLootDefStride);
+                out[n++] = *(const void* const*)(defs + (size_t)i * kLootDefStride + 8);
+            }
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
         return n;
@@ -528,7 +584,7 @@ namespace
     //! 2 = food (eaten where it is: never stored), 1 = kept (stored), 0 = cannot tell. Logs what it read.
     int ClassifyFood(void* ent)
     {
-        const void* decls[8]; const int n = LootDecls(ent, decls, 8);
+        const void* decls[32]; const int n = LootDecls(ent, decls, 32);
         if (!n) { LOGI("Collision: the item has no loot list (a mission item?): kept, not eaten"); return 1; }
         uint8_t* inv = PlayerInventory();
         int food = 0, kept = 0, known = 0; std::string what;
@@ -614,6 +670,63 @@ namespace
         std::string l = s; for (char& c : l) c = (char)tolower((unsigned char)c);
         return l.find(what) != std::string::npos;
     }
+    //! A sliding window (or its handle): "window" in the level name, and not a door -- measured, a glazed door is named
+    //! 'ld_door_big_rich_int_window_350_0_4' and was taken for a window; a window's handle 'ld_rich_small_gp_window_handle_1'.
+    bool IsWindowEnt(void* ent)
+    {
+        if (!ent) return false;
+        const std::string n = EntityName(ent);
+        return NameHas(n, "window") && !NameHas(n, "door");
+    }
+    // A door's open state. The openable's +0x1E8 stays 0 on a door the push swung open (measured: every door pushed
+    // was "closed"), so its state machine (arkCpntOpenable+0x40) is read: its current state is one of the component's
+    // own state objects, told by their vtables -- arkStateOpenable_Closed (exe+0x1C56908), _Animated (exe+0x1C56948:
+    // +0x28 = the phase, 0 opened, 1 opening, 2 closing, 3 closed) or _Opened (exe+0x1C56988). Doors with none of that
+    // fall back on what the hands did to them (g_DoorMem: pushed open by a hand, closed by a hand).
+    constexpr uint32_t kVtClosed = 0x1C56908, kVtAnimated = 0x1C56948, kVtOpened = 0x1C56988;
+    int OpenableMachineState(void* ent, int* where)
+    {
+        *where = -1;
+        if (!ent) return -1;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            const uintptr_t base = GameInfo::Base();
+            const uint8_t* c = ((FnGet)(base + kGetComponent))(ent, (const void*)(base + kOpenableType), 2);
+            if (!c) return -1;
+            for (int off = 0x40; off < 0x60; off += 8)
+            {
+                const uint8_t* st = *(const uint8_t* const*)(c + off);
+                if (!st || (uintptr_t)st < 0x10000) continue;
+                const uintptr_t vt = *(const uintptr_t*)st;
+                if (vt == base + kVtOpened) { *where = off; return 1; }
+                if (vt == base + kVtClosed) { *where = off; return 0; }
+                if (vt == base + kVtAnimated) { *where = off; const int ph = *(const int*)(st + 0x28); return ph <= 1 ? 1 : 0; }
+            }
+            return -1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+    std::unordered_map<void*, int> g_DoorMem;      // game thread: 1 = a hand pushed it open, 0 = a hand closed it
+    int DoorOpen(void* door, const char** how);
+    //! What the grip can pull: a drawer / cabinet (its openable) or a door (not a window): 1 open, 0 closed, -1 neither.
+    int OpenOrNot(void* e)
+    {
+        if (!e) return -1;
+        if (IsDoor(e)) { if (IsWindowEnt(e)) return -1; const char* how = ""; return DoorOpen(e, &how); }
+        return OpenableState(e);
+    }
+    //! 1 open, 0 closed; `how` says where that came from (for the log).
+    int DoorOpen(void* door, const char** how)
+    {
+        int where = -1;
+        const int m = OpenableMachineState(door, &where);
+        if (m >= 0) { *how = m ? "its openable's state: open" : "its openable's state: closed"; return m; }
+        if (OpenableState(door) == 1) { *how = "its openable: open"; return 1; }
+        auto it = g_DoorMem.find(door);
+        if (it != g_DoorMem.end()) { *how = it->second ? "pushed open by a hand" : "closed by a hand"; return it->second; }
+        *how = "taken as closed"; return 0;
+    }
     DialSwipe g_Dial[2];                        // game thread
     constexpr float kDialStep = 0.035f;         // m of the hand along the dial (up / down) per digit
     // The wheels sit recessed in the safe's door: the hand meets the door, not the wheel. So the wheel the grabbing hand's
@@ -625,19 +738,90 @@ namespace
     // after the interact that stores an item: is its entity still in the world (the game refused it: inventory full)?
     std::atomic<uint32_t> g_WatchId{ 0 }; std::atomic<int> g_WatchState{ -1 };
     std::atomic<uint32_t> g_PointerItem{ 0 };      // the pointer's pick when it is an item (game thread -> KbmInject)
+    std::atomic<int> g_PointerOpenable{ -1 };      // ...when it is a drawer / cabinet: id << 1 | open, else -1
+    std::atomic<uint32_t> g_PointerHoldable{ 0 };  // ...when it is something the interact picks up and holds
+    std::atomic<int> g_PointerHoldKind{ 0 };       // 1 an object held in the hand, 2 something carried (a body)
+    std::string g_PointerDesc;                     // under g_TouchM
+    constexpr uint32_t kPickableSimpleType = 0x39C5A30;   // arkCpntPickable_Simple (HoldObject's bottles, glasses)
+    bool HasComponent(void* ent, uint32_t type)
+    {
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            return ((FnGet)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + type), 2) != nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     std::mutex g_TouchM;
     Collision::Touch g_TouchPub[2];
     double g_TouchAt[2] = {};
-    struct CloseReq { uint32_t id = 0; double at = 0; } g_CloseReq[2];   // under g_TouchM
+    struct CloseReq { uint32_t id = 0; double at = 0; float p[3] = {}; } g_CloseReq[2];   // under g_TouchM
+    void RequestInteract(int h, uint32_t id, const float p[3], double now)
+    {
+        std::lock_guard lk(g_TouchM);
+        g_CloseReq[h & 1] = CloseReq{ id, now, { p[0], p[1], p[2] } };
+    }
     std::atomic<bool> g_Openables{ false };
     bool Dynamic(void* ent)
     {
         uint8_t f = 0;
         return ent && SafeRead(&f, (uint8_t*)ent + kEntFlags, 1) && (f & 0x8);
     }
+    //! The entity's C++ class (MSVC RTTI: vtable[-1] = the complete object locator, +0x0C its type descriptor's RVA,
+    //! +0x14 its own; the name at descriptor+0x10, ".?AVarkDoor@@") and its class id (type info +0x60). POD only (C2712).
+    void ReadClass(void* ent, char (&buf)[96], int* classId)
+    {
+        buf[0] = 0; *classId = -1;
+        __try
+        {
+            const uintptr_t vt = *(const uintptr_t*)ent;
+            using FnType = const uint8_t* (*)(void*);
+            const uint8_t* ti = ((FnType)(*(void***)ent)[0])(ent);
+            if (ti) *classId = *(const int*)(ti + 0x60);
+            const uint8_t* col = *(const uint8_t* const*)(vt - 8);
+            const uintptr_t base = (uintptr_t)col - *(const uint32_t*)(col + 0x14);
+            const char* n = (const char*)(base + *(const uint32_t*)(col + 0x0C) + 0x10);
+            if (n[0] == '.' && n[1] == '?' && n[2] == 'A') n += 4;      // ".?AV" / ".?AU"
+            int i = 0;
+            for (; i < 95 && n[i] && !(n[i] == '@' && n[i + 1] == '@'); i++) { if (n[i] < 32 || n[i] > 126) break; buf[i] = n[i]; }
+            buf[i] = 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { }
+    }
+    //! An entity in words, for the logs: its level name, its class, and what the mod makes of it.
+    std::string DescribeEnt(void* e)
+    {
+        if (!e) return "none";
+        char cls[96] = {}; int cid = -1; ReadClass(e, cls, &cid);
+        uint32_t id = 0; SafeRead(&id, (uint8_t*)e + kEntId, 4);
+        std::string d = fmt::format("'{}' ({} #{}, id {:#x})", EntityName(e), cls[0] ? cls : "?", cid, id);
+        if (IsCharacter(e)) d += " character";
+        if (IsDoor(e)) d += " door";
+        if (IsWindowEnt(e)) d += " window";
+        const int os = OpenableState(e);
+        if (os >= 0) d += os ? " openable(open)" : " openable(closed)";
+        int where = -1; const int ms = OpenableMachineState(e, &where);
+        if (ms >= 0) d += fmt::format(" state:{}@+{:#x}", ms ? "open" : "closed", where);
+        if (IsItem(e)) d += " item";
+        if (HasComponent(e, kPickableSimpleType)) d += " holdable";
+        if (Dynamic(e)) d += " physics";
+        uint8_t f = 0; if (SafeRead(&f, (uint8_t*)e + kEntFlags, 1) && (f & 0x28) && IsCharacter(e)) d += " (down)";
+        return d;
+    }
 
     struct HitLog { void* ent; uint32_t body, cfi; float p[3]; };
 
+    //! A hand's or a held item's ray: the world (with the melee flag) and the props (without it); the nearer hit.
+    std::atomic<uint64_t> g_PropHits{ 0 };
+    bool CastHand(const float a[3], const float b[3], void* const* skip, int nskip, RayHit& out)
+    {
+        RayHit w, p;
+        const bool hw = CastRay(a, b, kWorldLayers, kWorldFlags, skip, nskip, w);
+        const bool hp = CastRay(a, b, kPropLayers, kPropFlags, skip, nskip, p);
+        if (hp && (!hw || p.dist < w.dist - 1e-4f)) { out = p; if (!hw || p.ent != w.ent) g_PropHits++; return true; }
+        if (hw) { out = w; return true; }
+        out = RayHit{}; return false;
+    }
     //! Sweep a point from `from` to `goal`, sliding along what it meets; appends the planes met.
     void Sweep(const float from[3], const float goal[3], float r, void* const* skip, int nskip, const float local[3],
                Collision::Contact* out, int& nout, void** ents, HitLog* log, float res[3])
@@ -651,7 +835,7 @@ namespace
             const float u[3] = { d[0] / L, d[1] / L, d[2] / L };
             const float end[3] = { target[0] + u[0] * r, target[1] + u[1] * r, target[2] + u[2] * r };
             RayHit h;
-            if (!CastRay(cur, end, kWorldLayers, kWorldFlags, skip, nskip, h)) { memcpy(cur, target, 12); break; }
+            if (!CastHand(cur, end, skip, nskip, h)) { memcpy(cur, target, 12); break; }
             const float stop = fmaxf(0.f, fminf(L, h.dist - r));
             for (int k = 0; k < 3; k++) cur[k] += u[k] * stop;
             if (nout < kMaxContacts)
@@ -681,6 +865,14 @@ void Collision::SetDials(bool on) { g_Dials = on; LOGI("Collision: safe dials {}
 void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
 bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
 uint32_t Collision::PointerItem() { return g_PointerItem.load(); }
+uint32_t Collision::PointerHoldable(int* kind) { if (kind) *kind = g_PointerHoldKind.load(); return g_PointerHoldable.load(); }
+int Collision::PointerOpenable(uint32_t* id)
+{
+    const int v = g_PointerOpenable.load();
+    if (v < 0) return -1;
+    if (id) *id = (uint32_t)v >> 1;
+    return v & 1;
+}
 void Collision::WatchItem(uint32_t id) { g_WatchState = -1; g_WatchId = id; }
 void Collision::ClassifyItem(uint32_t id) { g_FoodState = -1; g_ClassifyId = id; }
 int Collision::ItemFood() { return g_FoodState.load(); }
@@ -693,13 +885,22 @@ bool Collision::Touched(int hand, Touch& out)
     out = g_TouchPub[h];
     return out.valid && Now() - g_TouchAt[h] < 0.12;
 }
-bool Collision::TakeCloseRequest(int hand, uint32_t* id)
+bool Collision::TakeCloseRequest(int hand, uint32_t* id, float point[3])
 {
     const int h = hand & 1;
     std::lock_guard lk(g_TouchM);
     if (!g_CloseReq[h].id || Now() - g_CloseReq[h].at > 0.3) { g_CloseReq[h] = CloseReq{}; return false; }
-    *id = g_CloseReq[h].id; g_CloseReq[h] = CloseReq{};
+    *id = g_CloseReq[h].id;
+    if (point) memcpy(point, g_CloseReq[h].p, 12);
+    g_CloseReq[h] = CloseReq{};
     return true;
+}
+std::string Collision::PointerDescribe() { std::lock_guard lk(g_TouchM); return g_PointerDesc; }
+std::string Collision::Describe(void* ent) { return DescribeEnt(ent); }
+bool Collision::IsWindow(uint32_t id)
+{
+    if (!id || id == 0x3FFF0010u) return false;
+    return IsWindowEnt(BodyHide::EntityById((int)id));
 }
 void Collision::SetDoors(bool on) { g_Doors = on; LOGI("Collision: doors {}", on ? "open when a hand pushes them (with HandCollision)" : "only open with the interact button"); }
 bool Collision::HandsOn() { return g_Hands.load(); }
@@ -741,11 +942,27 @@ void Collision::Tick()
         uint8_t hidden = 0; if (we) SafeRead(&hidden, (uint8_t*)we + 0xD0, 1);
         g_WatchState = (we && !(hidden & 1) && IsItem(we)) ? 1 : 0;
     }
-    if (g_Items.load())
-    {   // is what the pointer has picked an item (taken only by hand, PhysicalPickup)?
+    {   // what the pointer has picked: an item (taken only by hand, PhysicalPickup)? an openable, open or closed?
         const int pid = GrabHand::TargetId();
         void* pe = pid > 0 && pid != 0x3FFF0010 ? BodyHide::EntityById(pid) : nullptr;
-        g_PointerItem = pe && IsItem(pe) ? (uint32_t)pid : 0u;
+        g_PointerItem = g_Items.load() && pe && IsItem(pe) ? (uint32_t)pid : 0u;
+        // (a door counts: cabinets are often doors -- measured, the grip on a cabinet 25-40 cm from the hand found
+        // nothing to pull; its open state is the door's, see DoorOpen)
+        const int os = g_Openables.load() ? OpenOrNot(pe) : -1;
+        // something the interact picks up and holds (a bottle, a glass: arkCpntPickable_Simple; a body: the sensor's
+        // carry pick) -- what the grip takes as a physical grab
+        const bool simple = pe && HasComponent(pe, kPickableSimpleType);
+        g_PointerHoldable = pe && (simple || pid == GrabHand::CarryTargetId()) ? (uint32_t)pid : 0u;
+        g_PointerHoldKind = simple ? 1 : 2;
+        g_PointerOpenable = os < 0 ? -1 : (int)(((uint32_t)pid << 1) | (uint32_t)os);
+        static int descId = -1; static double descAt = 0;
+        if (pid != descId || now - descAt > 0.5)
+        {   // what it is, for KbmInject's logs (the grip, the trigger, a hand's interact)
+            descId = pid; descAt = now;
+            std::string d = DescribeEnt(pe);
+            if (pe && pid == GrabHand::CarryTargetId()) d += " carriable";
+            std::lock_guard lk(g_TouchM); g_PointerDesc = d;
+        }
     }
     void* skip[8]; int nskip = 0;
     for (int k = 0; k < BodyHide::aCount; k++) if (an[k].valid && an[k].ent) skip[nskip++] = an[k].ent;
@@ -791,7 +1008,14 @@ void Collision::Tick()
         const float sep = Len(off);
         if (sep > C.maxSep)
         {   // the real hand went far through: let the drawn one follow it rather than lag behind
-            nc = 0; off[0] = off[1] = off[2] = 0.f; if (!S.ghost) g_Ghosts[h]++; S.ghost = true;
+            if (!S.ghost)
+            {   // reported: the sword passes through walls -- a blade stopped far from the hand lets go here
+                g_Ghosts[h]++;
+                static int logged = 0;
+                if (logged++ < 30) LOGI("Collision: {} hand {} pushed {:.0f} cm back by what it met: lets go, passes through (until the eye sees the palm)",
+                                        h ? "right" : "left", item ? "with its weapon" : "(empty)", sep * 100.f);
+            }
+            nc = 0; off[0] = off[1] = off[2] = 0.f; S.ghost = true;
         }
         g_LastOff[h] = sep > C.maxSep ? 0.f : sep;
 
@@ -802,7 +1026,7 @@ void Collision::Tick()
             {
                 void* e = cents[i];
                 if (!e || !IsDoor(e)) continue;
-                if (g_Windows.load() && NameHas(EntityName(e), "window")) continue;   // a window moves by sliding, not pushing
+                if (g_Windows.load() && IsWindowEnt(e)) continue;   // a window moves by sliding, not pushing
                 auto it = g_DoorAt.find(e);
                 if (it != g_DoorAt.end() && now - it->second < C.doorGap) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
@@ -814,10 +1038,28 @@ void Collision::Tick()
                 if (into < C.doorSpeed && past < C.doorPress) continue;
                 if (g_DoorAt.size() > 64) g_DoorAt.clear();
                 g_DoorAt[e] = now;
-                const bool ok = PushDoor(e, an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr);
                 uint32_t id = 0; SafeRead(&id, (uint8_t*)e + kEntId, 4);
-                LOGI("Collision: {} hand pushed door {} (id {:#x}) at {:.2f} m/s, {:.0f} cm past its surface: {}",
-                     h ? "right" : "left", e, id, into, past * 100.f, ok ? "the game's door push sent" : "COULD NOT SEND");
+                // An OPEN door pushed closes: the game's push only ever swings a closed door open (away from the
+                // pusher), and the scripts' close did nothing on a door the push had opened (its openable still said
+                // closed). So it is the player's own interact on that door, the one a keyboard player closes it with:
+                // KbmInject aims the interaction sensor at the point the hand pushed and presses it. Either hand.
+                if (g_DoorMem.size() > 128) g_DoorMem.clear();
+                const char* how = "";
+                const int dstate = DoorOpen(e, &how);
+                if (dstate == 1)
+                {
+                    const float at[3] = { cs[i].p[0] - cs[i].n[0] * 0.02f, cs[i].p[1] - cs[i].n[1] * 0.02f, cs[i].p[2] - cs[i].n[2] * 0.02f };
+                    RequestInteract(h, id, at, now);
+                    g_DoorMem[e] = 0;
+                    LOGI("Collision: {} hand pushed OPEN door '{}' (id {:#x}; {}) at {:.2f} m/s, {:.0f} cm past its surface: interact to close it",
+                         h ? "right" : "left", EntityName(e), id, how, into, past * 100.f);
+                    VRRuntime::Vibrate(h, 0.35f, 0.04f);
+                    continue;
+                }
+                const bool ok = PushDoor(e, an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr);
+                if (ok) g_DoorMem[e] = 1;
+                LOGI("Collision: {} hand pushed door '{}' (id {:#x}; {}) at {:.2f} m/s, {:.0f} cm past its surface: {}",
+                     h ? "right" : "left", EntityName(e), id, how, into, past * 100.f, ok ? "the game's door push sent" : "COULD NOT SEND");
                 VRRuntime::Vibrate(h, 0.35f, 0.04f);
             }
         }
@@ -895,7 +1137,7 @@ void Collision::Tick()
             else if (now - D.lastAt >= 1.0) D = DialSwipe{};
         }
         // a sliding window under the (grabbing) hand: slide up raises it, slide down lowers it
-        if (g_Windows.load() && S.valid && h == GrabHand::Hand())
+        if (g_Windows.load() && S.valid)
         {
             WinSwipe& W = g_Win[h];
             int wi = -1; int wstate = -1;
@@ -903,8 +1145,7 @@ void Collision::Tick()
             {
                 void* e = cents[i];
                 if (!e) continue;
-                const int os = OpenableState(e);
-                if ((os >= 0 || IsDoor(e)) && NameHas(EntityName(e), "window")) { wi = i; wstate = os; }
+                if (IsWindowEnt(e)) { wi = i; wstate = OpenableState(e); }
             }
             void* we = wi >= 0 ? cents[wi] : nullptr;
             int pi = -1;
@@ -920,7 +1161,7 @@ void Collision::Tick()
                 if (te && GrabHand::TargetPoint(o))
                 {
                     const int os = OpenableState(te);
-                    if ((os >= 0 || IsDoor(te)) && NameHas(EntityName(te), "window"))
+                    if (IsWindowEnt(te))
                     {
                         const float d[3] = { goal[0][0] - o[0], goal[0][1] - o[1], goal[0][2] - o[2] };
                         const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -944,15 +1185,21 @@ void Collision::Tick()
                 }
                 W.lastAt = now;
                 const int dir = W.acc >= kWindowSwipe ? 1 : (W.acc <= -kWindowSwipe ? -1 : 0);
+                uint32_t id = 0; SafeRead(&id, (uint8_t*)we + kEntId, 4);
                 if (dir && now - W.movedAt > 1.0)
-                {   // up opens a closed one, down closes an open one; with no open state to read (a door), every swipe
-                    // toggles, but not twice the same way in a row
-                    const bool want = wstate >= 0 ? (dir > 0 ? wstate == 0 : wstate == 1) : dir != W.lastDir;
+                {   // up opens a closed one, down closes an open one; with no open state to read, every swipe toggles,
+                    // but not twice the same way in a row (remembered per window, across touches)
+                    if (wstate < 0) { int where = -1; wstate = OpenableMachineState(we, &where); }
+                    static std::unordered_map<uint32_t, int> lastDir;   // game thread
+                    if (lastDir.size() > 64) lastDir.clear();
+                    const bool want = wstate >= 0 ? (dir > 0 ? wstate == 0 : wstate == 1) : dir != lastDir[id];
                     if (want)
                     {
-                        uint32_t id = 0; SafeRead(&id, (uint8_t*)we + kEntId, 4);
-                        { std::lock_guard lk(g_TouchM); g_CloseReq[h] = CloseReq{ id, now }; }
-                        W.movedAt = now; W.lastDir = dir; g_WindowMoves++;
+                        float at[3];
+                        if (wi >= 0) for (int k = 0; k < 3; k++) at[k] = cs[wi].p[k] - cs[wi].n[k] * 0.02f;
+                        else if (!GrabHand::TargetPoint(at)) memcpy(at, goal[0], 12);
+                        RequestInteract(h, id, at, now);
+                        W.movedAt = now; W.lastDir = dir; lastDir[id] = dir; g_WindowMoves++;
                         LOGI("Collision: {} hand slid {} on window '{}' (id {:#x}, {}): interact", h ? "right" : "left", dir > 0 ? "UP" : "DOWN",
                              EntityName(we), id, wstate < 0 ? "a door" : wstate ? "open" : "closed");
                     }
@@ -961,7 +1208,7 @@ void Collision::Tick()
             }
         }
         // what this hand touches (the first contact with an entity), for KbmInject's grab-and-pull on drawers and cabinets;
-        // pushing an OPEN one (not a door: those have their own push) asks for the interact that closes it
+        // pushing an OPEN one (not a door: those have their own push) closes it
         {
             Touch tch;
             for (int i = 0; i < nc && !tch.valid; i++)
@@ -971,9 +1218,9 @@ void Collision::Tick()
                 tch.valid = true; tch.ent = e; memcpy(tch.n, cs[i].n, 12); memcpy(tch.p, cs[i].p, 12);
                 tch.item = g_Items.load() && IsItem(e);
                 SafeRead(&tch.id, (uint8_t*)e + kEntId, 4);
-                const int os = g_Openables.load() ? OpenableState(e) : -1;
+                const int os = g_Openables.load() ? OpenOrNot(e) : -1;
                 tch.openable = os >= 0; tch.open = os == 1;
-                if (tch.open && !IsDoor(e) && !(g_Windows.load() && NameHas(EntityName(e), "window")) && S.valid && dt > 1e-4 && dt < 0.1)
+                if (tch.open && !IsDoor(e) && !(g_Windows.load() && IsWindowEnt(e)) && S.valid && dt > 1e-4 && dt < 0.1)
                 {
                     int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
                     if (pi >= 0)
@@ -984,10 +1231,12 @@ void Collision::Tick()
                         const float past = cs[i].clear - Dot(d, cs[i].n);
                         auto it = g_DoorAt.find(e);
                         if ((into >= C.doorSpeed || past >= C.doorPress) && (it == g_DoorAt.end() || now - it->second >= C.doorGap))
-                        {
+                        {   // closed directly (either hand, no pointer needed): closing needs no key
                             g_DoorAt[e] = now;
-                            std::lock_guard lk(g_TouchM); g_CloseReq[h] = CloseReq{ tch.id, now };
-                            LOGI("Collision: {} hand pushed an open drawer / cabinet {} (id {:#x}) at {:.2f} m/s: close it", h ? "right" : "left", e, tch.id, into);
+                            const bool ok = CloseOpenable(e);
+                            if (ok) VRRuntime::Vibrate(h, 0.3f, 0.04f);
+                            LOGI("Collision: {} hand pushed an open drawer / cabinet {} (id {:#x}) at {:.2f} m/s: {}", h ? "right" : "left", e, tch.id, into,
+                                 ok ? "closing it (the scripts' close)" : "COULD NOT CLOSE");
                         }
                     }
                 }
@@ -1033,8 +1282,8 @@ void Collision::Tick()
             S.lastBuzz = now;
             g_Stops[h]++;
             std::lock_guard lk(g_DescM);
-            g_LastHitDesc = fmt::format("hand {} met entity {} '{}' body {:#x} layer {} flags {:#x} at ({:.2f},{:.2f},{:.2f}){} {:.2f} m/s",
-                                        h, logs[0].ent, logs[0].ent ? EntityName(logs[0].ent) : std::string(), logs[0].body, logs[0].cfi & 0x1F, logs[0].cfi >> 5, logs[0].p[0], logs[0].p[1], logs[0].p[2],
+            g_LastHitDesc = fmt::format("hand {} met entity {} {} body {:#x} layer {} flags {:#x} at ({:.2f},{:.2f},{:.2f}){} {:.2f} m/s",
+                                        h, logs[0].ent, logs[0].ent ? DescribeEnt(logs[0].ent) : std::string("(the level)"), logs[0].body, logs[0].cfi & 0x1F, logs[0].cfi >> 5, logs[0].p[0], logs[0].p[1], logs[0].p[2],
                                         Dynamic(logs[0].ent) ? " (loose: pushed)" : "", vn);
             LOGI("Collision: {}", g_LastHitDesc);
         }
@@ -1089,7 +1338,7 @@ std::string Collision::Stats()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()
       << " touching L " << g_Touch[0].load() << " R " << g_Touch[1].load() << " off L " << g_LastOff[0].load() << " R " << g_LastOff[1].load()
-      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " dialsteps " << g_DialSteps.load() << " windows " << g_WindowMoves.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
+      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " prophits " << g_PropHits.load() << " dialsteps " << g_DialSteps.load() << " windows " << g_WindowMoves.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
     std::lock_guard lk(g_DescM);
     if (!g_LastHitDesc.empty()) o << " | last: " << g_LastHitDesc;
     return o.str();

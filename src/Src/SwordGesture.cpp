@@ -28,7 +28,9 @@ namespace
         // A pose faster than this is a tracking glitch or a jump, not a motion. Measured in the mock: re-posing the
         // hand in one frame (0.2 m and 135 deg) read as hand 11 m/s -- under a hand-only bound of 12 -- and struck
         // the table. The TIP bound is what catches a pose that turned in one frame.
-        float peakWin = 0.15f, aimHold = 0.9f, teleport = 10.f, teleportTip = 25.f;
+        // Raised after the first Index test: real fast slashes move the controller at 10-18 m/s (peaks near 30) and the tip
+        // faster still, and 128 of them in one session were thrown away here as "jumps" -- the swings that did nothing.
+        float peakWin = 0.15f, aimHold = 0.9f, teleport = 40.f, teleportTip = 80.f;
         // chargeFull: measured, a hold of 0.45 s still strikes as a normal slash (0.23 s after the release) and one
         // of 0.55 s strikes 0.05 s after it -- the charged attack. So "full" is at ~0.5 s.
         float chargeStill = 0.6f, chargeDwell = 0.20f, chargeRelease = 1.4f, chargeCone = 40.f, chargeFull = 0.55f;

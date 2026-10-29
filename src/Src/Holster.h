@@ -8,8 +8,9 @@
 //! and the right hand free, say). KbmInject tells the zones and swallows that squeeze (no power wheel, no block).
 //!
 //! A draw is the game's own equip: ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D, payload {arkDeclInventoryItem*, flags}) posted
-//! to the player, what the script node ActionPlayerInventory sends (exe+0x534760: the sword with flags 5, its left-hand
-//! equipment with 0) and what the inventory itself posts when an item has to be equipped (exe+0x619B93). Putting away
+//! to the player (handled by exe+0x7F8D60), with flags 4 = EQUIPCHANGE_THIS_HAND_ONLY: without it the game re-equips
+//! both hands together, as it always pairs them. The script node ActionPlayerInventory sends the same message
+//! (exe+0x534760), and so does the inventory when an item has to be equipped (exe+0x619B93). Putting away
 //! is ARK_MSG_INVENTORY_UNEQUIP_ITEM (0x9E, arkMsgInventoryUnequipItem {m_decl, m_slot, m_instant}), as that node's
 //! Unequip sends it. The player's equip state then changes the hands with their animations.
 //!

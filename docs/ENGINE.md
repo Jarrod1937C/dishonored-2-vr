@@ -946,9 +946,33 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   ActionUsable (exe+0x797750 next, 0x797930 previous, 0x797C40 set stage, 0x797D30 enable) calls them.
 - **Entity names**: the level's name of an entity is a char* at entity+0x20 (exe+0x1D9090 reads it for the game's own
   error messages, e.g. exe+0x762D41, 0x7C598E).
+- **Closing an openable**: the scripts' Close (exe+0x793570) = if openable+0x1E8, exe+0x74E4C0(openable, false, true).
+  Doors keep their open state there too (arkCpntOpenable's members include arkDoorDefaultState_t m_defaultState).
+  Measured: +0x1E8 stays 0 on a door ARK_MSG_DOOR_PUSH swung open (every pushed door read "closed"), so the close
+  no-ops on it. The mod reads the state machine instead (below) and closes a door with the player's own interact,
+  aimed at the point the hand pushed (the interaction sensor locked on that point, then F).
+- **Hand casts and props**: many props (fruit, cups, bottles) do not carry the melee sweeps' flag 0x100000 and were
+  missed by a cast that requires it; a second cast on layers 3 / 4 (DEBRIS) / 5 / 15 / 23 with no flag finds them.
+- **Finishing moves (generic fatality)**: arkPlayerStateSlash's method exe+0x86B050 (from vtable slot exe+0x86C630 and
+  from exe+0x86BEC0) decides whether a blow becomes a synchronised kill: target not physics-driven (+0xD1 & 8), the
+  attack outcome (+0x20 of the sensor's outcome: 3 rolls `rand % 100 < decl+0xEC`), a staggered target (exe+0x5BF440)
+  or one on the ground (+0xD1 & 0x20), distance < decl+0xE8 when there is no outcome, the target's component
+  exe+0x39E80A0 with decl +0xCC bit 0. All of it ends in one store, exe+0x86B381 `mov byte [rdi+0xD9], 1` (the rules'
+  "slash.isGenericFatality"); every refusal continues at exe+0x86B38A. arkDeclPlayerStateSlash (0xF0 bytes, ctor
+  exe+0x86A7C8): m_genericFatalityMaxDistance float +0xE8 (2.0), m_genericFatalityChance int +0xEC (10). The kill cam:
+  cvar ark_killcam_chance_setting (default 1).
+- **Characters**: class ids between the globals exe+0x39CE2C0 / +4. An unconscious guard carries an arkCpntLoot (his
+  pockets), so "has loot" alone takes him for an item.
+- **Loot lists**: arkCpntLoot's own m_items (+0x28) is empty on items lying in the world; what they give is the loot
+  decl's (loot+0x08, arkDeclCpntLoot) m_itemDefs, an idList at decl+0x68 of 0x10-byte arkDeclLootinfo (which of the
+  first two fields is the item decl is not confirmed: the mod tries both, validated by RTTI).
+- **Window names**: a sliding window's sash / handle has "window" in its level name ('ld_rich_small_gp_window_handle_1',
+  layers 3 / 15); so does a glazed door ('ld_door_big_rich_int_window_350_0_4'), so names with "door" are excluded.
 - **Openables** (drawers, cabinets, some doors): arkCpntOpenable, type exe+0x39C59A0 (registered exe+0x13BB9B0, GetType
   exe+0x8EB600, vtable exe+0x1C569C8); +0x1E8 = open; a state machine at +0x40 (current at +0x48: Closed / Animated /
-  Opened, arkStateOpenable_*). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event
+  Opened, arkStateOpenable_*). The state objects are embedded: Closed at +0x60, Animated at +0x80 (+0x28 = phase:
+  0 OPENED, 1 OPENING, 2 CLOSING, 3 CLOSED), Opened at +0xB8; told by their vtables exe+0x1C56908 / 0x1C56948 /
+  0x1C56988 (the mod scans +0x40..+0x58 for a pointer to one: unverified in game). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event
   exe+0x39ACAC0 / 0x39ACB10 to the entity, starts the animation) without any lock check: the scripts' Open / Close
   (exe+0x7933D0 / 0x793570, a Kiscule node registered at exe+0x7932B0) call it; +0xD8 is a scripted state (0 / 1 / 2).
 - **Doors**: arkDoor (RTTI vtable exe+0x1CB7C68) is told apart by its class id range at exe+0x39C0350 / +4 (tested by
@@ -1061,6 +1085,15 @@ the game does not simulate; skip = INTERACT held (ENTER does nothing).
   that entity exists: exe+0x63C890 / exe+0x63C8C0 return them after GetEntityById), +0x20 the quantity. The equipment
   decl: **+0x68 the slot** (0 right hand = inv+0x68, 1 left hand = inv+0x70, ...; the slots are inv+0x68+8*slot),
   +0x11C the item type (1 = the sword).
+- **The player's equip messages** (handlers reached through thunks at exe+0x7FBE10 / 0x7FBE20): 0x9D -> exe+0x7F8D60:
+  finds the item's entry, then flags bit 0 = only into an empty hand, bit 1 = instant (EQUIPCHANGE_INSTANT_EQUIP |
+  INSTANT_UNEQUIP, else INSTANT_UNEQUIP only), **bit 2 = EQUIPCHANGE_THIS_HAND_ONLY** -- without it the change
+  re-equips BOTH hands (measured from the headset: drawing the pistol brought the sword back); requests player state
+  0x40 (left hand, slot 1) or 0x35 (right) with arkPlayerStateEquipChange params (exe+0x835590). 0x9E -> exe+0x7F9140:
+  with m_decl null, m_slot 1 = the left hand (state 0x40), 4 a special slot, 0x10 nothing, anything else the right
+  (0x35). The params' flags (enum desc at exe+0x23A01A8): LOCK 1, UNLOCK 2, REEQUIP 4, REEQUIP_BOTH_HANDS 8,
+  INSTANT_EQUIP 16, INSTANT_UNEQUIP 32, FAST_EQUIP 64, FAST_UNEQUIP 128, THIS_HAND_ONLY 256 (the state's enter,
+  exe+0x8363F0, reads them at params+0x18).
 - **Equipping**: ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D) to the owner, payload 0x10 {arkDeclInventoryItem*, flags (3 bits
   used)}. Senders: the script node ActionPlayerInventory's Equip (exe+0x534760: the sword with flags (x & ~2) | 5, then
   with `m_bothHands` its `m_leftHandEquipment` with the three bits clear) and the inventory's own update (exe+0x619B93:

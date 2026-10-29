@@ -395,6 +395,7 @@ namespace
     // points the way the mouse looked.
     constexpr uint32_t kInteractSubmit = 0x3B8D60, kInteractResults = 0x3B8430;
     constexpr uint32_t kSensorCam = 0x40, kSensorDecl = 0x8, kDeclRange = 0x70, kDeclRadii = 0x74, kSensorTargetId = 0x84;
+    constexpr uint32_t kSensorCarryId = 0x88;     //!< the CARRY pick: something the interact picks up (a bottle, a body)
     constexpr uint32_t kCamCopySize = 0x252B0;     // the camera component up to and including the aim fields
     constexpr int kNoTarget = 0x3FFF0010;
     using FnThis = void* (*)(void*);
@@ -404,6 +405,7 @@ namespace
     std::atomic<void*> g_Sensor{ nullptr };
     std::atomic<int> g_ReachMode{ 1 };   // 0 = the game's own aim fields (the left hand under aimoverride), 1 = the grabbing hand's pointer
     std::atomic<int> g_TargetId{ kNoTarget };
+    std::atomic<int> g_CarryId{ kNoTarget };
     std::atomic<ULONGLONG> g_TargetAt{ 0 };
     std::atomic<unsigned long long> g_Submits{ 0 }, g_Results{ 0 }, g_Aimed{ 0 }, g_Switches{ 0 }, g_GazeAimed{ 0 };
     std::atomic<bool> g_CarryGaze{ true };   // `vr carrygaze 0|1`: carrying a corpse, the sensor aims with the eyes (1) or the hidden hand (0, old)
@@ -465,8 +467,9 @@ namespace
             if (results)
             {
                 const int id = s && Readable(s + kSensorTargetId, 4) ? *(int*)(s + kSensorTargetId) : kNoTarget;
+                const int carry = s && Readable(s + kSensorCarryId, 4) ? *(int*)(s + kSensorCarryId) : kNoTarget;
                 if (id != g_TargetId.load()) g_Switches++;
-                g_TargetId = id; g_TargetAt = GetTickCount64();
+                g_TargetId = id; g_CarryId = carry; g_TargetAt = GetTickCount64();
             }
             return r;
         };
@@ -975,6 +978,7 @@ void GrabHand::LockSensor(const float point[3])
 }
 void GrabHand::UnlockSensor() { std::lock_guard lk(g_LockM); g_LockOn = false; }
 int GrabHand::TargetId() { return GetTickCount64() - g_TargetAt.load() < 500 ? g_TargetId.load() : kNoTarget; }
+int GrabHand::CarryTargetId() { return GetTickCount64() - g_TargetAt.load() < 500 ? g_CarryId.load() : kNoTarget; }
 void GrabHand::SetReach(int mode, float back)
 {
     g_ReachMode = mode; if (back >= 0.f) g_Back = back;

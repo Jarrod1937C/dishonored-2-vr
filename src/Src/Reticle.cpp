@@ -133,10 +133,12 @@ namespace
         st.projValid |= 1 << h;
         const ImVec2 c = ToScreen(ndc, size);
         if (!pointer && h == HandAimHook::GunHand()) GunRay::NoteRing(c.x / size.x, c.y / size.y);   // the gun hand's ring, either mode (test scripts aim with it)
-        // A takedown on offer (the game's assassination sensor, MeleeAim::KillOffered): the right hand's reticle turns RED
-        // (lethal: the sword) inside a thick BLUE border (non-lethal: the choke) -- the game offers the two together.
-        const bool takedown = h == 1 && MeleeAim::KillOffered();
-        const ImU32 kTakedownRed = IM_COL32(235, 30, 30, 255), kTakedownBlue = IM_COL32(40, 110, 255, 255);
+        // A takedown on offer (the game's assassination sensor, MeleeAim::KillOffered), or a knockout blow still possible
+        // (KnockoutReady: it outlasts the offer by 1.5 s): the right hand's reticle turns RED (lethal: the sword) inside a
+        // thick BLUE border (non-lethal: the choke) -- the game offers the two together. Drawn opaque whatever
+        // ReticleOpacity says: at 0.4 the red over the blue blended into pink (reported).
+        const bool takedown = h == 1 && (MeleeAim::KillOffered() || MeleeAim::KnockoutReady());
+        const ImU32 kTakedownRed = IM_COL32(255, 0, 0, 255), kTakedownBlue = IM_COL32(0, 90, 255, 255);
         if (minimal)
         {   // MinimalReticle: a white dot ringed in black, a fixed angular size (~0.3 deg across at the headset's density);
             // three times that while the grab hand's ray is on something it can take
@@ -145,9 +147,9 @@ namespace
             if (takedown)
             {
                 const float thick = std::max(3.f, size.y * 0.0024f) * (picked ? 1.5f : 1.f);   // three times the usual edge
-                dl->AddCircleFilled(c, r + thick + 1.f, Op(IM_COL32(0, 0, 0, 255)), 20);       // a hairline of black keeps it readable on blue skies
-                dl->AddCircleFilled(c, r + thick, Op(kTakedownBlue), 20);
-                dl->AddCircleFilled(c, r, Op(kTakedownRed), 16);
+                dl->AddCircleFilled(c, r + thick + 1.f, IM_COL32(0, 0, 0, 255), 20);       // a hairline of black keeps it readable on blue skies
+                dl->AddCircleFilled(c, r + thick, kTakedownBlue, 20);
+                dl->AddCircleFilled(c, r, kTakedownRed, 16);
                 st.drawn++;
                 return;
             }
@@ -160,9 +162,9 @@ namespace
         if (takedown)
         {   // the ring: red, inside a thick blue band
             const float band = std::max(4.f, size.y * 0.004f);
-            dl->AddCircle(c, rad + band * 0.5f + 1.f, Op(kTakedownBlue), 24, band);
-            dl->AddCircle(c, rad, Op(kTakedownRed), 24, 2.5f);
-            dl->AddCircleFilled(c, rad * 0.35f, Op(kTakedownRed), 12);
+            dl->AddCircle(c, rad + band * 0.5f + 1.f, kTakedownBlue, 24, band);
+            dl->AddCircle(c, rad, kTakedownRed, 24, 2.5f);
+            dl->AddCircleFilled(c, rad * 0.35f, kTakedownRed, 12);
             st.drawn++;
             return;
         }

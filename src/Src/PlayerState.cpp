@@ -332,6 +332,32 @@ void PlayerState::OnPresent()
                 if (g_Seen[c] && aim - g_SeenAim[c] <= 3) { m[c >> 6] |= 1ull << (c & 63); n++; }
             }
             g_RunMask[0] = m[0]; g_RunMask[1] = m[1]; g_RunCount = n;
+            // The log: every state that starts or stops (not Idle / Running, the walk's own on and off), at most 8
+            // lines a second -- what the player was doing around anything reported (a crouch, a kill animation, a
+            // kill cam, a knockout, a door). KillCam is not a scripted state, so this is where it shows.
+            static uint64_t logged[2] = {}; static int quiet[2] = { -2, -2 };
+            if (quiet[0] == -2) { quiet[0] = FindState("Idle"); quiet[1] = FindState("Running"); }
+            uint64_t now[2] = { m[0], m[1] };
+            for (int q : quiet) if (q >= 0) { now[q >> 6] &= ~(1ull << (q & 63)); }
+            if (now[0] != logged[0] || now[1] != logged[1])
+            {
+                static ULONGLONG winAt = 0; static int inWin = 0, dropped = 0;
+                const ULONGLONG t = GetTickCount64();
+                if (t - winAt > 1000) { if (dropped) LOGI("PlayerState: ({} state changes not logged)", dropped); winAt = t; inWin = 0; dropped = 0; }
+                if (inWin++ < 8)
+                {
+                    std::string on, off;
+                    for (int c = 0; c < kNumStates; c++)
+                    {
+                        const bool a = (now[c >> 6] >> (c & 63)) & 1, b = (logged[c >> 6] >> (c & 63)) & 1;
+                        if (a && !b) { on += " +"; on += kStates[c].name; }
+                        if (!a && b) { off += " -"; off += kStates[c].name; }
+                    }
+                    LOGI("PlayerState:{}{}", on, off);
+                }
+                else dropped++;
+                logged[0] = now[0]; logged[1] = now[1];
+            }
         }
         const int was = g_AnimIdx.load();
         if (running != was)

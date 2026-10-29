@@ -44,7 +44,10 @@ namespace
         float skelMin = 20;                   // a skinned model with at least this many joints is struck by its skeleton
         float attach = 0.30f;                 // a box touched this close to a character's body (his sword, hat) strikes him too
         float teleport = 25.f;                // m/s: a blade point faster than this jumped (a re-pose, a turn), it did not swing
-        float handJump = 10.f;                // m/s: the controller faster than this is a tracking glitch
+        // m/s: the controller faster than this is a tracking glitch. Was 10: measured on an Index, a fast slash moves the
+        // controller at 10-18 m/s (peaks near 30), so most real swings were thrown away as glitches and never struck
+        // (reported: "the sword only works when I hit the NPC at the surface"). A real glitch is a jump of metres.
+        float handJump = 40.f;
         float lostHold = 0.30f;               // after tracking comes back, no strike for this long
         float haptic = 1.f, touchBuzz = 0.18f;
         // The swing gesture's click (SwordGesture: the Slash and its sound in the air) waits for the swing to touch something,
@@ -295,12 +298,17 @@ namespace
         return -1;
     }
     //! WeaponCollision: the raw blade inside a character's bone capsules becomes contact planes for Collision, so the drawn
-    //! blade stops at the body's surface (the strike itself is the raw blade's entry, as before). A blade point deeper than
-    //! bodyDepth has gone through: it is left alone (the drawn blade then passes too).
+    //! blade stops at the body's surface (the strike itself is the raw blade's entry, as before). It always stops: each
+    //! blade point keeps the side it came in from (its first contact's normal) for as long as it stays inside the body, so
+    //! a fast swing whose raw blade crosses a bone's axis is not pushed out the far side (it used to pass through then,
+    //! and a point deeper than 22 cm was let go: reported, "it should always collide").
+    float g_EntryN[16][3]; bool g_EntryOn[16] = {};
     void BodyContacts(const float (*cur)[3], int n)
     {
         Collision::Contact cs[16]; int nc = 0;
         float hr[9], ht[3];
+        bool inside[16] = {};
+        if (n > 16) n = 16;
         if (Collision::WeaponsOn() && GpuTrace::RawHandPose(1, ht, hr))
         {
             for (const NpcSkel::Skel& s : g_Skels)
@@ -322,19 +330,28 @@ namespace
                         const float pen = s.r[j] + C.bladeR - Len(d);
                         if (pen > bpen) { bpen = pen; bj = j; memcpy(bq, q, 12); }
                     }
-                    if (bj < 0 || bpen > 0.22f) continue;
+                    if (bj < 0) continue;
+                    inside[i] = true;
                     // the plane sits `sink` inside the bone's surface: the blade goes a little into the body before it stops
                     const float sink = fminf(g_BodySink.load(), 0.8f * s.r[bj]);
-                    if (bpen <= sink) continue;                 // not that deep yet: nothing to stop
+                    if (bpen <= sink && !g_EntryOn[i]) continue;    // not that deep yet: nothing to stop
                     float nrm[3]; Sub(p, bq, nrm); const float nl = Len(nrm);
-                    if (nl < 1e-3f) continue;
+                    float un[3];
+                    if (g_EntryOn[i]) memcpy(un, g_EntryN[i], 12);   // the side it came in from
+                    else
+                    {
+                        if (nl < 1e-3f) continue;
+                        for (int k = 0; k < 3; k++) un[k] = nrm[k] / nl;
+                        memcpy(g_EntryN[i], un, 12); g_EntryOn[i] = true;
+                    }
                     Collision::Contact& c = cs[nc++];
-                    for (int k = 0; k < 3; k++) { c.n[k] = nrm[k] / nl; c.p[k] = bq[k] + c.n[k] * (s.r[bj] - sink); }
+                    for (int k = 0; k < 3; k++) { c.n[k] = un[k]; c.p[k] = bq[k] + c.n[k] * (s.r[bj] - sink); }
                     c.clear = C.bladeR;
                     const float d[3] = { p[0] - ht[0], p[1] - ht[1], p[2] - ht[2] };
                     for (int k = 0; k < 3; k++) c.local[k] = hr[k] * d[0] + hr[3 + k] * d[1] + hr[6 + k] * d[2];
                 }
         }
+        for (int i = 0; i < 16; i++) if (!inside[i]) g_EntryOn[i] = false;   // out of every body: the next entry decides again
         Collision::SetBodyContacts(1, cs, nc);
     }
     float SkelDist(const NpcSkel::Skel& s, const float* p)
@@ -640,7 +657,7 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             auto bz = g_LastTouchBuzz.find(tg.ent);
             if (bz == g_LastTouchBuzz.end() || t - bz->second > 0.3) { Buzz(C.touchBuzz, 0.02f); g_LastTouchBuzz[tg.ent] = t; if (g_LastTouchBuzz.size() > 64) g_LastTouchBuzz.clear(); }
             static double lastLog = -10;
-            if (t - lastLog > 0.4) { lastLog = t; LOGI("SwordContact: touch, no strike ({}) {} id {:#x}: blade {:.2f} m/s, hand peak {:.2f} m/s over {:.2f} m", why, tg.skel ? "body" : "box", tg.id, bestSpeed, g_HandPeak, g_HandPath); }
+            if (t - lastLog > 0.4) { lastLog = t; LOGI("SwordContact: touch, no strike ({}) {} {}: blade {:.2f} m/s, hand peak {:.2f} m/s over {:.2f} m", why, tg.skel ? "body" : "box", Collision::Describe(tg.ent), bestSpeed, g_HandPeak, g_HandPath); }
         }
         else
         {
@@ -687,8 +704,8 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             }
             else if (MeleeAim::SlashRunning()) { g_TapUntil = t + 0.9; g_Queued++; how = MeleeAim::HitThisSlash() ? "queued: the running Slash already hit" : "queued: the running Slash's window has closed"; }
             else { if (C.early > 0.5f && !kill) MeleeAim::RequestOpen(C.pendMax); o.tap = true; g_Taps++; awaitSlash(); how = kill ? "clicks the attack: the STEALTH KILL on offer" : "clicks a Slash"; }
-            LOGI("SwordContact: CONTACT {} id {:#x}{} at ({:.2f},{:.2f},{:.2f}), {:.2f} m from the eye, blade {:.2f} m/s (hand peak {:.2f} m/s over {:.2f} m) at {:.0f}% of the frame: {}",
-                 tg.skel ? "BODY" : fmt::format("box {:.2f}x{:.2f}x{:.2f}", tg.mx[0] - tg.mn[0], tg.mx[1] - tg.mn[1], tg.mx[2] - tg.mn[2]), tg.id,
+            LOGI("SwordContact: CONTACT {} {}{} at ({:.2f},{:.2f},{:.2f}), {:.2f} m from the eye, blade {:.2f} m/s (hand peak {:.2f} m/s over {:.2f} m) at {:.0f}% of the frame: {}",
+                 tg.skel ? "BODY" : fmt::format("box {:.2f}x{:.2f}x{:.2f}", tg.mx[0] - tg.mn[0], tg.mx[1] - tg.mn[1], tg.mx[2] - tg.mn[2]), Collision::Describe(tg.ent),
                  ownerId ? fmt::format(" (held by / on the body of {:#x}: it too)", ownerId) : std::string(),
                  bestPt[0], bestPt[1], bestPt[2], fl, bestSpeed, g_HandPeak, g_HandPath, bestT * 100.f, how);
         }

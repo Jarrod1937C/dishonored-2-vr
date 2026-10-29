@@ -24,6 +24,9 @@ namespace Settings
     bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
     bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
+    bool FinisherAnimations();                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
+    bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
+    float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool SwipeDials();                            //!< [Gameplay] SwipeDials: slide a hand up / down a safe dial to turn it

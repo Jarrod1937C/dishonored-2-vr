@@ -268,6 +268,37 @@ namespace
         s.valid = true;
     }
 
+    // [Controls] PhysicalCrouch: while the player's crouch is the one the real head made (KbmInject), the view keeps the
+    // REAL head's height -- the game's crouch lowers its camera ~0.5 m, and the real head has already gone down: the two
+    // together put the eye at the floor. So the game camera's drop below its standing height is added back: the eye is
+    // then exactly where play puts a standing player's, less what the real head went down (as before the crouch). The
+    // standing height is learned (the camera over the player's feet while not crouched); the lift stays until the
+    // camera is back up after the player stands (or 2 s).
+    std::atomic<float> g_StandCamH{ 1.70f }, g_CrouchLift{ 0.f }, g_CamH{ 0.f };
+    float CrouchLift(const float camOrg[3], const ViewSnap& snap)
+    {
+        static double lastOwn = -1e9;
+        LARGE_INTEGER t, f; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&f);
+        const double now = (double)t.QuadPart / (double)f.QuadPart;
+        BodyHide::Anchor live[BodyHide::aCount];
+        const BodyHide::Anchor* an = snap.valid ? snap.anch : (BodyHide::GetAnchors(live), live);
+        // (not in a takedown's view, whose eye is the animation's; a moving state -- a swing, a slide -- keeps play's eye, lift and all)
+        if (!an[BodyHide::aPlayer].valid || KbmInject::Possessing() || (g_TakedownView.load() && !PlayerState::AnimLocoNow())) { g_CrouchLift = 0.f; return 0.f; }
+        const float camH = camOrg[2] - an[BodyHide::aPlayer].org[2];
+        g_CamH = camH;
+        if (camH < 0.2f || camH > 2.6f) { g_CrouchLift = 0.f; return 0.f; }
+        const bool low = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch") || PlayerState::Running("WallCrouch")
+                      || PlayerState::Running("Sliding") || PlayerState::AnimActive();
+        float stand = g_StandCamH.load();
+        if (!low && fabsf(camH - stand) < 0.3f) { stand += (camH - stand) * 0.01f; g_StandCamH = stand; }
+        const bool own = KbmInject::PhysicalCrouchOwns();
+        if (own) lastOwn = now;
+        if (!own && (now - lastOwn > 2.0 || camH >= stand - 0.02f)) { lastOwn = -1e9; g_CrouchLift = 0.f; return 0.f; }
+        const float lift = Clampf(stand - camH, 0.f, 1.0f);
+        g_CrouchLift = lift;
+        return lift;
+    }
+
     //! `hp` is the HMD pose this view was composed with; `gameAxis` when the axis is the game's (head-aim mode).
     //! `eye` -2 = the alternating-stereo eye (VRRuntime::CurrentEye); `pair` see XrPose (~0 = this view starts one).
     //! Returns the view's serial.
@@ -793,6 +824,7 @@ namespace
                             AxisFromAngles(atan2f(a[1], a[0]) * kR2D - hy, 0.f, 0.f, tmpAxis);
                         }
                     }
+                    o[2] += CrouchLift(org, snap) * hostScale;     // PhysicalCrouch: the real head's height (see CrouchLift)
                     if (sync)
                     {
                         g_Pair.keep = true; memcpy(g_Pair.o, o, 12); memcpy(g_Pair.a, a, 36); memcpy(g_Pair.tmpAxis, tmpAxis, 36);
@@ -802,6 +834,7 @@ namespace
                 }
                 else
                 {
+                    o[2] += CrouchLift(org, snap);
                     if (sync) { g_Pair.keep = false; memcpy(g_Pair.o, o, 12); memcpy(g_Pair.a, a, 36); memcpy(g_Pair.ref, g_RefPos, 12); g_Pair.scale = g_Scale.load(); }
                     {   // the head's axis for the yaw-only readers (see the right eye), then the eye's own pose (cant included)
                         float ho[3]; memcpy(ho, o, 12); memcpy(headAxis, a, 36);
@@ -882,6 +915,7 @@ void ViewMatrixHook::SetCineCut(float m, float deg) { g_CutDist = m; g_CutYaw = 
 void ViewMatrixHook::SetCineTrack(bool on) { g_CineTrack = on; LOGI("ViewMatrixHook: a cutscene's eye {}", on ? "rides the cutscene camera (only pops smoothed)" : "follows at the takedown speed limit (old)"); }
 void ViewMatrixHook::SetCineVehicle(bool on) { g_CineVehicle = on; LOGI("ViewMatrixHook: the view turns with a vehicle in a cutscene {}", on); }
 void ViewMatrixHook::SetPossessView(bool on) { g_PossessView = on; LOGI("ViewMatrixHook: possession view {}", on); }
+void ViewMatrixHook::CrouchInfo(float* standCamH, float* camH, float* lift) { *standCamH = g_StandCamH.load(); *camH = g_CamH.load(); *lift = g_CrouchLift.load(); }
 std::string ViewMatrixHook::AnimStats()
 {
     std::lock_guard lk(g_M);

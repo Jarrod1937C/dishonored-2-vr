@@ -36,6 +36,11 @@ namespace Collision
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();
+    //! The pointer's pick when it is a drawer / cabinet (an openable, not a door): 1 open, 0 closed, -1 none; `id` its id.
+    int PointerOpenable(uint32_t* id = nullptr);
+    //! The pointer's pick when the interact would pick it up and hold it, else 0; `kind` 1 = an object held in the hand
+    //! (a bottle, a glass: arkCpntPickable_Simple), 2 = something carried (the sensor's carry pick: a body).
+    uint32_t PointerHoldable(int* kind = nullptr);
     //! Watch an item's entity (0 = stop): ItemPresent() = 1 while it is still in the world, 0 once it is gone (taken),
     //! -1 not checked yet. The game thread checks once a frame.
     void WatchItem(uint32_t id);
@@ -48,8 +53,15 @@ namespace Collision
     //! What a hand touched this frame (its first contact with an entity), fresh within ~0.1 s.
     struct Touch { bool valid = false; void* ent = nullptr; uint32_t id = 0; bool openable = false, open = false, item = false; float n[3] = {}, p[3] = {}; };
     bool Touched(int hand, Touch& out);
-    //! A push on an open drawer / cabinet asks for the interact that closes it: its entity id, once.
-    bool TakeCloseRequest(int hand, uint32_t* id);
+    //! A hand asks for the game's interact on an entity (an open door pushed, a window slid): its id and the world
+    //! point the hand met it at (KbmInject aims the interaction sensor there and presses interact), once.
+    bool TakeCloseRequest(int hand, uint32_t* id, float point[3] = nullptr);
+    //! That entity is a sliding window (or its handle): "window" in its level name, not a door.
+    bool IsWindow(uint32_t id);
+    //! What the pointer has picked, in words (its level name, door / openable / item / ...), for the log.
+    std::string PointerDescribe();
+    //! Any entity in words (level name, C++ class and class id, door / window / openable / item / character...), for logs.
+    std::string Describe(void* ent);
     bool HandsOn();
     bool WeaponsOn();
 

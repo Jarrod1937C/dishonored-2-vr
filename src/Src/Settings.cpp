@@ -34,6 +34,8 @@ namespace
         { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // (old: both grips) used when the two above are absent
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr },
+        { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: crouching for real crouches the character
+        { "controls.physicalcrouchdepth", Kind::Float, "30", 10, 80, nullptr }, // cm the head goes under its standing height to crouch
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordbladedamage",  Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: the blade's contact strikes by itself (experimental)
         { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
@@ -43,6 +45,7 @@ namespace
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
+        { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
         { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a safe dial to turn it
@@ -192,6 +195,9 @@ std::vector<std::string> Settings::StartupCommands()
     {
         const std::string& l = V("controls.layout");
         c.push_back(l == "classic" ? "vr quickslots 0" : l == "index" ? "vr quickslots 2" : "vr quickslots 1");
+        // index: an object the game holds (a bottle, a cup) stays in the hand while the grip is held and is dropped (or
+        // thrown, by the hand's speed) when it opens -- reported, a second squeeze to let go felt like a toggle
+        c.push_back(l == "index" ? "vr grabrelease 1" : "vr grabrelease 2");
     }
     // the game brought to the front when the controllers are used while it is behind another window (KbmInject)
     c.push_back(B("controls.focusgamewindow") ? "vr autofocus 1" : "vr autofocus 0");
@@ -251,6 +257,9 @@ bool Settings::WeaponCollision() { return B("gameplay.weaponcollision"); }
 bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
 bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
+bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
+bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
+float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
 bool Settings::SwipeDials() { return B("gameplay.swipedials"); }

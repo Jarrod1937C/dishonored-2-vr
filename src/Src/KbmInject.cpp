@@ -428,11 +428,13 @@ namespace
     bool g_TrigLets = false;                      //!< this press of the grabbing hand's trigger let the object go
     bool g_WasHolding = false; double g_HoldEndedAt = -1;
     // PullToOpen: the grip closed on a drawer / cabinet the hand touches waits for the pull before it presses interact
-    struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; } g_Pull;
+    struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; float org[3] = {}; float d0 = -1.f; } g_Pull;
     // PhysicalPickup: an item grabbed by hand, on its way to the back (stored) or the mouth (eaten)
     struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; bool foodToldBack = false; } g_Carry;
     struct Verify { uint32_t id = 0; double at = -1; } g_Verify;   // the store's interact sent: did the game take it?
     double g_CarryClearAt = -1;                                     // when a returning item's drawing is handed back
+    // a hand's interact on what it met (Collision's request: an open door pushed, a window slid), waiting for the sensor
+    struct Interact { uint32_t id = 0; float p[3] = {}; double at = 0; int hand = 0; } g_Ia;
     //! The item goes back where it was taken from (refused, let go, out of reach): it flies there, then is drawn as is.
     void CarryReturn()
     {
@@ -524,6 +526,90 @@ namespace
     {
         for (int i = 0; i < kCount; i++)
             if (g_TapUntil[i] > 0 && g_Now >= g_TapUntil[i]) { g_TapUntil[i] = 0; g_Held[i] = false; SendKey((Slot)i, false); g_UpAt[i] = g_Now; }
+    }
+    // [Controls] PhysicalCrouch: the real head going down puts the character in the game's crouch (the C key, which
+    // toggles it), and standing up takes it out. Before, crouching for real only lowered the view into a character still
+    // standing -- no stealth, the standing body's collision, the weapon held at standing height. While this crouch is
+    // the head's, ViewMatrixHook keeps the view at the real head's height (the game's own crouch drop is added back).
+    // The standing height is the head's highest (XR LOCAL, y up): it rises at once (up to 0.6 m/s: a tracking spike is
+    // not a jump), and settles down slowly (1 cm/s) only while the head is within 12 cm of it; a recentre resets it.
+    // The crouch is "owned" from the tap until the player is out of it: if the game takes it away (B, a jump, a ledge)
+    // the head must come up before it crouches again.
+    std::atomic<bool> g_PcOn{ true }, g_PcOwnA{ false };
+    std::atomic<float> g_PcDepth{ 0.30f };
+    struct PhysCrouch
+    {
+        bool refOk = false; float standY = 0.f, drop = 0.f; unsigned gen = 0;
+        bool own = false, suppress = false; double tapAt = -10, outSince = -1, logAt = 0, refusedAt = -10;
+        unsigned taps = 0, ups = 0, claims = 0, lost = 0;
+    } g_Pc;
+    //! Per input tick (play only): true when it pressed crouch this tick.
+    bool PhysicalCrouch()
+    {
+        PhysCrouch& P = g_Pc;
+        const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
+        if (!g_PcOn.load() || !hp.valid || g_Possessing.load()) { if (P.own) { P.own = false; g_PcOwnA = false; } return false; }
+        const float y = hp.pos[1];
+        if (!P.refOk || hp.gen != P.gen)
+        {
+            if (P.refOk) LOGI("KbmInject: physical crouch: the view was recentred: standing height measured again from here");
+            P.standY = y; P.gen = hp.gen; P.refOk = true;
+        }
+        const float dt = (float)std::min(g_Dt, 0.1);
+        if (y > P.standY) P.standY = std::min(y, P.standY + 0.6f * dt + 0.001f);
+        else if (P.standY - y < 0.12f) P.standY -= std::min(P.standY - y, 0.01f * dt);
+        const float d = P.standY - y; P.drop = d;
+        const float enter = g_PcDepth.load(), exit = std::max(0.05f, enter - 0.08f);
+        const bool crouched = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch") || PlayerState::Running("WallCrouch");
+        // no taps while something else has the player: a takedown, a climb, the water, a ladder of states
+        const bool busy = PlayerState::AnimActive() || PlayerState::Running("Swimming") || PlayerState::Running("Climb")
+                       || PlayerState::Running("Mantle") || PlayerState::Running("Vault") || PlayerState::Running("CarryCorpse")
+                       || PlayerState::Running("Powerwheel") || PlayerState::Running("InAir") || PlayerState::Running("Falling");
+        bool tapped = false;
+        if (P.suppress && d < exit) { P.suppress = false; LOGI("KbmInject: physical crouch: head back up ({:.0f} cm down): crouching for real works again", d * 100.f); }
+        if (P.own)
+        {
+            if (d < exit)
+            {   // stood up for real: out of the game's crouch (again a second later if the game kept it: a low ceiling)
+                if (crouched && g_Now - P.tapAt > 1.0 && !busy)
+                {
+                    Tap(kC); P.tapAt = g_Now; P.ups++; tapped = true;
+                    LOGI("KbmInject: physical crouch: head up ({:.0f} cm under standing): crouch key to stand", d * 100.f);
+                }
+                else if (!crouched && g_Now - P.tapAt > 0.3) { P.own = false; LOGI("KbmInject: physical crouch: standing ({})", P.ups ? "the game stood up" : "it was not crouched"); }
+            }
+            else if (!crouched)
+            {
+                if (P.outSince < 0) P.outSince = g_Now;
+                if (g_Now - P.outSince > 0.8 && g_Now - P.tapAt > 0.8)
+                {
+                    P.own = false; P.suppress = true; P.lost++;
+                    LOGI("KbmInject: physical crouch: the game is not crouched though the head is {:.0f} cm down ({}): stand up to crouch again ({})",
+                         d * 100.f, g_Now - P.tapAt < 1.7 ? "it did not take the crouch key" : "B, a jump, a ledge or a sprint ended it", PlayerState::RunningNames());
+                }
+            }
+            else P.outSince = -1;
+        }
+        else if (!P.suppress && d > enter)
+        {
+            if (crouched) { P.own = true; P.claims++; P.outSince = -1; LOGI("KbmInject: physical crouch: head {:.0f} cm down, already crouched: standing up will stand", d * 100.f); }
+            else if (!busy && g_Now - P.tapAt > 1.0)
+            {
+                Tap(kC); P.tapAt = g_Now; P.own = true; P.outSince = -1; P.taps++; tapped = true;
+                LOGI("KbmInject: physical crouch: head {:.0f} cm under standing (crouch at {:.0f}): crouch key", d * 100.f, enter * 100.f);
+            }
+            else if (busy && g_Now - P.refusedAt > 3.0) { P.refusedAt = g_Now; LOGI("KbmInject: physical crouch: head {:.0f} cm down but the player is busy ({}): not now", d * 100.f, PlayerState::RunningNames()); }
+        }
+        g_PcOwnA = P.own;
+        if (g_Now - P.logAt > 30.0)
+        {
+            P.logAt = g_Now;
+            float st = 0, ch = 0, lift = 0; ViewMatrixHook::CrouchInfo(&st, &ch, &lift);
+            LOGI("KbmInject: physical crouch: head {:.0f} cm under its standing height (crouch at {:.0f}, stand at {:.0f}), {}{}; game camera {:.2f} m over the feet (standing {:.2f}), view lifted {:.0f} cm; {} crouches, {} stand-ups, {} lost",
+                 d * 100.f, enter * 100.f, exit * 100.f, crouched ? "crouched" : "standing", P.own ? " (the head's)" : P.suppress ? " (waiting for the head to come up)" : "",
+                 ch, st, lift * 100.f, P.taps, P.ups, P.lost);
+        }
+        return tapped;
     }
     void MouseMove(int dx, int dy)
     {
@@ -1326,7 +1412,9 @@ void KbmInject::Tick()
     // So Shift stays down a moment past the crouch that ends the latch.
     static double slideShiftUntil = 0;
     if (pressed & kXRBtnThumbL) g_SprintLatch = !g_SprintLatch;
-    if (pressed & kXRBtnB) { if (g_SprintLatch && moving) slideShiftUntil = g_Now + 0.25; g_SprintLatch = false; }
+    // crouching for real (PhysicalCrouch): the crouch key, as B -- while sprinting that is the game's slide
+    const bool physCrouch = PhysicalCrouch();
+    if ((pressed & kXRBtnB) || physCrouch) { if (g_SprintLatch && moving) slideShiftUntil = g_Now + 0.25; g_SprintLatch = false; }
     if (moving) g_StillSince = g_Now; else if (g_Now - g_StillSince > 0.3) g_SprintLatch = false;
     Hold(kShift, (g_SprintLatch || g_Now < slideShiftUntil) && moving);   // L stick click: sprint (latched)
     // Touch layout -> game actions
@@ -1395,34 +1483,87 @@ void KbmInject::Tick()
         else if ((pressed & kVGripR) && hz) LOGI("KbmInject: right grip at the left hip, but there is no sword: grip as usual");
         if (!(live & kVGripR)) g_SwordGrip = false;
     }
+    // With the Index layout the grip is for PHYSICAL interaction only -- reported from the headset: the grip opening
+    // drawers and taking things like a button made pulling and grabbing impossible to try. It takes what the hand is AT:
+    // an item (by hand), an object the game holds (a bottle, a glass), a body to carry, a drawer / cabinet to pull --
+    // touched, or within reach of the hand when the pointer has it (small things and recessed fronts are easy to miss by
+    // touch). Everything that is USED (doors, levers, notes, switches; items from afar) is the trigger's.
+    const bool physicalGrip = indexPads;
+    const int pickId = GrabHand::TargetId();
+    float pickPt[3]; float pickDist = 1e9f;
+    if (handOk && pickId > 0 && pickId != 0x3FFF0010 && GrabHand::TargetPoint(pickPt))
+    {
+        const float d[3] = { pickPt[0] - handNow[0], pickPt[1] - handNow[1], pickPt[2] - handNow[2] };
+        pickDist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    }
+    uint32_t pickOpenable = 0;
+    const bool nearItem = !onItem && itemsByHand && !holding && !carrying && Collision::PointerItem() == (uint32_t)pickId && pickDist < 0.25f;
+    const bool nearOpenable = !onOpenable && !holding && !carrying && Collision::PointerOpenable(&pickOpenable) == 0 && pickOpenable == (uint32_t)pickId
+                           && pickDist < 0.45f && handOk;
+    int holdKind = 0;
+    const bool nearHoldable = !holding && Collision::PointerHoldable(&holdKind) == (uint32_t)pickId && pickId > 0
+                           && pickDist < (holdKind == 2 ? 0.9f : 0.45f);
     if ((pressed & grabGrip) && !(grabHand == 1 && g_SwordGrip))
     {
-        g_GripTakes = holding || carrying || GrabHand::HandHasTarget();
-        g_GripF = g_GripTakes && !holding;
-        if (g_GripF && onItem)
+        if (physicalGrip)
+        {
+            g_GripTakes = holding || carrying || onItem || nearItem || onOpenable || nearOpenable || nearHoldable;
+            g_GripF = !holding && (carrying || nearHoldable);
+            if (!g_GripTakes && GrabHand::HandHasTarget() && g_Now - g_HolsterLogAt > 2.0)
+            {
+                g_HolsterLogAt = g_Now;
+                LOGI("KbmInject: {} grip with id {:#x} picked {:.2f} m from the hand: nothing to grab there (the trigger uses it) -- it is {}",
+                     grabSide, pickId, pickDist, Collision::PointerDescribe());
+            }
+        }
+        else
+        {
+            g_GripTakes = holding || carrying || GrabHand::HandHasTarget();
+            g_GripF = g_GripTakes && !holding;
+        }
+        if ((onItem || nearItem) && !holding && !carrying && (physicalGrip || g_GripF))
         {
             g_GripF = false;
-            const float in2[3] = { touch.p[0] - touch.n[0] * 0.02f, touch.p[1] - touch.n[1] * 0.02f, touch.p[2] - touch.n[2] * 0.02f };
+            const uint32_t iid = onItem ? touch.id : (uint32_t)pickId;
+            void* ient = onItem ? touch.ent : BodyHide::EntityById(pickId);
+            float in2[3];
+            if (onItem) for (int k = 0; k < 3; k++) in2[k] = touch.p[k] - touch.n[k] * 0.02f;
+            else memcpy(in2, pickPt, 12);
             GrabHand::LockSensor(in2);
-            g_Carry = Carry{ true, touch.id, g_Now, -1 };
-            Collision::ClassifyItem(touch.id);      // food is eaten at the mouth only (it cannot be stored)
+            g_Carry = Carry{ true, iid, g_Now, -1 };
+            Collision::ClassifyItem(iid);           // food is eaten at the mouth only (it cannot be stored)
             g_CarryClearAt = -1; g_Verify = Verify{};
-            BodyHide::SetCarryEntity(touch.ent); GpuTrace::SetCarry(grabHand);   // drawn in the hand from now on
+            BodyHide::SetCarryEntity(ient); GpuTrace::SetCarry(grabHand);   // drawn in the hand from now on
             VRRuntime::Vibrate(grabHand, 0.25f, 0.03f);
-            LOGI("KbmInject: {} hand took item id {:#x}: put it behind your back to keep it (or to your mouth to eat it)", grabSide, touch.id);
+            LOGI("KbmInject: {} hand took item id {:#x} ({}): put it behind your back to keep it (or to your mouth to eat it)", grabSide, iid,
+                 onItem ? "touched" : fmt::format("{:.0f} cm from the hand", pickDist * 100.f));
         }
         else if (g_GripF && itemsByHand && Collision::PointerItem() && Collision::PointerItem() == (uint32_t)GrabHand::TargetId())
         {   // an item pointed at from afar is not taken by the grip: reach for it
             g_GripF = false;
             LOGI("KbmInject: {} grip on item id {:#x} from afar: not taken (PhysicalPickup: grab it by hand)", grabSide, Collision::PointerItem());
         }
-        else if (g_GripF && onOpenable && handOk)
+        else if ((onOpenable || nearOpenable) && handOk && (physicalGrip || g_GripF))
         {
             g_GripF = false;
-            g_Pull = Pull{ true, { handNow[0], handNow[1], handNow[2] }, { touch.n[0], touch.n[1], touch.n[2] }, g_Now, touch.id };
-            LOGI("KbmInject: {} grip on a closed drawer / cabinet (id {:#x}): pull it to open", grabSide, touch.id);
+            float pn[3] = { touch.n[0], touch.n[1], touch.n[2] };
+            if (!onOpenable)
+            {   // not touched: the pull is away from the drawer's middle, level
+                pn[0] = handNow[0] - pickPt[0]; pn[1] = handNow[1] - pickPt[1]; pn[2] = 0.f;
+                const float l = sqrtf(pn[0] * pn[0] + pn[1] * pn[1]);
+                if (l > 1e-3f) { pn[0] /= l; pn[1] /= l; } else { pn[0] = 1.f; pn[1] = 0.f; }
+            }
+            const uint32_t oid = onOpenable ? touch.id : pickOpenable;
+            g_Pull = Pull{ true, { handNow[0], handNow[1], handNow[2] }, { pn[0], pn[1], pn[2] }, g_Now, oid };
+            if (pickDist < 1e8f && oid == (uint32_t)pickId)
+            {   // and how far from the picked front's middle the hand is: a cabinet's hinged door is pulled round, not out
+                memcpy(g_Pull.org, pickPt, 12); g_Pull.d0 = pickDist;
+            }
+            LOGI("KbmInject: {} grip on a closed drawer / cabinet / door (id {:#x}, {}; the pointer has {}): pull it to open", grabSide, oid,
+                 onOpenable ? "touched" : fmt::format("{:.0f} cm from the hand", pickDist * 100.f), Collision::PointerDescribe());
         }
-        else if (g_GripF) LOGI("KbmInject: {} grip {}: interact, F held with the grip", grabSide, carrying ? "carrying a corpse" : "on a picked interactable");
+        else if (g_GripF) LOGI("KbmInject: {} grip {} ({}): interact, F held with the grip", grabSide, Collision::PointerDescribe(), carrying ? "carrying a corpse"
+                                : physicalGrip ? (holdKind == 2 ? "on a body within reach: carry it" : "on an object within reach: take it in the hand") : "on a picked interactable");
         else if (holding && relMode == 2) letGo(false, "grip", 0.f);
     }
     else if (!(live & grabGrip))
@@ -1484,7 +1625,12 @@ void KbmInject::Tick()
     if (g_Pull.armed && handOk)
     {
         const float d[3] = { handNow[0] - g_Pull.start[0], handNow[1] - g_Pull.start[1], handNow[2] - g_Pull.start[2] };
-        const float out = d[0] * g_Pull.n[0] + d[1] * g_Pull.n[1] + d[2] * g_Pull.n[2];
+        float out = d[0] * g_Pull.n[0] + d[1] * g_Pull.n[1] + d[2] * g_Pull.n[2];
+        if (g_Pull.d0 >= 0.f)
+        {
+            const float o[3] = { handNow[0] - g_Pull.org[0], handNow[1] - g_Pull.org[1], handNow[2] - g_Pull.org[2] };
+            out = std::max(out, sqrtf(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) - g_Pull.d0);
+        }
         if (out >= 0.06f)
         {
             Tap(kF); g_Pull.armed = false;
@@ -1493,12 +1639,42 @@ void KbmInject::Tick()
         }
         else if (g_Now - g_Pull.at > 4.0 || sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) > 0.5f) g_Pull.armed = false;
     }
-    {   // a push on an open one: the interact that closes it, when the pointer has it
-        uint32_t cid = 0;
-        if (Collision::TakeCloseRequest(grabHand, &cid) && !holding && GrabHand::TargetId() == (int)cid && !g_Held[kF])
+    {   // A hand asked for the interact on something it met (an open door pushed shut, a window slid), either hand:
+        // the interaction sensor is aimed from the eye at the point the hand met it (as for a carried item) until it
+        // picks that entity -- or, for a window, any window part near that point (the sash and its handle are separate
+        // entities) -- then interact is pressed. Given up after half a second.
+        uint32_t cid = 0; float cpt[3];
+        for (int hh = 0; hh < 2 && !g_Ia.id; hh++)
+            if (Collision::TakeCloseRequest(hh, &cid, cpt))
+            {
+                if (holding || g_Carry.on || carrying || g_Held[kF]) { LOGI("KbmInject: {} hand's interact on id {:#x} skipped: the hands are busy", hh ? "right" : "left", cid); continue; }
+                g_Ia = Interact{ cid, { cpt[0], cpt[1], cpt[2] }, g_Now, hh };
+                GrabHand::LockSensor(cpt);
+            }
+        if (g_Ia.id)
         {
-            Tap(kF);
-            LOGI("KbmInject: {} hand moved drawer / cabinet / window id {:#x}: interact", grabSide, cid);
+            const int tid = GrabHand::TargetId();
+            bool hit = tid == (int)g_Ia.id;
+            float tp[3];
+            if (!hit && Collision::IsWindow(g_Ia.id) && Collision::IsWindow((uint32_t)tid) && GrabHand::TargetPoint(tp))
+            {
+                const float d[3] = { tp[0] - g_Ia.p[0], tp[1] - g_Ia.p[1], tp[2] - g_Ia.p[2] };
+                hit = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 1.2f * 1.2f;
+            }
+            const char* side = g_Ia.hand ? "right" : "left";
+            if (hit && !g_Held[kF])
+            {
+                Tap(kF);
+                VRRuntime::Vibrate(g_Ia.hand, 0.3f, 0.04f);
+                LOGI("KbmInject: {} hand's interact on id {:#x} (door / window): sent, the sensor picked {:#x} after {:.0f} ms", side, g_Ia.id, (uint32_t)tid, (g_Now - g_Ia.at) * 1000.0);
+                if (!g_Carry.on) GrabHand::UnlockSensor(); g_Ia = Interact{};
+            }
+            else if (g_Now - g_Ia.at > 0.5)
+            {
+                LOGI("KbmInject: {} hand's interact on id {:#x} NOT sent: the sensor, aimed at where the hand met it, picked {:#x} ({})",
+                     side, g_Ia.id, (uint32_t)tid, Collision::PointerDescribe());
+                if (!g_Carry.on) GrabHand::UnlockSensor(); g_Ia = Interact{};
+            }
         }
     }
     // Once the press has become a hold the key has done its job: F is the hold's "drop", and `vr grabrelease 1` taps it
@@ -1509,6 +1685,18 @@ void KbmInject::Tick()
     // PhysicalPickup: the interact buttons do not take an item from afar either (the zone's tap above is how)
     const bool itemAimed = itemsByHand && Collision::PointerItem() && Collision::PointerItem() == (uint32_t)GrabHand::TargetId();
     const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
+    if (indexPads && (pressed & kVTrigR))
+    {   // reported: "the right trigger does nothing" -- what each press did, for the log (the first 200)
+        static int logged = 0;
+        if (logged++ < 200)
+            LOGI("KbmInject: right trigger: {} (pointer pick {}{}{})", trigUse ? "interact (F)" : holding ? "lets the held object go" : itemAimed ? "nothing: an item is taken by hand" : "nothing",
+                 Collision::PointerDescribe(), GrabHand::HandHasTarget() ? "" : ", no target in reach", g_Latched & kVTrigR ? ", latched" : "");
+    }
+    else if (!indexPads && g_QuickSlots.load() == 2 && (pressed & kVTrigR))
+    {
+        static int logged = 0;
+        if (logged++ < 5) LOGI("KbmInject: right trigger with Layout = index but no trackpads bound (in.pad 0): it is the sword's attack, not interact");
+    }
     Hold(kF, (!quick && (live & kXRBtnX) != 0 && !itemAimed) || g_GripF || trigUse);   // the grabbing grip (above), (old) X, Index trigger : interact
     if (holding && relMode == 1 && (released & grabGrip))
     {
@@ -1576,7 +1764,10 @@ void KbmInject::Tick()
     // out of it (a swing would throw the bottle).
     // (the sword's button: the right trigger, or with the Index layout the right trackpad)
     const bool trigR = indexPads ? ((live & kVPadUse) != 0 && !holding) : ((live & kVTrigR) != 0 && !holding && !letsR);
-    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip;
+    // Index layout: the right grip is physical (grab, pull, the sword's holster), and blocks only while the sword is in
+    // the hand -- reported: squeezing it brought the sword AND the left hand's weapon out (the game's block draws them).
+    const bool blockOk = !indexPads || !Holster::Enabled() || Holster::InHand(Holster::kSword);
+    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip && blockOk;
     // The blade strikes what it touches (SwordContact): before the gestures, so a contact during a charged thrust
     // releases it this same tick.
     MeleeAim::NoteTrigger(trigR);
@@ -1584,7 +1775,7 @@ void KbmInject::Tick()
     if (holding || afterHold) SwordGesture::Reset();
     SwordGesture::Out sword = SwordGesture::Tick(in, trigR, gripR);
     if (holding || afterHold) sword = SwordGesture::Out{};
-    Hold(kCtrl,  gripR || sword.block);                   // R grip / fist at the left shoulder : block
+    Hold(kCtrl,  gripR || (sword.block && blockOk));      // R grip / fist at the left shoulder : block
     Hold(kLMB,   trigR || sword.hold);                    // R trigger / charge pose            : melee (right hand)
     // a swing: one strike -- with SwordContact, once the swing has touched something (aimed at it) or is over (in the air)
     if (sword.tap && !SwordContact::DeferAirTap()) g_PendingStrike = g_Now;
@@ -1615,6 +1806,14 @@ void KbmInject::Tick()
 }
 
 bool KbmInject::Possessing() { return g_Possessing.load(); }
+bool KbmInject::PhysicalCrouchOwns() { return g_PcOwnA.load(); }
+void KbmInject::SetPhysicalCrouch(bool on, float depth)
+{
+    g_PcOn = on; g_PcDepth = std::clamp(depth, 0.1f, 0.8f);
+    if (!on) g_PcOwnA = false;
+    LOGI("KbmInject: physical crouch {}", on ? fmt::format("on: the head {:.0f} cm under its standing height crouches the character, {:.0f} cm stands it up",
+                                                            g_PcDepth.load() * 100.f, std::max(0.05f, g_PcDepth.load() - 0.08f) * 100.f) : std::string("off"));
+}
 void KbmInject::ReleaseAll() { for (int i = 0; i < kCount; i++) if (g_Held[i]) { g_TapUntil[i] = 0; g_Held[i] = false; SendKey((Slot)i, false); } g_SprintLatch = false; }
 void KbmInject::SetEnabled(bool on) { g_Enabled = on; if (!on) ReleaseAll(); }
 bool KbmInject::Enabled() { return g_Enabled; }

@@ -806,8 +806,15 @@ namespace
     constexpr uint32_t kMsgSystem2 = 0x810240, kMsgPost2 = 0x8112C0, kMsgQueue2 = 0xC8E8;
     std::atomic<bool> g_KoOn{ false };
     std::atomic<uint64_t> g_Kos{ 0 }, g_KoFails{ 0 };
-    constexpr float kKoSpeed = 2.0f;        // m/s of the striking point (relative to the player)
-    constexpr float kKoRadius = 0.13f;      // m around the head's centre
+    // Reported from the headset: the blow failed most of the time -- the head is a small target to hit blind, and the
+    // takedown offer (and with it the check) went away as the arm swung. So the blow counts within 22 cm of the head's
+    // centre (the head and the neck) at 1.4 m/s, and for kKoLatch after the offer was last seen on that target.
+    constexpr float kKoSpeed = 1.4f;        // m/s of the striking point (relative to the player)
+    constexpr float kKoRadius = 0.30f;      // m around the head's centre (was 0.22: most blows missed -- reported)
+    constexpr float kKoFront = 0.12f;       // m the blow may land in front of the head's centre (the sides of the head)
+    constexpr double kKoLatch = 1.5;        // s the knockout stays possible after the offer goes away
+    std::atomic<void*> g_KoTarget{ nullptr }; std::atomic<long long> g_KoAt{ 0 };
+    uint32_t g_KoTid = 0; uint8_t* g_KoSensor = nullptr;   // game thread: the latched target's id and the sensor
     struct KoPt { bool ok = false; float p[3] = {}; int hand = 0; const char* what = ""; };
     KoPt g_KoPrev[4];                       // game thread
     float g_KoPrevPlayer[3] = {}; bool g_KoPrevPlayerOk = false;
@@ -848,6 +855,13 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     NpcSkel::Skel g_KoSkel;                 // game thread
+    //! entity+0xD1 (& 0x28: dead or a ragdoll), 0 when unreadable. No C++ objects
+    //! here: MSVC refuses __try where temporaries unwind (C2712).
+    uint8_t EntFlagsD1(const void* e)
+    {
+        __try { return e ? ((const uint8_t*)e)[0xD1] : 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
 
     void KnockoutCheck(uint8_t* sensor, uint8_t* target, uint8_t* player, const float* playerOrg)
     {
@@ -894,10 +908,20 @@ namespace
             float u = (a[0] * d[0] + a[1] * d[1] + a[2] * d[2]) / (len * len); u = fminf(1.f, fmaxf(0.f, u));
             const float q[3] = { prev[i].p[0] + d[0] * u - head[0], prev[i].p[1] + d[1] * u - head[1], prev[i].p[2] + d[2] * u - head[2] };
             const float miss = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
-            if (miss > kKoRadius) continue;
             // from behind: where it met the head is not in front of the face
-            const float hit[3] = { head[0] + q[0], head[1] + q[1], head[2] + q[2] };
-            if ((hit[0] - head[0]) * fwd[0] + (hit[1] - head[1]) * fwd[1] + (hit[2] - head[2]) * fwd[2] > 0.04f) continue;
+            const float front = q[0] * fwd[0] + q[1] * fwd[1] + q[2] * fwd[2];
+            if (miss > kKoRadius || front > kKoFront)
+            {   // a near miss, for tuning (reported: some guards -- the red soldiers without a helmet -- never went down)
+                static long long nearLog = 0;
+                if (miss < 0.6f && (double)(now - nearLog) / (double)QpcFreq() > 0.5)
+                {
+                    nearLog = now;
+                    LOGI("MeleeAim: knockout near miss with the {} at {:.1f} m/s: {:.0f} cm from the head's centre (needs {:.0f}), {:.0f} cm {} it (needs < {:.0f} in front); head from {} joints, {:.2f} m up",
+                         cur[i].what, speed, miss * 100.f, kKoRadius * 100.f, fabsf(front) * 100.f, front > 0.f ? "in front of" : "behind", kKoFront * 100.f, nh,
+                         playerOrg ? head[2] - playerOrg[2] : 0.f);
+                }
+                continue;
+            }
             g_KoLast = now;
             const int why = Knockout(sensor, target, player);
             if (why == 0) { g_Kos++; VRRuntime::Vibrate(cur[i].hand, 1.f, 0.08f); }
@@ -927,8 +951,23 @@ void MeleeAim::TickTakedown()
                                         PlayerState::Running("Sneaking") ? "SNEAKING" : "STANDING (not sneaking)", g_KoOn.load() ? ", a blow to the back of the head knocks him out" : ""); }
         else LOGI("MeleeAim: the stealth takedown is no longer offered");
     }
-    if (can && g_KoOn.load()) KnockoutCheck(sensor, (uint8_t*)target, (uint8_t*)player, an[BodyHide::aPlayer].org);
-    else { for (auto& p : g_KoPrev) p.ok = false; g_KoPrevT = 0; g_KoPrevPlayerOk = false; }
+    // The knockout: while the offer stands and for kKoLatch after it went (the swing itself takes it away), on the target
+    // it was offered on, as long as that one is still in the world
+    // (not on one already down: the sensor kept offering the takedown on a guard knocked out a moment before, and the
+    // blows went to him -- "reason 1" -- while the next one stood there)
+    bool down = false;
+    if (can) down = (EntFlagsD1(target) & 0x28) != 0;
+    if (can && !down) { g_KoTarget = target; g_KoAt = Qpc(); g_KoTid = tid; g_KoSensor = sensor; }
+    void* koTarget = can && !down ? target : nullptr; uint8_t* koSensor = sensor;
+    if (!can && g_KoTarget.load() && (double)(Qpc() - g_KoAt.load()) / (double)QpcFreq() < kKoLatch && g_KoTid && BodyHide::EntityById((int)g_KoTid) == g_KoTarget.load())
+    { koTarget = g_KoTarget.load(); koSensor = g_KoSensor; }
+    if (koTarget && koSensor && player && g_KoOn.load()) KnockoutCheck(koSensor, (uint8_t*)koTarget, (uint8_t*)player, an[BodyHide::aPlayer].org);
+    else { for (auto& p : g_KoPrev) p.ok = false; g_KoPrevT = 0; g_KoPrevPlayerOk = false; if (!koTarget) g_KoTarget = nullptr; }
+}
+bool MeleeAim::KnockoutReady()
+{
+    const long long at = g_KoAt.load();
+    return g_KoOn.load() && g_KoTarget.load() && at && (double)(Qpc() - at) / (double)QpcFreq() < kKoLatch;
 }
 bool MeleeAim::KillOffered(void** target)
 {
@@ -999,8 +1038,51 @@ bool MeleeAim::Enabled() { return g_On; }
 void MeleeAim::SetOrigin(int m) { g_Origin = m ? 1 : 0; }
 int MeleeAim::Origin() { return g_Origin; }
 
+// [Gameplay] FinisherAnimations = 0. A sword blow that would finish a guard (a killing blow, one on a staggered or
+// floored guard) is turned by the game into a "generic fatality": the player's Slash state (its method exe+0x86B050,
+// called from its vtable's exe+0x86C630 and from exe+0x86BEC0) sets its flag +0xD9 -- what the rules know as
+// "slash.isGenericFatality" -- at exe+0x86B381 (`mov byte [rdi+0xD9], 1`), and a synchronised kill animation follows
+// with the camera taken from the head. Its conditions (arkDeclPlayerStateSlash: m_genericFatalityChance int at +0xEC,
+// default 10 %, m_genericFatalityMaxDistance float at +0xE8, default 2 m; the target's flags) all lead to that one
+// store; every way of NOT taking it continues at exe+0x86B38A. So the store becomes a jump there (EB 07 + 5 NOPs): the
+// blow is an ordinary blow, which kills as it would. The kill cam (the slow third-person shot of a last kill) is the
+// cvar ark_killcam_chance_setting, held at 0 (the game may write it back from its options, so it is checked again).
+namespace
+{
+    constexpr uint32_t kFatalityStore = 0x86B381;
+    const uint8_t kFatalityOrig[7] = { 0xC6, 0x87, 0xD9, 0x00, 0x00, 0x00, 0x01 };
+    const uint8_t kFatalityOff[7] = { 0xEB, 0x07, 0x90, 0x90, 0x90, 0x90, 0x90 };
+    std::atomic<bool> g_NoFinishers{ false };
+    double g_KillCamCheckAt = 0;
+}
+void MeleeAim::SetFinishers(bool on)
+{
+    g_NoFinishers = !on;
+    if (!GameInfo::IsSupportedBuild()) return;
+    uint8_t* p = (uint8_t*)(GameInfo::Base() + kFatalityStore);
+    const uint8_t* want = on ? kFatalityOrig : kFatalityOff;
+    const uint8_t* other = on ? kFatalityOff : kFatalityOrig;
+    if (!memcmp(p, want, 7)) { LOGI("MeleeAim: finishing-move animations {}", on ? "on (the game's)" : "already off"); return; }
+    if (memcmp(p, other, 7)) { LOGI("MeleeAim: the finishing-move code at exe+0x{:X} is not what it was measured to be: left alone", kFatalityStore); return; }
+    DWORD old = 0;
+    if (!VirtualProtect(p, 7, PAGE_EXECUTE_READWRITE, &old)) { LOGI("MeleeAim: finishing moves: VirtualProtect failed"); return; }
+    memcpy(p, want, 7);
+    VirtualProtect(p, 7, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), p, 7);
+    LOGI("MeleeAim: finishing-move animations {}", on ? "back on (the game's)" : "OFF: a finishing blow is an ordinary blow (no kill animation), and no kill cam");
+}
 void MeleeAim::OnPresent()
 {
+    if (g_NoFinishers.load() && CVars::Available())
+    {
+        const double now = (double)Qpc() / (double)QpcFreq();
+        if (now >= g_KillCamCheckAt)
+        {
+            g_KillCamCheckAt = now + 2.0;
+            const int v = CVars::GetInt("ark_killcam_chance_setting", -1);
+            if (v > 0) { CVars::SetInt("ark_killcam_chance_setting", 0); LOGI("MeleeAim: kill cam off (ark_killcam_chance_setting was {})", v); }
+        }
+    }
     const bool slash = !strcmp(PlayerState::AnimName(), "Slash");
     static uint64_t gestStart = 0;
     if (slash && !g_InSlash) { g_SlashStart = g_AxisRedirects.load(); gestStart = g_GestRedirects.load(); g_Logged = false; }
