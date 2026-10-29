@@ -582,10 +582,13 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
     }
     //! 2 = food (eaten where it is: never stored), 1 = kept (stored), 0 = cannot tell. Logs what it read.
+    std::string EntityName(void* ent);
+    bool IsFoodName(void* ent);
     int ClassifyFood(void* ent)
     {
+        if (IsFoodName(ent)) { LOGI("Collision: item '{}': FOOD by its name (eaten at the mouth, never stored)", EntityName(ent)); return 2; }
         const void* decls[32]; const int n = LootDecls(ent, decls, 32);
-        if (!n) { LOGI("Collision: the item has no loot list (a mission item?): kept, not eaten"); return 1; }
+        if (!n) { LOGI("Collision: item '{}': not food by its name, no readable loot list: kept (stored behind the back, or eaten at the mouth)", EntityName(ent)); return 1; }
         uint8_t* inv = PlayerInventory();
         int food = 0, kept = 0, known = 0; std::string what;
         for (int i = 0; i < n; i++)
@@ -670,6 +673,28 @@ namespace
         std::string l = s; for (char& c : l) c = (char)tolower((unsigned char)c);
         return l.find(what) != std::string::npos;
     }
+    //! Lowercase.
+    std::string Lower(std::string s) { for (char& c : s) c = (char)tolower((unsigned char)c); return s; }
+    bool HasAny(const std::string& l, std::initializer_list<const char*> words) { for (const char* w : words) if (l.find(w) != std::string::npos) return true; return false; }
+    //! Something to READ (a note, a book, a letter): the trigger's interact reads it; it is not taken by hand.
+    bool IsReadable(void* ent) { return HasAny(Lower(EntityName(ent)), { "note", "book", "letter", "journal", "diary" }); }
+    //! Food by its level name ('pickups_fruit_apple_02_5', ...). Measured: the item lists (the loot component's, its
+    //! decl's) give entity defs, not inventory item decls, and none of the pickups had one readable -- the name is what tells.
+    bool IsFoodName(void* ent)
+    {
+        return HasAny(Lower(EntityName(ent)), { "fruit", "food", "apple", "pear", "grape", "orange", "lemon", "bread", "cheese", "eels", "biscuit",
+                                               "_pie", "pastr", "cake", "meat", "sausage", "_ham_", "fish", "jerky", "canned", "_can_", "_tin_", "candy",
+                                               "chocolate", "_nut", "_egg", "carrot", "potato", "onion", "turnip", "berry", "melon", "_fig" });
+    }
+    //! A cabinet / cupboard / drawer front the level made a plain usable (arkUsable, no openable component) -- measured:
+    //! 'esc_env_door_middle_5' / 'esc_env_door_left_5', the cabinet doors the grip could not pull. Grabbing and pulling one
+    //! presses its interact, as for a drawer.
+    bool IsUsableFront(void* ent)
+    {
+        if (!ent || !ClassIs(ent, ".?AVarkUsable@@")) return false;
+        const std::string l = Lower(EntityName(ent));
+        return !HasAny(l, { "window" }) && HasAny(l, { "door", "drawer", "cabinet", "cupboard", "locker", "wardrobe", "hatch", "lid", "chest", "closet", "shutter" });
+    }
     //! A sliding window (or its handle): "window" in the level name, and not a door -- measured, a glazed door is named
     //! 'ld_door_big_rich_int_window_350_0_4' and was taken for a window; a window's handle 'ld_rich_small_gp_window_handle_1'.
     bool IsWindowEnt(void* ent)
@@ -678,6 +703,8 @@ namespace
         const std::string n = EntityName(ent);
         return NameHas(n, "window") && !NameHas(n, "door");
     }
+    //! An item the hand takes (PhysicalPickup): an item that is not something to read.
+    bool IsHandItem(void* ent) { return IsItem(ent) && !IsReadable(ent); }
     // A door's open state. The openable's +0x1E8 stays 0 on a door the push swung open (measured: every door pushed
     // was "closed"), so its state machine (arkCpntOpenable+0x40) is read: its current state is one of the component's
     // own state objects, told by their vtables -- arkStateOpenable_Closed (exe+0x1C56908), _Animated (exe+0x1C56948:
@@ -714,7 +741,9 @@ namespace
     {
         if (!e) return -1;
         if (IsDoor(e)) { if (IsWindowEnt(e)) return -1; const char* how = ""; return DoorOpen(e, &how); }
-        return OpenableState(e);
+        const int os = OpenableState(e);
+        if (os >= 0) return os;
+        return IsUsableFront(e) ? 0 : -1;     // (its state is not known: every pull is an interact, open or close)
     }
     //! 1 open, 0 closed; `how` says where that came from (for the log).
     int DoorOpen(void* door, const char** how)
@@ -802,7 +831,8 @@ namespace
         if (os >= 0) d += os ? " openable(open)" : " openable(closed)";
         int where = -1; const int ms = OpenableMachineState(e, &where);
         if (ms >= 0) d += fmt::format(" state:{}@+{:#x}", ms ? "open" : "closed", where);
-        if (IsItem(e)) d += " item";
+        if (IsItem(e)) d += IsReadable(e) ? " item(read)" : IsFoodName(e) ? " item(food)" : " item";
+        if (IsUsableFront(e)) d += " cabinet-front";
         if (HasComponent(e, kPickableSimpleType)) d += " holdable";
         if (Dynamic(e)) d += " physics";
         uint8_t f = 0; if (SafeRead(&f, (uint8_t*)e + kEntFlags, 1) && (f & 0x28) && IsCharacter(e)) d += " (down)";
@@ -945,7 +975,7 @@ void Collision::Tick()
     {   // what the pointer has picked: an item (taken only by hand, PhysicalPickup)? an openable, open or closed?
         const int pid = GrabHand::TargetId();
         void* pe = pid > 0 && pid != 0x3FFF0010 ? BodyHide::EntityById(pid) : nullptr;
-        g_PointerItem = g_Items.load() && pe && IsItem(pe) ? (uint32_t)pid : 0u;
+        g_PointerItem = g_Items.load() && pe && IsHandItem(pe) ? (uint32_t)pid : 0u;
         // (a door counts: cabinets are often doors -- measured, the grip on a cabinet 25-40 cm from the hand found
         // nothing to pull; its open state is the door's, see DoorOpen)
         const int os = g_Openables.load() ? OpenOrNot(pe) : -1;
@@ -1216,7 +1246,7 @@ void Collision::Tick()
                 void* e = cents[i];
                 if (!e) continue;
                 tch.valid = true; tch.ent = e; memcpy(tch.n, cs[i].n, 12); memcpy(tch.p, cs[i].p, 12);
-                tch.item = g_Items.load() && IsItem(e);
+                tch.item = g_Items.load() && IsHandItem(e);
                 SafeRead(&tch.id, (uint8_t*)e + kEntId, 4);
                 const int os = g_Openables.load() ? OpenOrNot(e) : -1;
                 tch.openable = os >= 0; tch.open = os == 1;

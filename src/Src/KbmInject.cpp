@@ -1593,7 +1593,10 @@ void KbmInject::Tick()
             Tap(kF);
             LOGI("KbmInject: item id {:#x} {} ({:.1f} s after taking it): interact", g_Carry.id, zone == 1 ? "put behind the back: storing" : "brought to the mouth: eating", g_Now - g_Carry.at);
             g_Verify = Verify{ g_Carry.id, g_Now }; Collision::WatchItem(g_Carry.id);
-            g_Carry.on = false; GrabHand::UnlockSensor();
+            // (the sensor stays on the item until the game has taken it: measured, the interact on a pouch first
+            // undraws the weapons (0.13 s) and only then loots -- with the sensor already back on the hand, which is
+            // behind the back, it found nothing and every item came back "refused")
+            g_Carry.on = false;
         }
         else if (zone && g_Now - g_Carry.zoneAt > 0.6)
         {
@@ -1608,13 +1611,15 @@ void KbmInject::Tick()
         if (st == 0)
         {
             VRRuntime::Vibrate(grabHand, 0.6f, 0.06f);
-            LOGI("KbmInject: item id {:#x} taken by the game", g_Verify.id);
+            LOGI("KbmInject: item id {:#x} taken by the game ({:.1f} s after the interact)", g_Verify.id, g_Now - g_Verify.at);
+            GrabHand::UnlockSensor();
             GpuTrace::EndCarry(); BodyHide::SetCarryEntity(nullptr); Collision::WatchItem(0); g_Verify = Verify{};
         }
-        else if (g_Now - g_Verify.at > (st == 1 ? 0.7 : 1.5))
+        else if (g_Now - g_Verify.at > 1.5)
         {
             VRRuntime::Vibrate(grabHand, 0.25f, 0.15f);
-            LOGI("KbmInject: item id {:#x} REFUSED by the game (still in the world {:.1f} s later: inventory full?): it goes back", g_Verify.id, g_Now - g_Verify.at);
+            LOGI("KbmInject: item id {:#x} REFUSED by the game (still in the world {:.1f} s later: inventory full? full health for food?): it goes back (the sensor has {}; states {})",
+                 g_Verify.id, g_Now - g_Verify.at, Collision::PointerDescribe(), PlayerState::RunningNames());
             CarryReturn(); Collision::WatchItem(0); g_Verify = Verify{};
         }
     }
@@ -1682,8 +1687,9 @@ void KbmInject::Tick()
     if (holding && g_GripF) { g_GripF = false; LOGI("KbmInject: {} grip took an object: F up", grabSide); }
     // Index layout: the right TRIGGER is interact (on what the right hand's pointer picked), held like a key; the sword
     // strikes by gesture and by the blade's contact (its button is the right trackpad). Not while it lets an object go.
-    // PhysicalPickup: the interact buttons do not take an item from afar either (the zone's tap above is how)
-    const bool itemAimed = itemsByHand && Collision::PointerItem() && Collision::PointerItem() == (uint32_t)GrabHand::TargetId();
+    // PhysicalPickup: an item can be taken by hand -- AND with the trigger, as ever: reported, blocking the trigger on
+    // items left notes unreadable and pouches untakeable ("interactions using trigger are sometimes broken now")
+    const bool itemAimed = false;
     const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
     if (indexPads && (pressed & kVTrigR))
     {   // reported: "the right trigger does nothing" -- what each press did, for the log (the first 200)

@@ -7,6 +7,7 @@
 #include "GpuTrace.h"
 #include "BodyHide.h"
 #include "NpcSkel.h"
+#include "Collision.h"
 #include "VRRuntime.h"
 #include <cmath>
 #include <sstream>
@@ -56,6 +57,36 @@ namespace
     std::atomic<uint64_t> g_GestRedirects{ 0 };
     long long Qpc() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; }
     long long QpcFreq() { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); return f.QuadPart; }
+    // [Gameplay] FinisherAnimations = 0 (see SetFinishers). The assassination sensor's current offer: exe+0x3AFFC0(sensor)
+    // returns its record, the outcome at +0x20 (arkAssassinationOutcomeType_t: 0 NORMAL, 1 FAST, 2 FATALITY_NORMAL,
+    // 3 FATALITY_FAST, 4 FATALITY_CHAIN, 5 FATALITY_GROUND, 6 FATALITY_GROUND_ON_RAGDOLL, 7 WINDOW, 8 DROP, 9 SHADOWWALK,
+    // 10 SLIDE, 11 GRAPPLE). The FATALITY ones (2-6) are the kill animations of a fight and of a guard lying down (a
+    // knocked-out one: 6); the others are the stealth takedowns.
+    std::atomic<bool> g_NoFinishers{ false };
+    std::atomic<uint64_t> g_FatalitiesBlocked{ 0 };
+    constexpr uint32_t kSensorOutcome = 0x3AFFC0;
+    const char* const kOutcomeNames[] = { "NORMAL", "FAST", "FATALITY_NORMAL", "FATALITY_FAST", "FATALITY_CHAIN", "FATALITY_GROUND",
+                                          "FATALITY_GROUND_ON_RAGDOLL", "WINDOW", "DROP", "SHADOWWALK", "SLIDE", "GRAPPLE" };
+    const char* OutcomeName(int t) { return t >= 0 && t < 12 ? kOutcomeNames[t] : "?"; }
+    bool IsFatality(int t) { return t >= 2 && t <= 6; }
+    //! The outcome type of a sensor record (exe+0x3AFFC0's result), -1 when unreadable.
+    int RecordOutcome(const uint8_t* rec)
+    {
+        if (!rec) return -1;
+        __try { return *(const int*)(rec + 0x20); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+    //! The outcome the assassination sensor offers now, -1 when none / unreadable.
+    int SensorOutcome(void* sensor)
+    {
+        if (!sensor) return -1;
+        __try
+        {
+            const uint8_t* rec = ((const uint8_t* (*)(void*))(GameInfo::Base() + kSensorOutcome))(sensor);
+            return rec ? *(const int*)(rec + 0x20) : -1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
     std::atomic<int> g_FreezeMs{ -1 }; long long g_FreezeAt = 0;   // slashfreeze (research)
     bool GestureAxis(float out[9])
     {
@@ -810,8 +841,10 @@ namespace
     // takedown offer (and with it the check) went away as the arm swung. So the blow counts within 22 cm of the head's
     // centre (the head and the neck) at 1.4 m/s, and for kKoLatch after the offer was last seen on that target.
     constexpr float kKoSpeed = 1.4f;        // m/s of the striking point (relative to the player)
-    constexpr float kKoRadius = 0.30f;      // m around the head's centre (was 0.22: most blows missed -- reported)
-    constexpr float kKoFront = 0.12f;       // m the blow may land in front of the head's centre (the sides of the head)
+    // Reported twice as too picky: 0.22, then 0.30 m. The near misses logged after that were 35-58 cm from the centre
+    // of the head (its top joints) and up to 27 cm in front of it: the head, the neck and the top of the shoulders.
+    constexpr float kKoRadius = 0.42f;      // m around the head's centre
+    constexpr float kKoFront = 0.22f;       // m the blow may land in front of the head's centre (the sides of the head)
     constexpr double kKoLatch = 1.5;        // s the knockout stays possible after the offer goes away
     std::atomic<void*> g_KoTarget{ nullptr }; std::atomic<long long> g_KoAt{ 0 };
     uint32_t g_KoTid = 0; uint8_t* g_KoSensor = nullptr;   // game thread: the latched target's id and the sensor
@@ -943,13 +976,20 @@ void MeleeAim::TickTakedown()
     void* target = nullptr; uint32_t tid = 0; uint8_t* sensor = nullptr;
     void* player = an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr;
     const bool can = player && AskSensor(player, &target, &tid, &sensor);
-    if (can) { g_KillTarget = target; g_KillAt = Qpc(); }
-    if (can != g_KillWas)
+    // What it offers: with FinisherAnimations = 0 a FATALITY (a fight's or a downed guard's kill animation) is not a
+    // takedown on offer -- the swing is an ordinary one (the blade strikes by itself, SwordContact), the reticle stays.
+    const int outcome = can ? SensorOutcome(sensor) : -1;
+    const bool kill = can && !(g_NoFinishers.load() && IsFatality(outcome));
+    if (kill) { g_KillTarget = target; g_KillAt = Qpc(); }
+    static int outcomeWas = -2;
+    if (can != g_KillWas || (can && outcome != outcomeWas))
     {
-        g_KillWas = can;
-        if (can) { g_KillOffers++; LOGI("MeleeAim: a stealth takedown is offered (target id {:#x}) while {}: a swing now is the game's kill{}", tid,
-                                        PlayerState::Running("Sneaking") ? "SNEAKING" : "STANDING (not sneaking)", g_KoOn.load() ? ", a blow to the back of the head knocks him out" : ""); }
-        else LOGI("MeleeAim: the stealth takedown is no longer offered");
+        g_KillWas = can; outcomeWas = outcome;
+        if (can) { g_KillOffers++; LOGI("MeleeAim: the game offers a takedown ({}) on {} while {}: {}{}", OutcomeName(outcome), Collision::Describe(target),
+                                        PlayerState::Running("Sneaking") ? "SNEAKING" : "STANDING (not sneaking)",
+                                        kill ? "a swing now is the game's takedown" : "a FATALITY animation: refused, swings stay ordinary",
+                                        g_KoOn.load() ? "; a blow to the back of the head knocks him out" : ""); }
+        else LOGI("MeleeAim: the takedown is no longer offered");
     }
     // The knockout: while the offer stands and for kKoLatch after it went (the swing itself takes it away), on the target
     // it was offered on, as long as that one is still in the world
@@ -1052,13 +1092,54 @@ namespace
     constexpr uint32_t kFatalityStore = 0x86B381;
     const uint8_t kFatalityOrig[7] = { 0xC6, 0x87, 0xD9, 0x00, 0x00, 0x00, 0x01 };
     const uint8_t kFatalityOff[7] = { 0xEB, 0x07, 0x90, 0x90, 0x90, 0x90, 0x90 };
-    std::atomic<bool> g_NoFinishers{ false };
     double g_KillCamCheckAt = 0;
+    // The Slash takes the sensor's offer at exe+0x86B0F0 (`call exe+0x3AFFC0`, its only caller besides the sensor's own
+    // exe+0x3911C9): that call is redirected here, and a FATALITY offer is answered "none" -- the swing is then an
+    // ordinary one (it still hits and kills as such), and no kill animation runs. The prompt stays as the game shows it.
+    constexpr uint32_t kSlashOutcomeCall = 0x86B0F0;
+    using FnOutcome = uint8_t* (*)(void*);
+    FnOutcome g_RealOutcome = nullptr;
+    bool g_OutcomeHooked = false;
+    uint8_t* SlashOutcomeHook(void* sensor)
+    {
+        uint8_t* rec = g_RealOutcome(sensor);
+        if (!rec || !g_NoFinishers.load()) return rec;
+        const int t = RecordOutcome(rec);
+        if (!IsFatality(t)) return rec;
+        g_FatalitiesBlocked++;
+        LOGI("MeleeAim: the swing would have been the game's {} kill animation: an ordinary swing instead", OutcomeName(t));
+        return nullptr;
+    }
+    void HookSlashOutcome()
+    {
+        if (g_OutcomeHooked) return;
+        g_OutcomeHooked = true;
+        const uintptr_t base = GameInfo::Base();
+        uint8_t* call = (uint8_t*)(base + kSlashOutcomeCall);
+        if (call[0] != 0xE8 || (uintptr_t)(call + 5 + *(int32_t*)(call + 1)) != base + kSensorOutcome)
+        { LOGI("MeleeAim: the Slash's takedown query at exe+0x{:X} is not what it was measured to be: fight kill animations stay", kSlashOutcomeCall); return; }
+        uint8_t* thunk = AllocNear(base, 0x1000);
+        if (!thunk) { LOGI("MeleeAim: no memory near the exe for the takedown query's redirect"); return; }
+        g_RealOutcome = (FnOutcome)(base + kSensorOutcome);
+        const uintptr_t fn = (uintptr_t)&SlashOutcomeHook;
+        thunk[0] = 0x48; thunk[1] = 0xB8; memcpy(thunk + 2, &fn, 8);      // mov rax, imm64
+        thunk[10] = 0xFF; thunk[11] = 0xE0;                                // jmp rax
+        FlushInstructionCache(GetCurrentProcess(), thunk, 12);
+        const int64_t rel = (int64_t)thunk - (int64_t)(call + 5);
+        if (rel != (int32_t)rel) { LOGI("MeleeAim: the takedown query's redirect is out of reach"); return; }
+        DWORD old = 0;
+        if (!VirtualProtect(call + 1, 4, PAGE_EXECUTE_READWRITE, &old)) return;
+        InterlockedExchange((volatile LONG*)(call + 1), (LONG)(int32_t)rel);
+        VirtualProtect(call + 1, 4, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), call, 5);
+        LOGI("MeleeAim: the Slash's takedown query redirected (fatality offers refused while FinisherAnimations = 0)");
+    }
 }
 void MeleeAim::SetFinishers(bool on)
 {
     g_NoFinishers = !on;
     if (!GameInfo::IsSupportedBuild()) return;
+    HookSlashOutcome();
     uint8_t* p = (uint8_t*)(GameInfo::Base() + kFatalityStore);
     const uint8_t* want = on ? kFatalityOrig : kFatalityOff;
     const uint8_t* other = on ? kFatalityOff : kFatalityOrig;

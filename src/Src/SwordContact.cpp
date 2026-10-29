@@ -25,7 +25,9 @@ namespace
     {
         // The blade along the drawn sword model's forward (row 0 of WeaponTargetPose), from its origin (the grip).
         float guard = 0.14f, tip = 0.69f, samples = 10;   // measured on Corvo's sword: crossguard 0.16, tip 0.67
-        float bladeR = 0.025f;                // the blade's half thickness: what it touches is grown by this
+        // the blade's half thickness: what it touches is grown by this. 4 cm (was 2.5): reported, "not contacting most of
+        // the time" -- a skeleton's capsules are thinner than the clothes drawn on them
+        float bladeR = 0.04f;
         // A STRIKE needs a real swing of the arm, measured on the controller in the room (XR space: turning, walking and the
         // game's camera do not count): the hand faster than `hitHand` at some point of the last `hitWin` s, and travelled at
         // least `hitPath` within the last `pathWin` s. Measured on the Quest 3 at the bookcase (2026-10-04): wrist flicks
@@ -43,7 +45,10 @@ namespace
         float radius = 3.0f, scanSec = 0.10f; // targets: entities within this of the eye, refreshed this often
         float skelMin = 20;                   // a skinned model with at least this many joints is struck by its skeleton
         float attach = 0.30f;                 // a box touched this close to a character's body (his sword, hat) strikes him too
-        float teleport = 25.f;                // m/s: a blade point faster than this jumped (a re-pose, a turn), it did not swing
+        // m/s: a blade point faster than this jumped (a re-pose, a turn), it did not swing. Was 25: the Index logs show
+        // the tip of a real slash at 25-40 m/s, and a frame with ANY point above this tested no contact at all -- the
+        // fastest part of every hard swing, the part that meets the guard, was thrown away.
+        float teleport = 80.f;
         // m/s: the controller faster than this is a tracking glitch. Was 10: measured on an Index, a fast slash moves the
         // controller at 10-18 m/s (peaks near 30), so most real swings were thrown away as glitches and never struck
         // (reported: "the sword only works when I hit the NPC at the surface"). A real glitch is a jump of metres.
@@ -608,15 +613,21 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
     // The sweep: each blade point from where it was to where it is. The earliest entry wins; among entries at the same
     // moment a body before a box, then the smallest box (the bottle, not the shelf it stands on).
     int best = -1; float bestT = 2.f, bestVol = 1e9f, bestSpeed = 0; float bestPt[3] = {}, bestVel[3] = {}; bool bestSkel = false;
-    bool jumped = false;
+    bool jumped = false; float jumpV = 0.f;
     if (g_PrevValid && g_PrevN == n && dt > 1e-4 && dt < 0.1)
     {
         for (int i = 0; i < n; i++)
         {
             float d[3]; Sub(cur[i], g_Prev[i], d); for (int k = 0; k < 3; k++) d[k] -= pd[k];
-            if (Dot(d, d) > C.teleport * C.teleport * (float)(dt * dt)) jumped = true;
+            if (Dot(d, d) > C.teleport * C.teleport * (float)(dt * dt)) { jumped = true; jumpV = std::max(jumpV, Len(d) / (float)dt); }
         }
-        if (jumped) g_Teleports++;
+        if (jumped)
+        {
+            g_Teleports++;
+            static double logAt = -10;
+            const double tn = (double)qc.QuadPart / (double)qf.QuadPart;
+            if (tn - logAt > 2.0) { logAt = tn; LOGI("SwordContact: a blade point moved {:.0f} m/s in one frame (over {:.0f}): a jump, no contact tested this frame ({} so far)", jumpV, C.teleport, g_Teleports); }
+        }
         for (size_t ti = 0; ti < g_Targets.size() && !jumped; ti++)
         {
             const Target& tg = g_Targets[ti];

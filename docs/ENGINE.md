@@ -961,6 +961,16 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   "slash.isGenericFatality"); every refusal continues at exe+0x86B38A. arkDeclPlayerStateSlash (0xF0 bytes, ctor
   exe+0x86A7C8): m_genericFatalityMaxDistance float +0xE8 (2.0), m_genericFatalityChance int +0xEC (10). The kill cam:
   cvar ark_killcam_chance_setting (default 1).
+- **Takedown outcomes**: exe+0x3AFFC0(assassination sensor) returns the current offer's record (sensor+0x1D0 -> a
+  component of type exe+0x39F0F50); its +0x20 is arkAssassinationOutcomeType_t (enum desc at exe+0x2398100: 0 NORMAL,
+  1 FAST, 2 FATALITY_NORMAL, 3 FATALITY_FAST, 4 FATALITY_CHAIN, 5 FATALITY_GROUND, 6 FATALITY_GROUND_ON_RAGDOLL, 7 WINDOW,
+  8 DROP, 9 SHADOWWALK, 10 SLIDE, 11 GRAPPLE). Its callers: the Slash (exe+0x86B0F0) and exe+0x3911C9. Measured: in a
+  fight the sensor offers outcomes on standing guards (the kill animations), and on a knocked-out one.
+- **Pickups**: arkPickup entities (notes, pouches, fruit, bathing salts) carry arkCpntPickable_Simple. The loot decl's
+  m_itemDefs (decl+0x68) are arkDeclLootinfo {idDeclEntityDef* m_itemEntity @0, idAtomicString m_bindTagName @8} --
+  entity defs, not inventory item decls. Interact on a pickup first undraws the weapons (~0.13 s) and loots after it,
+  re-reading the sensor then.
+- **Cabinet fronts**: some are plain arkUsable entities ('esc_env_door_middle_5'), no openable component.
 - **Characters**: class ids between the globals exe+0x39CE2C0 / +4. An unconscious guard carries an arkCpntLoot (his
   pockets), so "has loot" alone takes him for an item.
 - **Loot lists**: arkCpntLoot's own m_items (+0x28) is empty on items lying in the world; what they give is the loot
