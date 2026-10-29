@@ -573,7 +573,11 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
-    struct DialSwipe { void* ent = nullptr; uint8_t* u = nullptr; float acc = 0.f; int pending = 0; double lastAt = 0; float prev[3] = {}; bool prevOk = false; };
+    struct DialSwipe
+    {
+        void* ent = nullptr; uint8_t* u = nullptr; float acc = 0.f; int pending = 0; double lastAt = 0; float prev[3] = {}; bool prevOk = false;
+        float org[3] = {}; bool byReach = false; double since = 0;    // by reach (not contact): the dial's origin, from when
+    };
     // Sliding windows have no component of their own: they are doors / openables placed by the level. An entity's name
     // (the level's, a char* at entity+0x20, what the game's own errors print through exe+0x1D9090) tells them: one that
     // opens and whose name holds "window" is raised by a hand sliding up on it and lowered by one sliding down -- the
@@ -611,6 +615,12 @@ namespace
     }
     DialSwipe g_Dial[2];                        // game thread
     constexpr float kDialStep = 0.035f;         // m of the hand along the dial (up / down) per digit
+    // The wheels sit recessed in the safe's door: the hand meets the door, not the wheel. So the wheel the grabbing hand's
+    // pointer has picked counts as under the hand while the hand (its palm or a finger) is within kDialReach of the
+    // wheel's origin -- held while the hand stays within kDialKeep of it, so the pointer flicking to the next wheel
+    // mid-swipe does not drop it -- after kDialSettle there (reaching in is not a swipe).
+    constexpr float kDialReach = 0.14f, kDialKeep = 0.18f;
+    constexpr double kDialSettle = 0.15;
     // after the interact that stores an item: is its entity still in the world (the game refused it: inventory full)?
     std::atomic<uint32_t> g_WatchId{ 0 }; std::atomic<int> g_WatchState{ -1 };
     std::atomic<uint32_t> g_PointerItem{ 0 };      // the pointer's pick when it is an item (game thread -> KbmInject)
@@ -816,10 +826,51 @@ void Collision::Tick()
             DialSwipe& D = g_Dial[h];
             int di = -1; uint8_t* du = nullptr;
             for (int i = 0; i < nc && di < 0; i++) if (cents[i] && (du = DialOf(cents[i])) != nullptr) di = i;
+            // ...or, recessed as they are, by reach: the wheel the pointer has (or the one being swiped) near the hand
+            void* nearEnt = nullptr; uint8_t* nearU = nullptr; float nearOrg[3] = {};
+            auto handTo = [&](const float o[3]) {
+                float best = 1e9f;
+                for (int k = 0; k < np && k < 4; k++)      // the palm and the fingers (the item's points come after)
+                {
+                    const float d[3] = { goal[k][0] - o[0], goal[k][1] - o[1], goal[k][2] - o[2] };
+                    best = fminf(best, sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+                }
+                return best;
+            };
+            if (di < 0 && h == GrabHand::Hand() && np > 0)
+            {
+                if (D.byReach && D.ent && now - D.lastAt < 0.3 && handTo(D.org) < kDialKeep)
+                { nearEnt = D.ent; nearU = D.u; memcpy(nearOrg, D.org, 12); }
+                else
+                {
+                    const int tid = GrabHand::TargetId();
+                    void* te = tid > 0 && tid != 0x3FFF0010 ? BodyHide::EntityById(tid) : nullptr;
+                    uint8_t* tu = te ? DialOf(te) : nullptr;
+                    float o[3];
+                    if (tu && GrabHand::TargetPoint(o) && handTo(o) < kDialReach) { nearEnt = te; nearU = tu; memcpy(nearOrg, o, 12); }
+                }
+            }
+            if (di < 0 && nearEnt)
+            {
+                if (D.ent != nearEnt || !D.byReach || now - D.lastAt > 0.3)
+                {
+                    D = DialSwipe{}; D.ent = nearEnt; D.u = nearU; D.byReach = true; D.since = now; memcpy(D.org, nearOrg, 12);
+                    LOGI("Collision: {} hand at a safe dial (by reach: {:.0f} cm from its centre)", h ? "right" : "left", handTo(nearOrg) * 100.f);
+                }
+                if (now - D.since >= kDialSettle)
+                {
+                    if (D.prevOk) D.acc += goal[0][2] - D.prev[2];        // the palm, world up (z)
+                    memcpy(D.prev, goal[0], 12); D.prevOk = true;
+                    while (D.acc >= kDialStep && D.pending < 3) { D.pending++; D.acc -= kDialStep; }
+                    while (D.acc <= -kDialStep && D.pending > -3) { D.pending--; D.acc += kDialStep; }
+                    if (D.acc > kDialStep || D.acc < -kDialStep) D.acc = 0.f;
+                }
+                D.lastAt = now;
+            }
             if (di >= 0)
             {
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[di].local, 12)) { pi = k; break; }
-                if (D.ent != cents[di] || now - D.lastAt > 0.3) { D = DialSwipe{}; D.ent = cents[di]; D.u = du; }
+                if (D.ent != cents[di] || D.byReach || now - D.lastAt > 0.3) { D = DialSwipe{}; D.ent = cents[di]; D.u = du; }
                 if (pi >= 0)
                 {
                     if (D.prevOk) D.acc += goal[pi][2] - D.prev[2];       // world up (z)

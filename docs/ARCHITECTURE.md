@@ -973,7 +973,11 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   combination wheel) accumulates the raw point's vertical motion while the hand stays on it; every 3.5 cm queues a step
   (at most 3), applied one a frame once the wheel has stopped turning (+0x30 bit 1): up = the game's next stage
   (exe+0x77AEC0, what a click does), down = previous (exe+0x77B740). Both go through the game's own transition, so the
-  safe's script sees the digits change as for clicks and opens on the right combination.
+  safe's script sees the digits change as for clicks and opens on the right combination. The wheels sit recessed in
+  the door, so the hand seldom touches one: for the grabbing hand, the wheel its pointer has picked counts as under
+  the hand while the palm or a finger is within 14 cm of the wheel's origin (GrabHand::TargetPoint), held while it stays
+  within 18 cm so the pointer moving to the next wheel mid-swipe does not drop it; the palm's vertical travel counts
+  from 0.15 s after arriving (reaching in is not a swipe).
 - **Sliding windows** (`SlideWindows`): no component of their own -- a door or an openable whose level name (a char*
   at entity+0x20) holds "window". The grabbing hand's vertical travel while it touches one is accumulated; 6 cm up on a
   closed one (or down on an open one) asks KbmInject for the interact tap (the same request as a push on an open
