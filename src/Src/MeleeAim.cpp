@@ -5,6 +5,7 @@
 #include "PlayerState.h"
 #include "CVars.h"
 #include "GpuTrace.h"
+#include "BodyHide.h"
 #include <cmath>
 #include <sstream>
 #include <algorithm>
@@ -755,6 +756,55 @@ void MeleeAim::AddHitBox(const HitBox& b)
     std::lock_guard lk(g_BoxM);
     g_Boxes.erase(std::remove_if(g_Boxes.begin(), g_Boxes.end(), [&](const auto& e) { return now - e.second >= keep; }), g_Boxes.end());
     if (g_Boxes.size() < 16) g_Boxes.push_back({ b, now });
+}
+// ---- the stealth kill on offer ----
+// The player's arkCpntPlayerSensorAssassination (type exe+0x39B4750, registered at exe+0x13A7230) answers "can the player
+// assassinate now" with its vtable slot 26 (exe+0x3A19A0: the target id at +0x40 resolves to an entity, the target and
+// the player's state allow it, +0x48 clear) -- what the "kill" prompt shows. While it says yes, the game's attack IS the
+// stealth kill (a Slash on that guard becomes Assassination), so a blade contact clicks the attack instead of striking
+// directly (SwordContact). Asked once a frame on the game thread (HandAimHook's aim update).
+namespace
+{
+    constexpr uint32_t kSensorAssassination = 0x39B4750, kGetEntityById = 0x6DC560;
+    constexpr int kSlotCanAssassinate = 26;
+    std::atomic<void*> g_KillTarget{ nullptr };
+    std::atomic<long long> g_KillAt{ 0 };
+    std::atomic<uint64_t> g_KillOffers{ 0 };
+    bool g_KillWas = false;                                  // game thread
+    bool AskSensor(void* player, void** target, uint32_t* tid)
+    {
+        __try
+        {
+            uint8_t* s = ((FnGetComponent)(GameInfo::Base() + kGetComponent))(player, (const void*)(GameInfo::Base() + kSensorAssassination), 2);
+            if (!s) return false;
+            using FnCan = bool (*)(void*);
+            if (!((FnCan)(*(void***)s)[kSlotCanAssassinate])(s)) return false;
+            *tid = *(const uint32_t*)(s + 0x40);
+            *target = ((void* (*)(uint32_t))(GameInfo::Base() + kGetEntityById))(*tid);
+            return *target != nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+}
+void MeleeAim::TickTakedown()
+{
+    BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+    void* target = nullptr; uint32_t tid = 0;
+    const bool can = an[BodyHide::aPlayer].valid && an[BodyHide::aPlayer].ent && AskSensor(an[BodyHide::aPlayer].ent, &target, &tid);
+    if (can) { g_KillTarget = target; g_KillAt = Qpc(); }
+    if (can != g_KillWas)
+    {
+        g_KillWas = can;
+        if (can) { g_KillOffers++; LOGI("MeleeAim: a stealth kill is offered (target id {:#x}): a swing now is the game's takedown", tid); }
+        else LOGI("MeleeAim: the stealth kill is no longer offered");
+    }
+}
+bool MeleeAim::KillOffered(void** target)
+{
+    const long long at = g_KillAt.load();
+    if (!at || (double)(Qpc() - at) / (double)QpcFreq() > 0.25) return false;
+    if (target) *target = g_KillTarget.load();
+    return true;
 }
 void MeleeAim::SetBladeDamage(bool on, float scale)
 {

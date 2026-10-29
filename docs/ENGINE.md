@@ -605,6 +605,10 @@ Player aim component (vtable exe+0x1C52BF8): `m_currentAimLocalDir` +0x20, `m_cu
 - Prompts (default binding): `Ctrl` = choke (hold it; releasing early lets the guard go), left click = kill, `F` =
   pickpocket / carry the body. Sensors per takedown type: `arkCpntPlayerSensorChoke/Assassination/DropAssassination/
   WindowAssassination`.
+- The assassination sensor: type exe+0x39B4750 (registered exe+0x13A7230; GetType exe+0x8C78F0, vtable exe+0x1B3CC38),
+  a component of the player (exe+0x877720(player, type, 2)). Vtable slot 26 (exe+0x3A19A0) = "a kill is possible now":
+  the target's id at +0x40 (exe+0x6DC560 -> entity), its state checks (exe+0x5BF440, the player's state machine at +0x20)
+  and +0x48 clear. The choke sensor: type exe+0x39DD090 (registered exe+0x13D75F0, GetType exe+0x918D70).
 - During a takedown the game places the arms in the world from its own animated camera: a VR view may take its rotation
   from the head and its position from the animation and the arms still land on the victim.
 

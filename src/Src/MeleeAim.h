@@ -50,6 +50,10 @@ namespace MeleeAim
     //! 0 none, 1 pending, 2 landed, 3 ended without landing (no record in time, or the game refused it), 4 the target
     //! defended itself (blocked or parried, as against the game's swing).
     int BladeStrikeState(unsigned serial);
+    //! Game thread, once a frame: asks the player's assassination sensor whether a stealth kill is on offer.
+    void TickTakedown();
+    //! A stealth kill is on offer now (the game's "kill" prompt): the game's attack would be the takedown.
+    bool KillOffered(void** target = nullptr);
     bool SlashRunning();             //!< the player's Slash state is running (seen at the last Present)
     bool HitThisSlash();             //!< this Slash already hit something (a click now would be dropped, and one hit per swing)
     //! The running Slash's attack window: 0 = not opened yet (it opens ~0.2 s after the click), 1 = open, 2 = closed.

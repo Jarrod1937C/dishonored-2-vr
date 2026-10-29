@@ -673,7 +673,8 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             g_AirAt = -1;   // this swing has its click
             const char* how;
             const int win = MeleeAim::WindowPhase();
-            if (MeleeAim::BladeDamage() && tg.skel && !SwordGesture::Charging())
+            const bool kill = MeleeAim::KillOffered();   // the game offers a stealth kill: its attack IS the takedown
+            if (MeleeAim::BladeDamage() && tg.skel && !SwordGesture::Charging() && !kill)
             {   // the blade is the attack: the game's strike on this character, scaled by the blade's speed (MeleeAim)
                 bladeSerial = MeleeAim::BladeStrike(tg.ent, bestSpeed);
                 how = "the blade strikes it itself (no Slash)";
@@ -685,7 +686,7 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
                 how = win == 1 ? "the running Slash's open window strikes it" : "the running Slash strikes it (its window opens shortly)";
             }
             else if (MeleeAim::SlashRunning()) { g_TapUntil = t + 0.9; g_Queued++; how = MeleeAim::HitThisSlash() ? "queued: the running Slash already hit" : "queued: the running Slash's window has closed"; }
-            else { if (C.early > 0.5f) MeleeAim::RequestOpen(C.pendMax); o.tap = true; g_Taps++; awaitSlash(); how = "clicks a Slash"; }
+            else { if (C.early > 0.5f && !kill) MeleeAim::RequestOpen(C.pendMax); o.tap = true; g_Taps++; awaitSlash(); how = kill ? "clicks the attack: the STEALTH KILL on offer" : "clicks a Slash"; }
             LOGI("SwordContact: CONTACT {} id {:#x}{} at ({:.2f},{:.2f},{:.2f}), {:.2f} m from the eye, blade {:.2f} m/s (hand peak {:.2f} m/s over {:.2f} m) at {:.0f}% of the frame: {}",
                  tg.skel ? "BODY" : fmt::format("box {:.2f}x{:.2f}x{:.2f}", tg.mx[0] - tg.mn[0], tg.mx[1] - tg.mn[1], tg.mx[2] - tg.mn[2]), tg.id,
                  ownerId ? fmt::format(" (held by / on the body of {:#x}: it too)", ownerId) : std::string(),

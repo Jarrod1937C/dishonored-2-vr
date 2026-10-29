@@ -209,6 +209,7 @@ headset.
 | Feature | State | Verification | Notes / known issues |
 |---|---|---|---|
 | Choke, kills from behind, fatalities: the view rotates with the head, the animation keeps the arms and the weapon, a smooth return afterwards | Done | Validated (Q3) | Validated before the cutscene work changed the shared view and servo code. A re-check is pending. |
+| Stealth kill by swinging the sword while the game offers it (the blade's contact clicks the attack instead of striking directly) | Done | Not yet tested | Reads the game's assassination sensor (slot 26), logged as `a stealth kill is offered`. While it is offered the right hand's reticle turns red (lethal) inside a thick blue border (non-lethal). |
 
 ### 2.13 Robustness
 

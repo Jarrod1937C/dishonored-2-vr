@@ -878,6 +878,11 @@ grenade as in the game. Mines and spring razors keep the game's placement, aimed
 
 ## 9. Interaction
 
+- **Stealth kills** (MeleeAim::TickTakedown, game thread): the player's assassination sensor is asked once a frame
+  whether a kill is on offer (its slot 26, what the "kill" prompt shows). While it is, a blade contact on a character
+  clicks the game's attack instead of the blade's own strike (SwordContact), so the game turns it into its
+  Assassination. An air swing already clicks the attack.
+
 ### Collision: solid hands and weapons
 
 [Collision.cpp](../src/Src/Collision.cpp) (`HandCollision`, `WeaponCollision`, `PushObjects`, all experimental). The

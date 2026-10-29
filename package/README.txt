@@ -157,7 +157,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  the RIGHT one is what the right grip takes or uses, the LEFT one is where a power or shot goes,
  with a ring where it will land. MinimalReticle = 1 shows only a small white dot where each one
  ends (the right one grows when it is on something you can take or use); ReticleOpacity sets how
- see-through they are.
+ see-through they are. When you can take a guard down from behind, the right one turns RED inside a
+ thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button).
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab
