@@ -213,6 +213,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ControllerPitchOffset = 0 (tilts the hands up/down, degrees)
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)
    [Gameplay]  SwordGestures = 1   ThrowGestures = 1   GrabObjects = 1
+               HandCollision = 0 / WeaponCollision = 0 (experimental: your hands / the sword and guns stop at
+                                 walls, tables, props and, for the blade, people's bodies, instead of passing through)
+               PushObjects = 1   PushStrength = 1 (with those: hands and weapons push loose objects; kg)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
                MinimalReticle = 0 (1 = only a dot where each hand points)  ReticleOpacity = 0.5
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)

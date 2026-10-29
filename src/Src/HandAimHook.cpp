@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "HandAimHook.h"
+#include "Collision.h"
 #include "GameInfo.h"
 #include "VRRuntime.h"
 #include "XRSession.h"
@@ -266,6 +267,7 @@ namespace
         }
         BodyHide::Tick();                       // game thread, once per frame
         GunRay::Tick();                         // the gun ray's sweep: where the next shot would land
+        Collision::Tick();                      // solid hands and weapons: what they meet this frame
         TestAids::Tick();
         { std::lock_guard lk(g_M); g_Stats.calls++; }
         return r;

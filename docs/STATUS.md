@@ -134,7 +134,7 @@ headset.
 |---|---|---|---|
 | Sword aims where the right hand points (melee direction from the controller) | Done | Validated (Q3) | The strike starts at the head. |
 | Sword gestures: swing the arm to strike, fist by the right ear then thrust = power attack, fist at the left shoulder = block (`SwordGestures`) | Done | Played (Q3); thresholds retuned in Mock | A strike needs a swing of the ARM (hand > 1.3 m/s over 12 cm). Wrist flicks do nothing. The right trigger always works too. The power-attack gesture has only been measured in the mock. |
-| Sword hits what the drawn blade touches (contact sweep; characters hit by their skeleton, corpses lying down included) | Done | Played (Q3) on the first version; refinements Mock | Air swings make the swing sound and hit nothing. The game's hit still lands about 0.25 s after the contact (accepted). Walls and static world are not detected. Non-humanoid creatures (rats, dogs) are untested. |
+| Sword hits what the drawn blade touches (contact sweep; characters hit by their skeleton, corpses lying down included) | Done | Played (Q3) on the first version; refinements Mock | Air swings make the swing sound and hit nothing. The game's hit still lands about 0.25 s after the contact (accepted). Walls and static world are not struck (with `WeaponCollision` they stop the blade). Non-humanoid creatures (rats, dogs) are untested. |
 | Pistol and crossbow fire along the drawn barrel, and the reticle ring ends on what the ray hits | Done | Mock (headset verdict not recorded) | The right bottle of three breaks (0.2-0.6 cm). Spread is off by default (exact along the barrel). `vr gunspread 1` restores the game's 1.5-2 deg. |
 | Pistol "explosion" cone, muzzle flash, light, sparks and smoke come from the drawn muzzle | Done | Mock | A paper-wad particle still flies out in front of the face (section 3). |
 | Bullet and chamber parts sit on the drawn gun; the gun is no longer culled while reloading | Done | Mock | The crossbow's firelock variant is untested. |
@@ -158,6 +158,9 @@ headset.
 | Grab with the right grip, carry it with the hand, grip again = drop, right trigger = throw with the hand's velocity (`GrabObjects`) | Done | Played (Q3) (a throw by hand is in a real session log) | Held objects push nothing (this is the game's own design). Grabbing with the left hand reuses the right hand's measurements (mirroring untested). |
 | Held objects sit in the drawn fist, fitted by their bounding box | Done | Mock | Unusual shapes are kept "as they stood". |
 | Carry a body: hold the grip to pick up, grip again to put it down | Done | Played (Q3) | |
+| Solid hands (`HandCollision`): the drawn hand stops at walls, tables and props, slides along them, buzzes on contact; far through a wall it lets go | Done, experimental | Not yet tested | The game's own Havok ray casts (layers 0x27, flags 0x100000, as the sword's world sweep). Only the palm collides (not each finger). Translation only: the hand never turns to fit a surface. |
+| Solid weapons (`WeaponCollision`): the sword and the left hand's guns stop at the world as one piece with the hand; the blade stops at characters' bones | Done, experimental | Not yet tested | Points along each weapon model's box. The strike uses the RAW blade, so it still lands when the drawn blade halts at a body. |
+| Hands and weapons push loose objects (`PushObjects`, `PushStrength` = the hand's mass) | Done, experimental | Not yet tested | The game's impulse message 0xFA (Windblast's), only to physics-driven entities. |
 | While carrying a body the interaction sensor aims with the eyes (doors open instead of the body dropping) | Done | Fixed, unverified | `vr carrygaze 0` restores the old behaviour. |
 
 ### 2.8 Menus and screens

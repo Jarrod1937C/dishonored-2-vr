@@ -878,6 +878,29 @@ grenade as in the game. Mines and spring razors keep the game's placement, aimed
 
 ## 9. Interaction
 
+### Collision: solid hands and weapons
+
+[Collision.cpp](../src/Src/Collision.cpp) (`HandCollision`, `WeaponCollision`, `PushObjects`, all experimental). The
+real controller cannot be stopped, so the DRAWN hand is, with whatever it holds as one rigid piece:
+
+- **Game thread** (`Collision::Tick`, once a frame from HandAimHook's aim update next to GunRay): each collision point
+  (the palm; with weapons, 5 samples through the long axis of the held weapon model's box, plus the ends of a wide
+  second axis) is swept with the game's own Havok ray cast from where it was DRAWN last frame to where the controller
+  puts it now, sliding along what it hits (up to 3 legs). Each surface met is published as a contact plane tied to that
+  point in the hand's frame. After a snap turn or a teleport, or when a point is new, the sweep starts at the eye.
+  The poses come from GpuTrace (`RawHandPose` / `RawItemPose`: the latest view's poses before the push).
+- **Render thread** (`Collision::Apply`, called by GpuTrace where each view builds a hand's world pose): the hand's
+  translation is pushed out of those planes using this view's own controller pose, so the stop is exact and does not
+  trail a frame. A push larger than 0.35 m lets go (the hand passes through and follows the real one) until the eye
+  sees the palm in the open again.
+- **Characters' bodies** (weapons): SwordContact turns the RAW blade's penetration of the bone capsules (the ones the
+  strike uses) into contact planes (`SetBodyContacts`), so the drawn blade halts at the body while the strike, made
+  with the raw blade (`GpuTrace::WeaponTargetPoseRaw`), still lands. Deeper than 0.22 m: left alone (it went through).
+- **Pushing**: a contact with a physics-driven entity (entity+0xD1 bit 3) gets the game's impulse message 0xFA with
+  `PushStrength` (the hand's mass) x the speed at which the raw point moves into it, relative to the object's own
+  velocity (entity+0x33C), so a box being pushed comes along with the hand.
+- A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
+
 ### GrabHand: holding objects in the hand
 
 The game holds an object (a bottle, a glass: the `HoldObject` state) by binding its entity to joint 8 of the player's

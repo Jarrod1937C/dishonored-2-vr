@@ -19,6 +19,10 @@ namespace Settings
     bool FingerTracking();                        //!< [Controls] FingerTracking, with Layout = index (XRSession, GpuTrace)
     bool SwordBladeDamage();                      //!< [Gameplay] SwordBladeDamage: the blade strikes what it touches itself (MeleeAim)
     float SwordDamageScale();                     //!< [Gameplay] SwordDamageScale: x the blade's damage
+    bool HandCollision();                         //!< [Gameplay] HandCollision: the drawn hands stop at the world (Collision)
+    bool WeaponCollision();                       //!< [Gameplay] WeaponCollision: the held weapons too, and at bodies (Collision)
+    bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
+    float PushStrength();                         //!< [Gameplay] PushStrength: the hand's effective mass, kg
     float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)
     bool SnapTurnBlank();                         //!< [Controls] SnapTurnBlank: black during a snap turn (KbmInject)
     bool StereoHud();                             //!< [Display] StereoHud: the game's HUD on one panel for both eyes (ScreenMode)

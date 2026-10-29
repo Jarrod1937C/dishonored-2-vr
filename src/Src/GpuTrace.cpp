@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "GpuTrace.h"
+#include "Collision.h"
 #include "PipeTrace.h"
 #include "PlayerState.h"
 #include "GrabHand.h"
@@ -613,6 +614,9 @@ namespace
     Rigid g_GripBase[2];                        // controller->weapon rotation captured when anchoring
     Rigid g_TargetPose[2]; bool g_TargetValid[2] = {};   // where the model is being put, for WeaponPose to mirror
     Rigid g_HandPose[2];                        // the raw controller pose, so the hand can be posed without the weapon grip
+    // Collision: the controller pose BEFORE it was pushed out of what it touches, and the push (world translation) the
+    // latest view applied -- g_HandPose and g_TargetPose are the drawn (pushed) ones.
+    Rigid g_HandRaw[2]; float g_CollOff[2][3] = {};
     // The projection recovered from a factored MVP, kept so the screen-space overlay (the reticle) can put a world
     // point on the screen. Using the engine's OWN projection instead of rebuilding one from the camera's FOV means
     // there is nothing to calibrate: `p` is exactly what the shader multiplies by, expressed in the same view basis
@@ -1106,6 +1110,7 @@ namespace
         const bool prevSameEye = eye >= 0 && g_PrevPerEye.load() && StereoTaa::PrevIsSameEye(vm);
         st.eye = eye; st.pair = viewRec.valid ? viewRec.pair : 0;
         Rigid hw[2];                                // controller poses in world space; columns = fwd/left/up
+        Rigid hwRaw[2]; float collOff[2][3] = {};   // ... before Collision pushed them out of the world, and the push
         bool haveHand[2] = {};
         for (int h = 0; h < 2; h++)
         {
@@ -1115,6 +1120,9 @@ namespace
             haveHand[h] = true;
             for (int i = 0; i < 3; i++)
             { hw[h].r[i * 3] = hxaxis[i]; hw[h].r[i * 3 + 1] = hxaxis[3 + i]; hw[h].r[i * 3 + 2] = hxaxis[6 + i]; hw[h].t[i] = horg[i]; }
+            // Solid hands and weapons: the drawn hand (and with it the weapon) stops at what it meets (Collision)
+            hwRaw[h] = hw[h];
+            Collision::Apply(h, hw[h].r, hw[h].t, collOff[h]);
         }
         if (!haveHand[0] && !haveHand[1]) g_XfNoHand++;
 
@@ -1261,6 +1269,7 @@ namespace
             for (int h = 0; h < 2; h++)
             {
                 g_TargetPose[h] = st.target[h]; g_TargetValid[h] = st.targetValid[h]; if (st.targetValid[h]) g_HandPose[h] = st.hand[h];
+                if (st.targetValid[h] && haveHand[h]) { g_HandRaw[h] = hwRaw[h]; memcpy(g_CollOff[h], collOff[h], 12); }
                 g_DeltaWorld[h] = st.dw[h];
                 g_DeltaView[h] = st.dv[h];
                 if (!g_XfPrevValid) g_DeltaViewPrev[h] = g_DeltaView[h];
@@ -5251,6 +5260,40 @@ bool GpuTrace::WeaponTargetPose(int hand, float org[3], float axis[9])
     memcpy(org, t.t, 12);
     // Rigid keeps the basis in its COLUMNS (fwd/left/up); an idMat3 wants them as rows.
     for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) axis[j * 3 + i] = t.r[i * 3 + j];
+    return true;
+}
+
+bool GpuTrace::WeaponTargetPoseRaw(int hand, float org[3], float axis[9])
+{
+    const int h = hand & 1;
+    if (g_AnimSuspend.load()) return false;
+    std::lock_guard lk(g_XfM);
+    if (!g_TargetValid[h]) return false;
+    const Rigid& t = g_TargetPose[h];
+    for (int i = 0; i < 3; i++) org[i] = t.t[i] - g_CollOff[h][i];       // a pure translation: the item moved with the hand
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) axis[j * 3 + i] = t.r[i * 3 + j];
+    return true;
+}
+bool GpuTrace::RawItemPose(int hand, float org[3], float axis[9], void** ent)
+{
+    const int h = hand & 1;
+    if (g_AnimSuspend.load() || g_SixDof.load() != 1) return false;
+    std::lock_guard lk(g_XfM);
+    const BodyHide::Anchor& wa = g_Anchor[h == 0 ? BodyHide::aWeaponL : BodyHide::aWeaponR];
+    if (!g_TargetValid[h] || !g_RestModelValid[h] || !wa.valid) return false;
+    const Rigid& t = g_TargetPose[h];
+    for (int i = 0; i < 3; i++) org[i] = t.t[i] - g_CollOff[h][i];
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) axis[j * 3 + i] = t.r[i * 3 + j];
+    if (ent) *ent = wa.ent;
+    return true;
+}
+bool GpuTrace::RawHandPose(int hand, float org[3], float rot[9])
+{
+    const int h = hand & 1;
+    if (g_AnimSuspend.load() || g_SixDof.load() != 1) return false;
+    std::lock_guard lk(g_XfM);
+    if (!g_XfValid || !g_TargetValid[h]) return false;
+    memcpy(org, g_HandRaw[h].t, 12); memcpy(rot, g_HandRaw[h].r, 36);
     return true;
 }
 

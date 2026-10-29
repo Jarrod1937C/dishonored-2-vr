@@ -95,6 +95,7 @@ set(MOD_SOURCES
     Src/MeleeAim.cpp   Src/MeleeAim.h
     Src/SwordGesture.cpp Src/SwordGesture.h
     Src/SwordContact.cpp Src/SwordContact.h
+    Src/Collision.cpp  Src/Collision.h
     Src/NpcSkel.cpp Src/NpcSkel.h
     Src/ThrowGesture.cpp Src/ThrowGesture.h
     Src/GrabHand.cpp   Src/GrabHand.h

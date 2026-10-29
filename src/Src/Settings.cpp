@@ -35,6 +35,10 @@ namespace
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordbladedamage",  Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: the blade's contact strikes by itself (experimental)
         { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
+        { "gameplay.handcollision",     Kind::Bool,   "0", 0, 0, nullptr },   // Collision: the drawn hands stop at the world (experimental)
+        { "gameplay.weaponcollision",   Kind::Bool,   "0", 0, 0, nullptr },   // Collision: the held weapons too, and at characters' bodies
+        { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
+        { "gameplay.pushstrength",      Kind::Float,  "1", 0.1f, 10, nullptr },   // the hand's effective mass, kg
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
         { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr },
@@ -231,6 +235,10 @@ float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffs
 bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
 bool Settings::SwordBladeDamage() { return B("gameplay.swordbladedamage"); }
 float Settings::SwordDamageScale() { return F("gameplay.sworddamagescale"); }
+bool Settings::HandCollision() { return B("gameplay.handcollision"); }
+bool Settings::WeaponCollision() { return B("gameplay.weaponcollision"); }
+bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
+float Settings::PushStrength() { return F("gameplay.pushstrength"); }
 float Settings::GripThreshold() { return F("controls.gripthreshold"); }
 bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }

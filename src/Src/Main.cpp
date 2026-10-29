@@ -28,6 +28,7 @@
 #include "HandFx.h"
 #include "PlayerState.h"
 #include "MeleeAim.h"
+#include "Collision.h"
 #include "ThrowGesture.h"
 #include "GrabHand.h"
 #include "PointerRay.h"
@@ -123,6 +124,9 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetGripThreshold(Settings::GripThreshold());
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
+    Collision::SetHands(Settings::HandCollision());
+    Collision::SetWeapons(Settings::WeaponCollision());
+    Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

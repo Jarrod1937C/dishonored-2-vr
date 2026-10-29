@@ -209,6 +209,13 @@ namespace GpuTrace
     //! and not a second, independently computed one, or the flash drifts off the barrel the moment the grip is
     //! trimmed with gputrim/gpugrip.
     bool WeaponTargetPose(int hand, float org[3], float axis[9]);
+    //! WeaponTargetPose before Collision pushed the hand out of what it touches: where the real controller holds it
+    //! (SwordContact strikes with this blade, so a blade stopped at a body still strikes it).
+    bool WeaponTargetPoseRaw(int hand, float org[3], float axis[9]);
+    //! The same, only while the hand holds an item (a weapon entity is anchored to it), with that entity (Collision).
+    bool RawItemPose(int hand, float org[3], float axis[9], void** ent);
+    //! The controller pose (columns fwd/left/up, as HandPoseWorld) of the latest view BEFORE Collision moved it.
+    bool RawHandPose(int hand, float org[3], float rot[9]);
     //! The hand whose weapon a model with its origin at w (world) is drawn with -- the weapon test's own rule (nearest
     //! first-person entity is that hand's equipment, within the anchor radius) -- or -1. Lock-free, any thread.
     int WeaponClaim(const float w[3]);

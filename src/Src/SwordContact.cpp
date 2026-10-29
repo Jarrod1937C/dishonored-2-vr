@@ -11,6 +11,7 @@
 #include "NpcSkel.h"
 #include "PlayerState.h"
 #include "SwordGesture.h"
+#include "Collision.h"
 #include <cmath>
 #include <sstream>
 #include <unordered_map>
@@ -292,6 +293,46 @@ namespace
         }
         return -1;
     }
+    //! WeaponCollision: the raw blade inside a character's bone capsules becomes contact planes for Collision, so the drawn
+    //! blade stops at the body's surface (the strike itself is the raw blade's entry, as before). A blade point deeper than
+    //! bodyDepth has gone through: it is left alone (the drawn blade then passes too).
+    void BodyContacts(const float (*cur)[3], int n)
+    {
+        Collision::Contact cs[16]; int nc = 0;
+        float hr[9], ht[3];
+        if (Collision::WeaponsOn() && GpuTrace::RawHandPose(1, ht, hr))
+        {
+            for (const NpcSkel::Skel& s : g_Skels)
+                for (int i = 0; i < n && nc < 16; i++)
+                {
+                    const float* p = cur[i];
+                    bool inReach = true;
+                    for (int k = 0; k < 3; k++) if (p[k] < s.lo[k] - 0.4f || p[k] > s.hi[k] + 0.4f) inReach = false;
+                    if (!inReach) continue;
+                    int bj = -1; float bpen = 0.f; float bq[3] = {};
+                    for (int j = 0; j < s.n; j++)
+                    {
+                        const float* a = s.p[j]; const float* b = s.link[j] >= 0 ? s.p[s.link[j]] : s.p[j];
+                        float ab[3], ap[3]; Sub(b, a, ab); Sub(p, a, ap);
+                        const float l = Dot(ab, ab);
+                        float u = l > 1e-9f ? Dot(ap, ab) / l : 0.f; u = fminf(1.f, fmaxf(0.f, u));
+                        const float q[3] = { a[0] + ab[0] * u, a[1] + ab[1] * u, a[2] + ab[2] * u };
+                        float d[3]; Sub(p, q, d);
+                        const float pen = s.r[j] + C.bladeR - Len(d);
+                        if (pen > bpen) { bpen = pen; bj = j; memcpy(bq, q, 12); }
+                    }
+                    if (bj < 0 || bpen > 0.22f) continue;
+                    float nrm[3]; Sub(p, bq, nrm); const float nl = Len(nrm);
+                    if (nl < 1e-3f) continue;
+                    Collision::Contact& c = cs[nc++];
+                    for (int k = 0; k < 3; k++) { c.n[k] = nrm[k] / nl; c.p[k] = bq[k] + c.n[k] * s.r[bj]; }
+                    c.clear = C.bladeR;
+                    const float d[3] = { p[0] - ht[0], p[1] - ht[1], p[2] - ht[2] };
+                    for (int k = 0; k < 3; k++) c.local[k] = hr[k] * d[0] + hr[3 + k] * d[1] + hr[6 + k] * d[2];
+                }
+        }
+        Collision::SetBodyContacts(1, cs, nc);
+    }
     float SkelDist(const NpcSkel::Skel& s, const float* p)
     {   // distance from the body's surface (negative inside)
         float best = 1e9f;
@@ -503,8 +544,9 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
     if (!g_On.load() || !active) { g_PrevValid = false; g_AirAt = -1; return o; }
 
     float wo[3], wa[9], eye[3], view[9];
-    const bool sword = GpuTrace::HandItemDraws(1) != 0 && GpuTrace::WeaponTargetPose(1, wo, wa);
-    if (!sword || !HandAimHook::RealCamera(eye, view)) { g_PrevValid = false; g_AirAt = -1; std::lock_guard lk(g_DbgM); g_Dbg.blade = false; return o; }
+    // the blade where the REAL hand holds it: Collision may stop the drawn one at a body, and the strike is still the swing's
+    const bool sword = GpuTrace::HandItemDraws(1) != 0 && GpuTrace::WeaponTargetPoseRaw(1, wo, wa);
+    if (!sword || !HandAimHook::RealCamera(eye, view)) { g_PrevValid = false; g_AirAt = -1; Collision::SetBodyContacts(1, nullptr, 0); std::lock_guard lk(g_DbgM); g_Dbg.blade = false; return o; }
     g_Frames++;
 
     if (g_LastScan < 0 || t - g_LastScan > C.scanSec || t < g_LastScan) { ScanTargets(eye, false); g_LastScan = t; }
@@ -529,6 +571,7 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
         const float s = C.guard + (C.tip - C.guard) * (float)i / (float)(n - 1);
         for (int k = 0; k < 3; k++) cur[i][k] = wo[k] + wa[k] * s;
     }
+    BodyContacts(cur, n);
     LARGE_INTEGER qc, qf; QueryPerformanceCounter(&qc); QueryPerformanceFrequency(&qf);
     const double dt = g_PrevValid ? (double)(qc.QuadPart - g_PrevT) / (double)qf.QuadPart : 0.0;
     // the player's own motion this frame: the blade's speed that counts is relative to the body
@@ -707,7 +750,7 @@ void SwordContact::Scan(float radius)
     C.radius = keep;
     Debug d; GetDebug(d);
     float a[2] = {}, b[2] = {}; const bool pa = GpuTrace::ProjectWorld(d.guard, a), pb = GpuTrace::ProjectWorld(d.tip, b);
-    float wo[3] = {}, wa[9] = {}; const bool w = GpuTrace::WeaponTargetPose(1, wo, wa);
+    float wo[3] = {}, wa[9] = {}; const bool w = GpuTrace::WeaponTargetPoseRaw(1, wo, wa);
     LOGI("swordscan: blade {} guard ({:.2f},{:.2f},{:.2f}) ndc {} ({:.2f},{:.2f}) tip ({:.2f},{:.2f},{:.2f}) ndc {} ({:.2f},{:.2f}) | weapon {} ({:.2f},{:.2f},{:.2f}) fwd ({:.2f},{:.2f},{:.2f}) | eye ({:.2f},{:.2f},{:.2f})",
          d.blade, d.guard[0], d.guard[1], d.guard[2], pa, a[0], a[1], d.tip[0], d.tip[1], d.tip[2], pb, b[0], b[1], w, wo[0], wo[1], wo[2], wa[0], wa[1], wa[2], eye[0], eye[1], eye[2]);
     g_LastScan = -1;

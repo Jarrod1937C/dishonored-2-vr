@@ -891,6 +891,33 @@ nearly straight down; a ray that lands on a placed mine places nothing).
 
 ## 8. Interaction, held objects, corpses
 
+### 8.0 Physics queries and impulses (Havok)
+
+- **Synchronous ray cast**: `hknpWorld::castRay` exe+0xC89B00(world = *(game+0x60410), query, collector), as the
+  melee line-of-sight check exe+0x636630 and the gun's trace exe+0x638570 build it. Query (0x70 bytes): +0x00 the
+  world's shape tag codec (world+0x9D8), +0x08 the filter, +0x10 u16 material 0xFFFF, +0x14 u32 0, +0x18 u64 0, +0x20
+  u32 2, +0x30 origin (w 0), +0x40 direction = to - from (w 1.0), +0x50 1/direction (0x7F7FFFEE where 0; w =
+  0x3F000000 | bit k set when direction.k >= 0), +0x60 u32 0.
+- **The game's query filter** (vtable exe+0x1AD4B68; +0x08 u64 0, +0x10 u32 0x1FFFF, +0x18 u8 4): +0x20 = the LAYERS
+  mask, +0x24 = required flags. A body passes when bit (info & 0x1F) of the layers is set and ((info >> 5) & flags) ==
+  flags (exe+0x996A0 / 0x996D0). The sword's casts (exe+0x637160, deferred through exe+0x95370 / 0x95130, read by
+  exe+0x92630): "MeleeWeaponWorld" layers comp+0x3420 & 0x27, "MeleeWeaponEnemies" & 0x4480, "MeleeWeaponWorldRay"
+  & 0xFFFFBB7F, all flags 0x100000. The gun's trace: layers 0x2F (global exe+0x1B989F8), flags = its mask argument.
+  Cleanup: the filter's vtable set to exe+0x1AD40F8 and exe+0xA9E0D0(filter).
+- **Collectors**: closest hit vtable exe+0x1AD5010 (0xA0 bytes: +0x0C hits, +0x20 early-out vector 0x5F7FFFF0 x4, the
+  result at +0x30); all hits vtable exe+0x1AD2640 (+0x0C hits, +0x20 early-out, +0x30 an hkArray of results with
+  inline storage at +0x50, capacity | 0x80000000 while inline; a grown array is freed through the allocator exe+0xA9DE90
+  vtable +0x20; sort exe+0xC85470; cleanup vtable exe+0x1AD2610 + exe+0xA9E0B0).
+- **A result** (hknpCollisionResult, 0x70): +0x00 point, +0x10 normal, +0x20 fraction along the direction, +0x28 the
+  query body's info, +0x48 the hit body's id (& 0xFFFFFF), +0x4C its material, +0x54 its shape's filter info, +0x60
+  its user data -> +0x08 -> +0x10 = the entity.
+- **Entity messages**: exe+0x8112C0(queue, type, payload size, entity id) -> payload, the queue being exe+0x810240()
+  (= game+0x1E8968) + 0xC8E8. Type 0xFA = an impulse {impulse xyz, world point xyz}: Windblast posts it (exe+0x4D7750,
+  at the entity's bounds centre exe+0x878230, above the cvar `ark_windblast_minImpulseForPhysicEntities`) and so does
+  the damage knockback (exe+0x7B2D19, impulse = direction x the damage decl's knockback), only to entities with
+  entity+0xD1 bit 3. 0xE6 / 0xE7 are the melee block / hit events (exe+0x6357D0, exe+0x62CB80).
+- The entity velocity at +0x33C is a plain field (exe+0x87C2A0 only writes it): no use for pushing a body.
+
 ### 8.1 The interaction sensor (two phases, asynchronous)
 `arkCpntPlayerSensorInteraction` ([GrabHand.cpp](../src/Src/GrabHand.cpp)):
 - **SUBMIT exe+0x3B8D60** (once a frame from the sensor dispatch, exe+0x95491E): for slot i = 0..4, only if the slot's
