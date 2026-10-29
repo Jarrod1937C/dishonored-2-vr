@@ -133,6 +133,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetDoors(Settings::PushDoors());
     Collision::SetOpenables(Settings::PullToOpen());
     Collision::SetItems(Settings::PhysicalPickup());
+    Collision::SetDials(Settings::SwipeDials());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

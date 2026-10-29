@@ -43,6 +43,7 @@ namespace
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
+        { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a safe dial to turn it
         { "gameplay.pushstrength",      Kind::Float,  "1", 0.1f, 10, nullptr },   // the hand's effective mass, kg
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
@@ -247,6 +248,7 @@ bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
+bool Settings::SwipeDials() { return B("gameplay.swipedials"); }
 float Settings::SwordBodyDepth() { return F("gameplay.swordbodydepth") / 100.f; }
 float Settings::PushStrength() { return F("gameplay.pushstrength"); }
 float Settings::GripThreshold() { return F("controls.gripthreshold"); }

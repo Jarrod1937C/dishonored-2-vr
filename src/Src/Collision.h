@@ -28,6 +28,8 @@ namespace Collision
     //! [Gameplay] PhysicalPickup: items (loot, mission items) are taken by grabbing them and putting them behind the back
     //! (or to the mouth); the interact from afar does not take them.
     void SetItems(bool on);
+    //! [Gameplay] SwipeDials: a hand sliding up / down on a safe's dial turns it a digit up / down (the game's own steps).
+    void SetDials(bool on);
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();

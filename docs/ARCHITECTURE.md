@@ -934,6 +934,13 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   (Collision::WatchItem): gone = taken; still in the world after 0.7 s = refused (e.g. a full inventory) -- the item then
   flies back to its place (0.35 s, GpuTrace::ReturnCarry) and is drawn there again, as it is when let go.
   An item picked from afar (Collision::PointerItem) is not taken by the grip, the Index trigger or X.
+- **Safe dials** (`SwipeDials`): a contact with an entity whose arkCpntUsableWithStateList has exactly 10 stages (a
+  combination wheel) accumulates the raw point's vertical motion while the hand stays on it; every 3.5 cm queues a step
+  (at most 3), applied one a frame once the wheel has stopped turning (+0x30 bit 1): up = the game's next stage
+  (exe+0x77AEC0, what a click does), down = previous (exe+0x77B740). Both go through the game's own transition, so the
+  safe's script sees the digits change as for clicks and opens on the right combination.
+- **Layers**: the casts take the world (0-2), RIGID_BODY (3), MOVER (5), INTERACTABLE (15) and PICKUP (23), with the
+  melee sweeps' flag 0x100000 (was the sword's world sweep, 0x27, which left loose props out).
 - A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
 
 ### GrabHand: holding objects in the hand

@@ -222,6 +222,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
                PushDoors = 1 (with HandCollision: push a door with your hand to open it)
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
+               SwipeDials = 1 (with HandCollision: slide your hand up / down a safe's number wheel to turn it)
                PhysicalPickup = 0 (experimental, with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)

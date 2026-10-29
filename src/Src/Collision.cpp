@@ -48,8 +48,20 @@ namespace
     // Pickups: arkCpntLoot (type exe+0x39C5880, registered exe+0x13BB850: coins, ammo, elixirs, runes, charms, keys...)
     // and arkCpntMissionItem (type exe+0x39AE970, exe+0x13A0430). Taking one is the player's interact on it.
     constexpr uint32_t kLootType = 0x39C5880, kMissionItemType = 0x39AE970;
+    // Safe dials: arkCpntUsableWithStateList (type exe+0x39BA8B0, registered exe+0x13AE680) with exactly 10 stages (its
+    // decl, usable+0x08: stages at +0x70, count +0x78, start +0x80; the current stage at usable+0x28, +0x30 bit 1 = turning).
+    // The script node ActionUsable steps it with exe+0x77AEC0 (next, what a click does) and exe+0x77B740 (previous),
+    // both through the same transition (exe+0x77A880: the dial's animation and the stage event the safe's script checks).
+    constexpr uint32_t kUsableStatesType = 0x39BA8B0, kUsableNext = 0x77AEC0, kUsablePrev = 0x77B740;
     constexpr uint32_t kEntId = 0xA8, kEntFlags = 0xD1, kEntVelocity = 0x33C, kEntModel = 0xF0, kEntScale = 0x330, kModelBoundsSlot = 0x80;
-    constexpr uint32_t kWorldLayers = 0x27, kWorldFlags = 0x100000;
+    // The layers (the game's own names, arkCollisionSettings' m_collisionLayers): 0 WORLD_LOW, 1 WORLD_LOW_HIGH,
+    // 2 WORLD_HIGH, 3 RIGID_BODY, 4 DEBRIS, 5 MOVER, 6 PLAYER, 7 PLAYER_HITBOX, 8 PLAYER_DEAD, 9 NPC,
+    // 10 NPC_BODY_ANIMATED, 11 PROJECTILE, 12 CLOTH, 13 CLOTH_COLLIDER, 14 NPC_BODY_RAGDOLL, 15 INTERACTABLE, 16 TRIGGER,
+    // 17 VISION, 18 PLAYER_PHYSICS, 19 DECAL_QUERY, 20 WEAPON_MELEE, 21 CHAIN, 22 TRIGGER_WATER, 23 PICKUP, 25 GHOST,
+    // 26 HIDDEN. The hands meet the world, loose props, movers (doors, drawers), interactables and pickups; the flag is
+    // the melee sweeps' (bodies a weapon meets).
+    constexpr uint32_t kWorldLayers = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5) | (1u << 15) | (1u << 23);
+    constexpr uint32_t kWorldFlags = 0x100000;
 
     struct alignas(16) RayQuery
     {
@@ -417,6 +429,37 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::atomic<bool> g_Items{ false };
+    std::atomic<bool> g_Dials{ false };
+    std::atomic<uint64_t> g_DialSteps{ 0 };
+    //! The 10-stage usable (a safe's dial) of an entity, or null.
+    uint8_t* DialOf(void* ent)
+    {
+        if (!ent) return nullptr;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            uint8_t* u = ((FnGet)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kUsableStatesType), 2);
+            if (!u) return nullptr;
+            const uint8_t* decl = *(const uint8_t* const*)(u + 0x08);
+            return decl && (*(const uint32_t*)(decl + 0x78) & 0xFFFFFF) == 10 ? u : nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    //! One step of a dial: +1 = next (up), -1 = previous (down). False while it is still turning.
+    bool StepDial(uint8_t* u, int dir, int* stage)
+    {
+        __try
+        {
+            if (u[0x30] & 0x2) return false;
+            ((void (*)(void*))(GameInfo::Base() + (dir > 0 ? kUsableNext : kUsablePrev)))(u);
+            *stage = *(const int*)(u + 0x28);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    struct DialSwipe { void* ent = nullptr; uint8_t* u = nullptr; float acc = 0.f; int pending = 0; double lastAt = 0; float prev[3] = {}; bool prevOk = false; };
+    DialSwipe g_Dial[2];                        // game thread
+    constexpr float kDialStep = 0.035f;         // m of the hand along the dial (up / down) per digit
     // after the interact that stores an item: is its entity still in the world (the game refused it: inventory full)?
     std::atomic<uint32_t> g_WatchId{ 0 }; std::atomic<int> g_WatchState{ -1 };
     std::atomic<uint32_t> g_PointerItem{ 0 };      // the pointer's pick when it is an item (game thread -> KbmInject)
@@ -471,6 +514,7 @@ void Collision::SetPush(bool on, float m)
     g_Push = on; g_HandMass = fminf(10.f, fmaxf(0.1f, m));
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
 }
+void Collision::SetDials(bool on) { g_Dials = on; LOGI("Collision: safe dials {}", on ? "turn when a hand slides up / down on them" : "turn with the interact button"); }
 void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
 bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
 uint32_t Collision::PointerItem() { return g_PointerItem.load(); }
@@ -604,6 +648,38 @@ void Collision::Tick()
                 VRRuntime::Vibrate(h, 0.35f, 0.04f);
             }
         }
+        // a safe's dial under the hand: sliding the hand up turns it on a digit (the game's click), down back one
+        if (g_Dials.load() && S.valid)
+        {
+            DialSwipe& D = g_Dial[h];
+            int di = -1; uint8_t* du = nullptr;
+            for (int i = 0; i < nc && di < 0; i++) if (cents[i] && (du = DialOf(cents[i])) != nullptr) di = i;
+            if (di >= 0)
+            {
+                int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[di].local, 12)) { pi = k; break; }
+                if (D.ent != cents[di] || now - D.lastAt > 0.3) { D = DialSwipe{}; D.ent = cents[di]; D.u = du; }
+                if (pi >= 0)
+                {
+                    if (D.prevOk) D.acc += goal[pi][2] - D.prev[2];       // world up (z)
+                    memcpy(D.prev, goal[pi], 12); D.prevOk = true;
+                    while (D.acc >= kDialStep && D.pending < 3) { D.pending++; D.acc -= kDialStep; }
+                    while (D.acc <= -kDialStep && D.pending > -3) { D.pending--; D.acc += kDialStep; }
+                    if (D.acc > kDialStep || D.acc < -kDialStep) D.acc = 0.f;   // more queued than it can take: drop the rest
+                }
+                D.lastAt = now;
+            }
+            if (D.u && D.pending != 0 && now - D.lastAt < 1.0)
+            {   // one step a frame, as soon as the dial has finished turning
+                int stage = -1;
+                if (StepDial(D.u, D.pending > 0 ? 1 : -1, &stage))
+                {
+                    LOGI("Collision: {} hand turned a safe dial {} -> {}", h ? "right" : "left", D.pending > 0 ? "up" : "down", stage);
+                    D.pending += D.pending > 0 ? -1 : 1; g_DialSteps++;
+                    VRRuntime::Vibrate(h, 0.2f, 0.015f);
+                }
+            }
+            else if (now - D.lastAt >= 1.0) D = DialSwipe{};
+        }
         // what this hand touches (the first contact with an entity), for KbmInject's grab-and-pull on drawers and cabinets;
         // pushing an OPEN one (not a door: those have their own push) asks for the interact that closes it
         {
@@ -733,7 +809,7 @@ std::string Collision::Stats()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()
       << " touching L " << g_Touch[0].load() << " R " << g_Touch[1].load() << " off L " << g_LastOff[0].load() << " R " << g_LastOff[1].load()
-      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
+      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " dialsteps " << g_DialSteps.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
     std::lock_guard lk(g_DescM);
     if (!g_LastHitDesc.empty()) o << " | last: " << g_LastHitDesc;
     return o.str();

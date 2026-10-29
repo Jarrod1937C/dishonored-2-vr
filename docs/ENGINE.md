@@ -934,6 +934,16 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   ten senders, not yet decoded: a mass-independent push).
 - **Items**: arkCpntLoot, type exe+0x39C5880 (registered exe+0x13BB850); arkCpntMissionItem, type exe+0x39AE970
   (exe+0x13A0430); also arkCpntPickableHolder, arkCpntInventory, arkCpntBoneCharmInventory. Taken by the player's interact.
+- **Collision layers** (names from arkCollisionSettings' m_collisionLayers strings, exe+0x1D2F1C8..): 0 WORLD_LOW,
+  1 WORLD_LOW_HIGH, 2 WORLD_HIGH, 3 RIGID_BODY, 4 DEBRIS, 5 MOVER, 6 PLAYER, 7 PLAYER_HITBOX, 8 PLAYER_DEAD, 9 NPC,
+  10 NPC_BODY_ANIMATED, 11 PROJECTILE, 12 CLOTH, 13 CLOTH_COLLIDER, 14 NPC_BODY_RAGDOLL, 15 INTERACTABLE, 16 TRIGGER,
+  17 VISION, 18 PLAYER_PHYSICS, 19 DECAL_QUERY, 20 WEAPON_MELEE, 21 CHAIN, 22 TRIGGER_WATER, 23 PICKUP, 24 (unnamed),
+  25 GHOST, 26 HIDDEN.
+- **Multi-stage usables** (safe dials, levers): arkCpntUsableWithStateList, type exe+0x39BA8B0 (registered
+  exe+0x13AE680). Decl (+0x08): stages at +0x70 (0x80 bytes each), count +0x78, start +0x80. +0x28 = current stage,
+  +0x30 bit 1 = transitioning. exe+0x77AEC0 = next (wraps; a click), exe+0x77B740 = previous (wraps), exe+0x77B920(u,
+  stage, instant) = set; all through exe+0x77A880(u, stage, animate, 0), then entity+0xD4 |= 4. The Kiscule node
+  ActionUsable (exe+0x797750 next, 0x797930 previous, 0x797C40 set stage, 0x797D30 enable) calls them.
 - **Openables** (drawers, cabinets, some doors): arkCpntOpenable, type exe+0x39C59A0 (registered exe+0x13BB9B0, GetType
   exe+0x8EB600, vtable exe+0x1C569C8); +0x1E8 = open; a state machine at +0x40 (current at +0x48: Closed / Animated /
   Opened, arkStateOpenable_*). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event
