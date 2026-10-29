@@ -895,7 +895,9 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   sees the palm in the open again.
 - **Characters' bodies** (weapons): SwordContact turns the RAW blade's penetration of the bone capsules (the ones the
   strike uses) into contact planes (`SetBodyContacts`), so the drawn blade halts at the body while the strike, made
-  with the raw blade (`GpuTrace::WeaponTargetPoseRaw`), still lands. Deeper than 0.22 m: left alone (it went through).
+  with the raw blade (`GpuTrace::WeaponTargetPoseRaw`), still lands. Each plane sits `SwordBodyDepth` (default 4 cm, at most
+  80% of the bone's radius) inside the capsule's surface, so the blade sinks a little into the body before it stops.
+  Deeper than 0.22 m: left alone (it went through).
 - **Pushing**: a contact with a physics-driven entity (entity+0xD1 bit 3) gets the game's impulse message 0xFA with
   `PushStrength` (the hand's mass) x the speed at which the raw point moves into it, relative to the object's own
   velocity (entity+0x33C), so a box being pushed comes along with the hand.

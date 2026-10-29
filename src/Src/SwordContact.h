@@ -32,6 +32,9 @@ namespace SwordContact
     void Reset();
     void SetEnabled(int on);                 //!< vr swordhit 0|1 (default 1); 0 = the swing gestures as before (A/B)
     int  Enabled();
+    //! [Gameplay] SwordBodyDepth (cm): with WeaponCollision, how far the drawn blade sinks into a body before it stops
+    //! (at most 80% of the bone's own radius, so it never comes out the other side).
+    void SetBodySink(float metres);
     bool Set(const std::string& key, float v);
     std::string Config();
     std::string Stats();                     //!< heartbeat

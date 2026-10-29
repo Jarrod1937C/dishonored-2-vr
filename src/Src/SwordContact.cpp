@@ -73,6 +73,7 @@ namespace
     constexpr int kMaxSamples = 24;
 
     std::atomic<int> g_On{ 1 };
+    std::atomic<float> g_BodySink{ 0.04f };      // m: how far the drawn blade sinks into a body (WeaponCollision)
 
     // ---- reading the game's entities from the Present thread: everything through SEH, nothing trusted ----
     bool SafeCopy(void* dst, const void* src, size_t n)
@@ -322,10 +323,13 @@ namespace
                         if (pen > bpen) { bpen = pen; bj = j; memcpy(bq, q, 12); }
                     }
                     if (bj < 0 || bpen > 0.22f) continue;
+                    // the plane sits `sink` inside the bone's surface: the blade goes a little into the body before it stops
+                    const float sink = fminf(g_BodySink.load(), 0.8f * s.r[bj]);
+                    if (bpen <= sink) continue;                 // not that deep yet: nothing to stop
                     float nrm[3]; Sub(p, bq, nrm); const float nl = Len(nrm);
                     if (nl < 1e-3f) continue;
                     Collision::Contact& c = cs[nc++];
-                    for (int k = 0; k < 3; k++) { c.n[k] = nrm[k] / nl; c.p[k] = bq[k] + c.n[k] * s.r[bj]; }
+                    for (int k = 0; k < 3; k++) { c.n[k] = nrm[k] / nl; c.p[k] = bq[k] + c.n[k] * (s.r[bj] - sink); }
                     c.clear = C.bladeR;
                     const float d[3] = { p[0] - ht[0], p[1] - ht[1], p[2] - ht[2] };
                     for (int k = 0; k < 3; k++) c.local[k] = hr[k] * d[0] + hr[3 + k] * d[1] + hr[6 + k] * d[2];
@@ -476,6 +480,11 @@ namespace
 }
 
 void SwordContact::Reset() { g_PrevValid = false; g_PrevPlayerOk = false; g_TapUntil = -1; g_AirAt = -1; HandClear(); }
+void SwordContact::SetBodySink(float m)
+{
+    g_BodySink = fminf(0.15f, fmaxf(0.f, m));
+    LOGI("SwordContact: with WeaponCollision the blade sinks {:.0f} cm into a body before it stops", g_BodySink.load() * 100.f);
+}
 void SwordContact::SetEnabled(int on) { g_On = on; Reset(); LOGI("SwordContact: {}", on ? "on (the blade strikes what it touches)" : "off"); }
 int SwordContact::Enabled() { return g_On.load(); }
 

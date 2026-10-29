@@ -29,6 +29,7 @@
 #include "PlayerState.h"
 #include "MeleeAim.h"
 #include "Collision.h"
+#include "SwordContact.h"
 #include "ThrowGesture.h"
 #include "GrabHand.h"
 #include "PointerRay.h"
@@ -126,6 +127,7 @@ static DWORD WINAPI InitThread(LPVOID)
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     Collision::SetHands(Settings::HandCollision());
     Collision::SetWeapons(Settings::WeaponCollision());
+    SwordContact::SetBodySink(Settings::SwordBodyDepth());
     Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
