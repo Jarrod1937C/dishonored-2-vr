@@ -458,6 +458,33 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     struct DialSwipe { void* ent = nullptr; uint8_t* u = nullptr; float acc = 0.f; int pending = 0; double lastAt = 0; float prev[3] = {}; bool prevOk = false; };
+    // Sliding windows have no component of their own: they are doors / openables placed by the level. An entity's name
+    // (the level's, a char* at entity+0x20, what the game's own errors print through exe+0x1D9090) tells them: one that
+    // opens and whose name holds "window" is raised by a hand sliding up on it and lowered by one sliding down -- the
+    // game's interact (KbmInject taps it when the pointer has the window: its locks and animation apply).
+    std::atomic<bool> g_Windows{ false };
+    std::atomic<uint64_t> g_WindowMoves{ 0 };
+    struct WinSwipe { void* ent = nullptr; float acc = 0.f; double lastAt = 0, movedAt = 0; float prev[3] = {}; bool prevOk = false; int lastDir = 0; };
+    WinSwipe g_Win[2];                          // game thread
+    constexpr float kWindowSwipe = 0.06f;       // m of the hand along the window, up or down
+    //! The entity's level name, or "" (read under SEH, printable characters only).
+    std::string EntityName(void* ent)
+    {
+        char buf[128] = {};
+        __try
+        {
+            const char* s = *(const char* const*)((const uint8_t*)ent + 0x20);
+            if (!s) return std::string();
+            for (int i = 0; i < 127; i++) { const char c = s[i]; if (!c) break; if (c < 32 || c > 126) { buf[0] = 0; break; } buf[i] = c; }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { buf[0] = 0; }
+        return std::string(buf);
+    }
+    bool NameHas(const std::string& s, const char* what)
+    {
+        std::string l = s; for (char& c : l) c = (char)tolower((unsigned char)c);
+        return l.find(what) != std::string::npos;
+    }
     DialSwipe g_Dial[2];                        // game thread
     constexpr float kDialStep = 0.035f;         // m of the hand along the dial (up / down) per digit
     // after the interact that stores an item: is its entity still in the world (the game refused it: inventory full)?
@@ -514,6 +541,7 @@ void Collision::SetPush(bool on, float m)
     g_Push = on; g_HandMass = fminf(10.f, fmaxf(0.1f, m));
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
 }
+void Collision::SetWindows(bool on) { g_Windows = on; LOGI("Collision: sliding windows {}", on ? "rise when a hand slides up on them and lower when it slides down" : "use the interact button"); }
 void Collision::SetDials(bool on) { g_Dials = on; LOGI("Collision: safe dials {}", on ? "turn when a hand slides up / down on them" : "turn with the interact button"); }
 void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
 bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
@@ -630,6 +658,7 @@ void Collision::Tick()
             {
                 void* e = cents[i];
                 if (!e || !IsDoor(e)) continue;
+                if (g_Windows.load() && NameHas(EntityName(e), "window")) continue;   // a window moves by sliding, not pushing
                 auto it = g_DoorAt.find(e);
                 if (it != g_DoorAt.end() && now - it->second < C.doorGap) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
@@ -680,6 +709,45 @@ void Collision::Tick()
             }
             else if (now - D.lastAt >= 1.0) D = DialSwipe{};
         }
+        // a sliding window under the (grabbing) hand: slide up raises it, slide down lowers it
+        if (g_Windows.load() && S.valid && h == GrabHand::Hand())
+        {
+            WinSwipe& W = g_Win[h];
+            int wi = -1; int wstate = -1;
+            for (int i = 0; i < nc && wi < 0; i++)
+            {
+                void* e = cents[i];
+                if (!e) continue;
+                const int os = OpenableState(e);
+                if ((os >= 0 || IsDoor(e)) && NameHas(EntityName(e), "window")) { wi = i; wstate = os; }
+            }
+            if (wi >= 0)
+            {
+                int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[wi].local, 12)) { pi = k; break; }
+                if (W.ent != cents[wi] || now - W.lastAt > 0.3) { W = WinSwipe{}; W.ent = cents[wi]; }
+                if (pi >= 0)
+                {
+                    if (W.prevOk) W.acc += goal[pi][2] - W.prev[2];
+                    memcpy(W.prev, goal[pi], 12); W.prevOk = true;
+                }
+                W.lastAt = now;
+                const int dir = W.acc >= kWindowSwipe ? 1 : (W.acc <= -kWindowSwipe ? -1 : 0);
+                if (dir && now - W.movedAt > 1.0)
+                {   // up opens a closed one, down closes an open one; with no open state to read (a door), every swipe
+                    // toggles, but not twice the same way in a row
+                    const bool want = wstate >= 0 ? (dir > 0 ? wstate == 0 : wstate == 1) : dir != W.lastDir;
+                    if (want)
+                    {
+                        uint32_t id = 0; SafeRead(&id, (uint8_t*)cents[wi] + kEntId, 4);
+                        { std::lock_guard lk(g_TouchM); g_CloseReq[h] = CloseReq{ id, now }; }
+                        W.movedAt = now; W.lastDir = dir; g_WindowMoves++;
+                        LOGI("Collision: {} hand slid {} on window '{}' (id {:#x}, {}): interact", h ? "right" : "left", dir > 0 ? "UP" : "DOWN",
+                             EntityName(cents[wi]), id, wstate < 0 ? "a door" : wstate ? "open" : "closed");
+                    }
+                    W.acc = 0.f;
+                }
+            }
+        }
         // what this hand touches (the first contact with an entity), for KbmInject's grab-and-pull on drawers and cabinets;
         // pushing an OPEN one (not a door: those have their own push) asks for the interact that closes it
         {
@@ -693,7 +761,7 @@ void Collision::Tick()
                 SafeRead(&tch.id, (uint8_t*)e + kEntId, 4);
                 const int os = g_Openables.load() ? OpenableState(e) : -1;
                 tch.openable = os >= 0; tch.open = os == 1;
-                if (tch.open && !IsDoor(e) && S.valid && dt > 1e-4 && dt < 0.1)
+                if (tch.open && !IsDoor(e) && !(g_Windows.load() && NameHas(EntityName(e), "window")) && S.valid && dt > 1e-4 && dt < 0.1)
                 {
                     int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
                     if (pi >= 0)
@@ -753,8 +821,8 @@ void Collision::Tick()
             S.lastBuzz = now;
             g_Stops[h]++;
             std::lock_guard lk(g_DescM);
-            g_LastHitDesc = fmt::format("hand {} met entity {} body {:#x} layer {} flags {:#x} at ({:.2f},{:.2f},{:.2f}){} {:.2f} m/s",
-                                        h, logs[0].ent, logs[0].body, logs[0].cfi & 0x1F, logs[0].cfi >> 5, logs[0].p[0], logs[0].p[1], logs[0].p[2],
+            g_LastHitDesc = fmt::format("hand {} met entity {} '{}' body {:#x} layer {} flags {:#x} at ({:.2f},{:.2f},{:.2f}){} {:.2f} m/s",
+                                        h, logs[0].ent, logs[0].ent ? EntityName(logs[0].ent) : std::string(), logs[0].body, logs[0].cfi & 0x1F, logs[0].cfi >> 5, logs[0].p[0], logs[0].p[1], logs[0].p[2],
                                         Dynamic(logs[0].ent) ? " (loose: pushed)" : "", vn);
             LOGI("Collision: {}", g_LastHitDesc);
         }
@@ -809,7 +877,7 @@ std::string Collision::Stats()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()
       << " touching L " << g_Touch[0].load() << " R " << g_Touch[1].load() << " off L " << g_LastOff[0].load() << " R " << g_LastOff[1].load()
-      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " dialsteps " << g_DialSteps.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
+      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " dialsteps " << g_DialSteps.load() << " windows " << g_WindowMoves.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
     std::lock_guard lk(g_DescM);
     if (!g_LastHitDesc.empty()) o << " | last: " << g_LastHitDesc;
     return o.str();

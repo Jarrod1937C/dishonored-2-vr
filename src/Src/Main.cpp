@@ -28,6 +28,7 @@
 #include "HandFx.h"
 #include "PlayerState.h"
 #include "MeleeAim.h"
+#include "Holster.h"
 #include "Collision.h"
 #include "SwordContact.h"
 #include "ThrowGesture.h"
@@ -134,6 +135,8 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetOpenables(Settings::PullToOpen());
     Collision::SetItems(Settings::PhysicalPickup());
     Collision::SetDials(Settings::SwipeDials());
+    Collision::SetWindows(Settings::SlideWindows());
+    Holster::SetEnabled(Settings::HolsterWeapons());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

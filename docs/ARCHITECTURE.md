@@ -874,6 +874,22 @@ opened, plus the player's own velocity, capped, and the spawn point is the hand.
 grenade as in the game. Mines and spring razors keep the game's placement, aimed with the hand (power aim above).
 `HandVelocity` is also used by GrabHand's throw.
 
+### Holster: the pistol at the hip, the crossbow on the back
+
+[Holster.cpp](../src/Src/Holster.cpp) (`HolsterWeapons`). KbmInject tells where the LEFT hand is on the body: from the
+neck (the eyes less 11 cm along the head's up and 9 cm along its forward, so looking down at the hip or sitting down
+moves nothing) in the torso's frame (the head's heading, followed only past 35 degrees and then over ~2 s, so a glance
+aside does not swing the zones round). The left hip is 28-85 cm below the neck, 10-55 cm to the left and within 9 cm
+behind / 22 cm in front of it; the back is anything more than 9 cm behind it, up to 35 cm above. A left-trigger press
+there, with that weapon owned, asks Holster for it and is swallowed for as long as it is held (no power, no shot, no
+grenade). A light buzz when the hand reaches a holster whose weapon is not already out.
+
+On the game thread Holster reads the inventory's equipment list (arkCpntInventory+0x58: the entries that have an
+equipment entity), picks the entries whose item component is a gun / crossbow (the one last seen in the left hand when
+there are several, one per ammunition), and posts ARK_MSG_INVENTORY_EQUIP_ITEM {decl, flags 0} to the player: what the
+scripts send to equip a left-hand item, after which the player's equip state changes the weapon with its animation.
+It then checks the left hand (inventory+0x70) for 2 s and logs whether the weapon came. Heartbeat line `holster`.
+
 ---
 
 ## 9. Interaction
@@ -939,6 +955,12 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   (at most 3), applied one a frame once the wheel has stopped turning (+0x30 bit 1): up = the game's next stage
   (exe+0x77AEC0, what a click does), down = previous (exe+0x77B740). Both go through the game's own transition, so the
   safe's script sees the digits change as for clicks and opens on the right combination.
+- **Sliding windows** (`SlideWindows`): no component of their own -- a door or an openable whose level name (a char*
+  at entity+0x20) holds "window". The grabbing hand's vertical travel while it touches one is accumulated; 6 cm up on a
+  closed one (or down on an open one) asks KbmInject for the interact tap (the same request as a push on an open
+  drawer, honoured only when the pointer has that entity). Without an open state (a door) each swipe toggles, never
+  twice the same way in a row. Windows are left out of the door push and the push-to-close. The first-contact log
+  line now prints the touched entity's name.
 - **Layers**: the casts take the world (0-2), RIGID_BODY (3), MOVER (5), INTERACTABLE (15) and PICKUP (23), with the
   melee sweeps' flag 0x100000 (was the sword's world sweep, 0x27, which left loose props out).
 - A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
@@ -1123,6 +1145,7 @@ entries replaced).
 | [SwordContact](../src/Src/SwordContact.cpp) | the drawn blade's contacts | via MeleeAim |
 | [NpcSkel](../src/Src/NpcSkel.cpp) | characters' current skeletons (ragdolls included) | reads entity+0x360 -> pose array +0x2D8 |
 | [ThrowGesture](../src/Src/ThrowGesture.cpp) | grenades thrown with the hand's velocity | call site exe+0x63333C |
+| [Holster](../src/Src/Holster.cpp) | pistol drawn from the hip, crossbow from the back | ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D) to the player |
 | [GrabHand](../src/Src/GrabHand.cpp) | held objects in the hand, selection, throw, carrying | interaction sensor exe+0x3B8D60 / exe+0x3B8430, call site exe+0x83E473, joint queries via HandFx |
 | [PointerRay](../src/Src/PointerRay.cpp) | the stable per-hand pointer | - |
 | [Reticle](../src/Src/Reticle.cpp) | per-hand reticle and debug axes (ImGui) | - |

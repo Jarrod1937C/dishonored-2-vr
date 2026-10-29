@@ -30,6 +30,9 @@ namespace Collision
     void SetItems(bool on);
     //! [Gameplay] SwipeDials: a hand sliding up / down on a safe's dial turns it a digit up / down (the game's own steps).
     void SetDials(bool on);
+    //! [Gameplay] SlideWindows: a hand sliding up on a window (a door / openable whose level name holds "window") raises
+    //! it, sliding down lowers it -- the game's interact.
+    void SetWindows(bool on);
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();

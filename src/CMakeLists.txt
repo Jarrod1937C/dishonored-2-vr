@@ -96,6 +96,7 @@ set(MOD_SOURCES
     Src/SwordGesture.cpp Src/SwordGesture.h
     Src/SwordContact.cpp Src/SwordContact.h
     Src/Collision.cpp  Src/Collision.h
+    Src/Holster.cpp    Src/Holster.h
     Src/NpcSkel.cpp Src/NpcSkel.h
     Src/ThrowGesture.cpp Src/ThrowGesture.h
     Src/GrabHand.cpp   Src/GrabHand.h

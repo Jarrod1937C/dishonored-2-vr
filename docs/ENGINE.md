@@ -944,6 +944,8 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   +0x30 bit 1 = transitioning. exe+0x77AEC0 = next (wraps; a click), exe+0x77B740 = previous (wraps), exe+0x77B920(u,
   stage, instant) = set; all through exe+0x77A880(u, stage, animate, 0), then entity+0xD4 |= 4. The Kiscule node
   ActionUsable (exe+0x797750 next, 0x797930 previous, 0x797C40 set stage, 0x797D30 enable) calls them.
+- **Entity names**: the level's name of an entity is a char* at entity+0x20 (exe+0x1D9090 reads it for the game's own
+  error messages, e.g. exe+0x762D41, 0x7C598E).
 - **Openables** (drawers, cabinets, some doors): arkCpntOpenable, type exe+0x39C59A0 (registered exe+0x13BB9B0, GetType
   exe+0x8EB600, vtable exe+0x1C569C8); +0x1E8 = open; a state machine at +0x40 (current at +0x48: Closed / Animated /
   Opened, arkStateOpenable_*). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event
@@ -1053,6 +1055,19 @@ the game does not simulate; skip = INTERACT held (ENTER does nothing).
   (`arkDeclEquipmentUpgrade` or `arkDeclInventoryItem`, name at decl+0x8; names can exceed 80 characters); entry dword
   +0x24 = the BASE capacity. Hands: +0x70 left item, +0x68 right item; `item+0` = its decl, `item+8` = entity id,
   `item+0x10` = the item's component (class tells pistol / crossbow / grenade / mine / Heart apart: see 6.3).
+- **The equipment list**: `arkCpntInventory+0x58` (count low 24 bits of +0x60) holds pointers to the entries that have an
+  equipment entity (what exe+0x614DD0(inv, type, hand) walks to find "the sword": type 1, hand 0). An entry: +0x00 the
+  decl, +0x08 the equipment entity's id, +0x10 the item component and +0x18 the equipment decl (both valid only while
+  that entity exists: exe+0x63C890 / exe+0x63C8C0 return them after GetEntityById), +0x20 the quantity. The equipment
+  decl: **+0x68 the slot** (0 right hand = inv+0x68, 1 left hand = inv+0x70, ...; the slots are inv+0x68+8*slot),
+  +0x11C the item type (1 = the sword).
+- **Equipping**: ARK_MSG_INVENTORY_EQUIP_ITEM (0x9D) to the owner, payload 0x10 {arkDeclInventoryItem*, flags (3 bits
+  used)}. Senders: the script node ActionPlayerInventory's Equip (exe+0x534760: the sword with flags (x & ~2) | 5, then
+  with `m_bothHands` its `m_leftHandEquipment` with the three bits clear) and the inventory's own update (exe+0x619B93:
+  bit 2 set, bit 1 = inv+0x190 bit 1), for the requests queued at inv+0x128 (exe+0x6143C0 queues one: what the AddItem
+  node's `m_autoEquip` does). Unequip: 0x9E {0, int hand (1 right, 0 left), byte}. The player's equip change ends in
+  exe+0x835E00 (unequips, exe+0x614B20 into the slot, then the script events equipLeftHandItem / equipRightHandItem);
+  the path from the message to it is not traced. Done: ARK_MSG_INVENTORY_ITEM_EQUIPPED 0x9F {decl, equipment decl}.
 - **`AddItem(inv, arkDeclInventoryItem*, int count)` exe+0x6156E0**: creates the power component for a power (the wheel
   and quick slots pick it up by themselves); adds only what fits (capacity includes storage upgrades: bolts and bullets
   20, grenades 4, mines 3, spring razors 5, elixirs 10) and returns how many. Setting a count by hand would not create

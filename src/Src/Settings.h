@@ -27,6 +27,8 @@ namespace Settings
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool SwipeDials();                            //!< [Gameplay] SwipeDials: slide a hand up / down a safe dial to turn it
+    bool SlideWindows();                          //!< [Gameplay] SlideWindows: slide a hand up / down a window to raise / lower it
+    bool HolsterWeapons();                        //!< [Gameplay] HolsterWeapons: left trigger at the left hip draws the pistol, behind the back the crossbow
     float SwordBodyDepth();                       //!< [Gameplay] SwordBodyDepth: m (the ini says cm) the blade sinks into a body
     float PushStrength();                         //!< [Gameplay] PushStrength: the hand's effective mass, kg
     float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)
