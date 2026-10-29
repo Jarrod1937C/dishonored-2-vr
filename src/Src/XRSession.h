@@ -103,6 +103,12 @@ struct XRInputState
     //! (0 = left). `pad` = the runtime has them (an Index controller is bound).
     float padX[2] = {}, padY[2] = {}, padForce[2] = {};
     bool pad = false;
+    //! The fingers' curl, 0 = straight .. 1 = a fist, per hand (0 = left), thumb index middle ring little.
+    //! fingerSrc: 0 none, 1 hand tracking (XR_EXT_hand_tracking: on an Index, SteamVR's from the finger sensors),
+    //! 2 the controller's own sensors (Index: trigger, squeeze curl, thumb on a button; three groups, not five).
+    //! Only while SetFingerTracking is on and an Index is bound.
+    float fingerCurl[2][5] = {};
+    int fingerSrc[2] = {};
     unsigned buttons = 0;        //!< kXRBtn* mask (a/b/x/y, stick clicks)
     XRHandPose hand[2];          //!< 0 = left, 1 = right (aim pose)
     //! XrTime (ns) the poses were predicted for. Velocities come from differences of this, not of the wall clock:
@@ -135,6 +141,8 @@ public:
     //! [Controls] ControllerPitchOffset (degrees, + = up) and [Advanced] LogControllerInput. Before Init.
     void SetPitchOffset(float deg) { m_PitchOffset = deg; }
     void SetLogInput(bool on) { m_LogInput = on; }
+    //! [Controls] FingerTracking: read the fingers' curl (XRInputState::fingerCurl) while an Index is bound.
+    void SetFingerTracking(bool on) { m_WantFingers = on; }
 
     //! Pumps the OpenXR event queue; drives session state (begins/ends session). Since part 51 the OpenXR frame thread
     //! (below) does this; a call from the render thread is a no-op while that thread runs.
@@ -372,6 +380,9 @@ private:
     std::string m_Profiles;
     float m_PitchOffset = 0.f;
     bool m_LogInput = false;
+    bool m_WantFingers = false;
+    void ReadFingers();                      //!< SyncInput: XRInputState::fingerCurl
+    void DestroyHandTrackers();
     void LogInputChanges();
     std::atomic<bool> m_SessionRunning{ false };
     int m_SessionState = 0;         //!< XrSessionState as int

@@ -54,6 +54,13 @@ struct XRState
     XrAction wristAction = XR_NULL_HANDLE;
     XrAction padAction[2] = {}, padForceAction[2] = {};   // Index trackpads: position, press force (0=L, 1=R)
     XrAction gripPressAction[2] = {};                     // the grip as a button: Touch squeeze, Index squeeze FORCE
+    XrAction trigTouchAction[2] = {}, thumbTouchAction[2] = {};   // Index: a finger on the trigger, the thumb on any of its controls
+    // XR_EXT_hand_tracking (FingerTracking): enabled when the runtime offers it; the trackers only while an Index is bound
+    bool handExt = false, motionRangeExt = false, handSupported = false;
+    XrHandTrackerEXT hand[2] = {};
+    PFN_xrCreateHandTrackerEXT createHand = nullptr; PFN_xrDestroyHandTrackerEXT destroyHand = nullptr;
+    PFN_xrLocateHandJointsEXT locateHand = nullptr;
+    bool handTried = false;
     XrSpace wristSpace = XR_NULL_HANDLE;
     XrSwapchain wristSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageD3D11KHR> wristImages;
@@ -782,10 +789,27 @@ bool XRSession::Init(ID3D11Device* device)
     // --- Instance (require the D3D11 graphics extension). Kept across retries: only the system is asked again. ---
     if (!g.instance)
     {
-        const char* exts[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
+        std::vector<const char*> exts = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
+        {   // hand tracking, when offered: the Index's fingers (FingerTracking). Asked for only, never required.
+            uint32_t n = 0;
+            g.handExt = g.motionRangeExt = false;
+            if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr)) && n)
+            {
+                std::vector<XrExtensionProperties> props(n, { XR_TYPE_EXTENSION_PROPERTIES });
+                if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(nullptr, n, &n, props.data())))
+                    for (const XrExtensionProperties& e : props)
+                    {
+                        if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) g.handExt = true;
+                        if (!strcmp(e.extensionName, XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME)) g.motionRangeExt = true;
+                    }
+            }
+            if (g.handExt) exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+            if (g.handExt && g.motionRangeExt) exts.push_back(XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME);
+            else g.motionRangeExt = false;
+        }
         XrInstanceCreateInfo ici = { XR_TYPE_INSTANCE_CREATE_INFO };
-        ici.enabledExtensionCount = 1;
-        ici.enabledExtensionNames = exts;
+        ici.enabledExtensionCount = (uint32_t)exts.size();
+        ici.enabledExtensionNames = exts.data();
         strncpy(ici.applicationInfo.applicationName, "DishonoredVR", XR_MAX_APPLICATION_NAME_SIZE - 1);
         // OpenXR 1.0: nothing here needs 1.1, and runtimes that only speak 1.0 (older Virtual Desktop, Pico, WMR builds)
         // refuse an instance that asks for 1.1. A runtime that refuses 1.0 gets asked for the loader's version below.
@@ -853,8 +877,12 @@ bool XRSession::Init(ID3D11Device* device)
     }
 
     XrSystemProperties sp = { XR_TYPE_SYSTEM_PROPERTIES };
+    XrSystemHandTrackingPropertiesEXT htp = { XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
+    if (g.handExt) sp.next = &htp;
     if (XR_SUCCEEDED(xrGetSystemProperties(g.instance, g.systemId, &sp)))
     {
+        g.handSupported = g.handExt && htp.supportsHandTracking;
+        LOGI("XRSession: hand tracking {}", !g.handExt ? "not offered by the runtime" : g.handSupported ? "available (XR_EXT_hand_tracking)" : "offered, but not for this system");
         m_SystemName = sp.systemName;
         LOGI("XRSession: headset '{}' (vendor {:#x}), max swapchain {}x{}, orientation tracking {}, position tracking {}", sp.systemName,
              sp.vendorId, sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight,
@@ -1047,6 +1075,14 @@ bool XRSession::InitInput()
     for (int h = 0; h < 2; h++)
         if (!mkAction(h ? "grippress_r" : "grippress_l", h ? "Right grip press: grab / interact / block" : "Left grip press: power wheel",
                       XR_ACTION_TYPE_FLOAT_INPUT, g.gripPressAction[h])) g.gripPressAction[h] = XR_NULL_HANDLE;
+    // The Index's finger sensors as touches (FingerTracking without hand tracking): optional, Index only.
+    for (int h = 0; h < 2; h++)
+    {
+        if (!mkAction(h ? "trigtouch_r" : "trigtouch_l", h ? "Right index finger on the trigger" : "Left index finger on the trigger",
+                      XR_ACTION_TYPE_BOOLEAN_INPUT, g.trigTouchAction[h])) g.trigTouchAction[h] = XR_NULL_HANDLE;
+        if (!mkAction(h ? "thumbtouch_r" : "thumbtouch_l", h ? "Right thumb on a control" : "Left thumb on a control",
+                      XR_ACTION_TYPE_BOOLEAN_INPUT, g.thumbTouchAction[h])) g.thumbTouchAction[h] = XR_NULL_HANDLE;
+    }
     // The Index trackpads ([Controls] Layout = index): optional, bound for the Index only.
     for (int h = 0; h < 2; h++)
     {
@@ -1113,6 +1149,11 @@ bool XRSession::InitInput()
         { &g.btnAction[6], "/user/hand/left/input/trackpad/force" },
         { &g.padAction[0], "/user/hand/left/input/trackpad" }, { &g.padAction[1], "/user/hand/right/input/trackpad" },
         { &g.padForceAction[0], "/user/hand/left/input/trackpad/force" }, { &g.padForceAction[1], "/user/hand/right/input/trackpad/force" },
+        { &g.trigTouchAction[0], "/user/hand/left/input/trigger/touch" }, { &g.trigTouchAction[1], "/user/hand/right/input/trigger/touch" },
+        { &g.thumbTouchAction[0], "/user/hand/left/input/thumbstick/touch" }, { &g.thumbTouchAction[1], "/user/hand/right/input/thumbstick/touch" },
+        { &g.thumbTouchAction[0], "/user/hand/left/input/trackpad/touch" }, { &g.thumbTouchAction[1], "/user/hand/right/input/trackpad/touch" },
+        { &g.thumbTouchAction[0], "/user/hand/left/input/a/touch" }, { &g.thumbTouchAction[1], "/user/hand/right/input/a/touch" },
+        { &g.thumbTouchAction[0], "/user/hand/left/input/b/touch" }, { &g.thumbTouchAction[1], "/user/hand/right/input/b/touch" },
         { &g.aimAction[0], "/user/hand/left/input/aim/pose" }, { &g.aimAction[1], "/user/hand/right/input/aim/pose" },
         { &g.wristAction, "/user/hand/left/input/grip/pose" },
         { &g.hapticAction[0], "/user/hand/left/output/haptic" }, { &g.hapticAction[1], "/user/hand/right/output/haptic" } });
@@ -1227,6 +1268,7 @@ void XRSession::SyncInput()
         }
     }
 
+    ReadFingers();
     if (m_LogInput) LogInputChanges();
 
     for (int i = 0; i < 2; i++)
@@ -2811,6 +2853,7 @@ bool XRSession::Shutdown(bool processExit)
     DestroySwapchain(g.wristSwapchain); g.wristImages.clear();
     if (g.wristSpace) { xrDestroySpace(g.wristSpace); g.wristSpace = XR_NULL_HANDLE; }
     g.wristAction = XR_NULL_HANDLE; m_WristValid[0] = m_WristValid[1] = false;
+    DestroyHandTrackers();
     for (int i = 0; i < 2; i++)
         if (g.aimSpace[i]) { xrDestroySpace(g.aimSpace[i]); g.aimSpace[i] = XR_NULL_HANDLE; }
     if (g.actionSet) { xrDestroyActionSet(g.actionSet); g.actionSet = XR_NULL_HANDLE; }
@@ -2828,7 +2871,8 @@ bool XRSession::Shutdown(bool processExit)
     g.turnAction = g.turnYAction = g.moveAction = XR_NULL_HANDLE;
     for (int i = 0; i < 2; i++) { g.triggerAction[i] = g.gripAction[i] = g.aimAction[i] = g.hapticAction[i] = XR_NULL_HANDLE; }
     for (auto& a : g.btnAction) a = XR_NULL_HANDLE;
-    for (int i = 0; i < 2; i++) g.padAction[i] = g.padForceAction[i] = g.gripPressAction[i] = XR_NULL_HANDLE;
+    for (int i = 0; i < 2; i++) g.padAction[i] = g.padForceAction[i] = g.gripPressAction[i] = g.trigTouchAction[i] = g.thumbTouchAction[i] = XR_NULL_HANDLE;
+    g.handExt = g.motionRangeExt = g.handSupported = false;
     m_Initialized = false;
     m_SessionRunning = false;
     m_FrameStarted = false;
@@ -2847,6 +2891,102 @@ bool XRSession::Shutdown(bool processExit)
 
 //! Diagnostics ([Advanced] LogControllerInput): every press and release of a button, trigger or grip, so a tester's
 //! log shows exactly what arrived from their controllers -- the answer to "button X does nothing". Capped per session.
+void XRSession::DestroyHandTrackers()
+{
+    for (int h = 0; h < 2; h++)
+        if (g.hand[h]) { if (g.destroyHand) g.destroyHand(g.hand[h]); g.hand[h] = XR_NULL_HANDLE; }
+    g.handTried = false; g.createHand = nullptr; g.destroyHand = nullptr; g.locateHand = nullptr;
+}
+
+namespace
+{
+    //! The angle (degrees) between the bones a->b and b->c of a hand-tracking skeleton.
+    float Bend(const XrHandJointLocationEXT* j, int a, int b, int c)
+    {
+        const XrVector3f& pa = j[a].pose.position; const XrVector3f& pb = j[b].pose.position; const XrVector3f& pc = j[c].pose.position;
+        const float u[3] = { pb.x - pa.x, pb.y - pa.y, pb.z - pa.z }, v[3] = { pc.x - pb.x, pc.y - pb.y, pc.z - pb.z };
+        const float nu = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]), nv = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (nu < 1e-5f || nv < 1e-5f) return 0.f;
+        const float d = std::clamp((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (nu * nv), -1.f, 1.f);
+        return acosf(d) * 57.29578f;
+    }
+}
+
+//! The fingers' curl (XRInputState::fingerCurl), while FingerTracking is on and an Index is bound. From hand tracking
+//! when the runtime has it (the angles at each finger's three joints, a fist ~ 230 deg; the thumb's two ~ 110 deg),
+//! from the Index's own sensors otherwise: the trigger finger by its touch and pull, the other three by the squeeze's
+//! curl (the Index's squeeze VALUE is how far they close round the grip), the thumb by its touch on any control.
+void XRSession::ReadFingers()
+{
+    for (int h = 0; h < 2; h++) { m_Input.fingerSrc[h] = 0; for (float& c : m_Input.fingerCurl[h]) c = 0.f; }
+    if (!m_WantFingers || !m_Input.pad) return;
+    if (g.handSupported && !g.handTried)
+    {
+        g.handTried = true;
+        xrGetInstanceProcAddr(g.instance, "xrCreateHandTrackerEXT", (PFN_xrVoidFunction*)&g.createHand);
+        xrGetInstanceProcAddr(g.instance, "xrDestroyHandTrackerEXT", (PFN_xrVoidFunction*)&g.destroyHand);
+        xrGetInstanceProcAddr(g.instance, "xrLocateHandJointsEXT", (PFN_xrVoidFunction*)&g.locateHand);
+        for (int h = 0; h < 2 && g.createHand; h++)
+        {
+            XrHandTrackerCreateInfoEXT ci = { XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
+            ci.hand = h ? XR_HAND_RIGHT_EXT : XR_HAND_LEFT_EXT;
+            ci.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+            const XrResult r = g.createHand(g.session, &ci, &g.hand[h]);
+            if (XR_FAILED(r)) { g.hand[h] = XR_NULL_HANDLE; LOGI("XRSession: hand tracker {} not created ({})", h ? "right" : "left", (int)r); }
+        }
+        LOGI("XRSession: finger tracking from {}", g.hand[0] || g.hand[1] ? "hand tracking (XR_EXT_hand_tracking)" : "the controllers' touch sensors");
+    }
+    auto getBool = [&](XrAction a) -> bool
+    {
+        if (!a) return false;
+        XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO }; gi.action = a;
+        XrActionStateBoolean st = { XR_TYPE_ACTION_STATE_BOOLEAN };
+        return XR_SUCCEEDED(xrGetActionStateBoolean(g.session, &gi, &st)) && st.isActive && st.currentState;
+    };
+    for (int h = 0; h < 2; h++)
+    {
+        float* c = m_Input.fingerCurl[h];
+        if (g.hand[h] && g.locateHand)
+        {
+            XrHandJointLocationEXT j[XR_HAND_JOINT_COUNT_EXT] = {};
+            XrHandJointLocationsEXT locs = { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+            locs.jointCount = XR_HAND_JOINT_COUNT_EXT; locs.jointLocations = j;
+            XrHandJointsLocateInfoEXT li = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+            li.baseSpace = g.space; li.time = g.frameState.predictedDisplayTime;
+            // the hand as it would be without the controller in it: a closed hand reads as a fist, not as wrapped round it
+            XrHandJointsMotionRangeInfoEXT mr = { XR_TYPE_HAND_JOINTS_MOTION_RANGE_INFO_EXT };
+            mr.handJointsMotionRange = XR_HAND_JOINTS_MOTION_RANGE_UNOBSTRUCTED_EXT;
+            if (g.motionRangeExt) li.next = &mr;
+            if (XR_SUCCEEDED(g.locateHand(g.hand[h], &li, &locs)) && locs.isActive)
+            {
+                bool ok = true;
+                for (int k = XR_HAND_JOINT_THUMB_METACARPAL_EXT; k < XR_HAND_JOINT_COUNT_EXT; k++)
+                    if (!(j[k].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) { ok = false; break; }
+                if (ok)
+                {
+                    c[0] = std::clamp((Bend(j, XR_HAND_JOINT_THUMB_METACARPAL_EXT, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT)
+                                     + Bend(j, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, XR_HAND_JOINT_THUMB_DISTAL_EXT, XR_HAND_JOINT_THUMB_TIP_EXT)) / 110.f, 0.f, 1.f);
+                    for (int f = 0; f < 4; f++)
+                    {
+                        const int m = XR_HAND_JOINT_INDEX_METACARPAL_EXT + f * 5;   // metacarpal, proximal, intermediate, distal, tip
+                        const float a = Bend(j, m, m + 1, m + 2) + Bend(j, m + 1, m + 2, m + 3) + Bend(j, m + 2, m + 3, m + 4);
+                        c[1 + f] = std::clamp(a / 230.f, 0.f, 1.f);
+                    }
+                    m_Input.fingerSrc[h] = 1;
+                    continue;
+                }
+            }
+        }
+        // the controller's own sensors
+        const float trig = h ? m_Input.triggerR : m_Input.triggerL, curl = h ? m_Input.gripR : m_Input.gripL;
+        const bool onTrig = getBool(g.trigTouchAction[h]) || trig > 0.05f;
+        c[0] = getBool(g.thumbTouchAction[h]) ? 0.55f : 0.05f;
+        c[1] = onTrig ? 0.3f + 0.5f * std::clamp(trig, 0.f, 1.f) : 0.f;
+        c[2] = c[3] = c[4] = std::clamp(curl, 0.f, 1.f);
+        m_Input.fingerSrc[h] = 2;
+    }
+}
+
 void XRSession::LogInputChanges()
 {
     static unsigned prevButtons = 0; static bool prevT[2] = {}, prevG[2] = {};

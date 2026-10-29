@@ -290,6 +290,7 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
             g_InitAttempted = true;
             g_Session.SetPitchOffset(Settings::ControllerPitchOffset());
             g_Session.SetLogInput(Settings::LogInput());
+            g_Session.SetFingerTracking(Settings::FingerTracking());
             if (!g_Session.Init(dev))
             {
                 nextTry = now + 3000;

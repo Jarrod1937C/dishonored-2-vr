@@ -732,6 +732,18 @@ Which pose the palm takes depends on what the hand holds (what it holds comes fr
   (the direction of least spread of its bind centroids) facing the body's midline (`gpuhandhold 2`). With nothing
   equipped, the fingers keep the game's open hand learned standing still, closed towards the sprint fist by a curl
   amount and by the controller's grip (`vr handrest`, `RestPass`; blends are done about each bone's bind centroid).
+- **The player's fingers** (`FingerTracking`, with `Layout = index` on an Index): XRSession reads each finger's curl
+  (`XRInputState::fingerCurl`, 0 straight .. 1 fist) from `XR_EXT_hand_tracking` when the runtime offers it (the
+  bends at each finger's three joints, motion range unobstructed; SteamVR builds the skeleton from the Index's finger
+  sensors), else from the controller's own sensors (the trigger finger by its touch and pull, the other three by the
+  squeeze's curl, the thumb by its touch on any control). An empty hand, and a hand with a power while no power is
+  being used, then takes `RestPass` with each bone blended by ITS finger's curl. Which bone is which finger is read off
+  the open hand and the fist (`ClassifyFingers`): the four fingers bend about one axis, across the knuckles, and the
+  thumb about another; the fingers' bones split into four groups along that axis (the index finger the group nearest
+  the thumb), and the bones that barely turn join the nearest group. A hand with a power learns its open hand from its
+  own idle (standing still, no power in use); its fist is the empty hand's sprinting fist, else the weapon's grip
+  (`g_Fist`, or the fingers saved with a grip in `DVR_grips.txt`). The heartbeat's `handrest` line shows the curls,
+  their source and the bones per finger.
 - **Gadgets** (grenades, mines, the Heart): the hand takes the anatomical pose and the gadget is kept in the palm where
   it sits at the closest point of the equip animation (`gpugadget 2`).
 - **Holding an object**: the fist learned from the weapon grip (`vr grabfist`).

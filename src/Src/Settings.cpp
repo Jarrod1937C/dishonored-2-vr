@@ -28,6 +28,7 @@ namespace
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
         { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index" },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
+        { "controls.fingertracking",    Kind::Bool,   "1", 0, 0, nullptr },   // Index layout: the drawn fingers follow the controller's
         { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // KbmInject: grip press point
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr },
@@ -225,6 +226,7 @@ bool Settings::LogInput() { return B("advanced.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
+bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
 float Settings::GripThreshold() { return F("controls.gripthreshold"); }
 bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }

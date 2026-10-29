@@ -285,6 +285,9 @@ namespace GpuTrace
     //! the controller's grip (< 0 keeps it). mode 0 = the game's fingers. Forget = learn both poses again.
     void SetHandRest(int mode, float curl, int grip);
     void ForgetHandRest();
+    //! [Controls] FingerTracking (Index layout): the drawn fingers of an empty hand or a hand with a power follow the
+    //! controller's fingers (XRInputState::fingerCurl), each finger its own.
+    void SetFingerTracking(bool on);
     std::string HandRestStats();
     std::string SixDofStats();
 

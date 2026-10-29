@@ -2847,19 +2847,115 @@ namespace
         return hand ? (float)have / (float)hand : 0.f;
     }
     bool PoseFits(const FistPose& fp, UINT bones, int p, const SegTable& T, UINT n) { return PoseCover(fp, bones, p, T, n) >= 0.9f; }
-    void RestPass(int side, float* pal, UINT bones, UINT n, const SegTable& T, int p, const Rigid& Mp, bool learnHere)
+
+    // ---- the fingers from the controller ([Controls] FingerTracking, Valve Index, Layout = index) ----
+    // Each of the player's fingers closes its own fingers of the drawn hand: every hand bone blended from the game's open
+    // hand towards its fist (RestPass's two poses) by THAT finger's curl (XRInputState::fingerCurl). Which bone belongs to
+    // which finger is read off the two poses themselves: from the open hand to the fist the four fingers all bend about
+    // one axis -- across the knuckles -- and the thumb about another; so the bones that turn are split by their axis
+    // (thumb or not) and the fingers' bones by where they sit along that axis (four groups; the index finger the one
+    // nearest the thumb). Bones that barely turn (the palm's) join the nearest group. A hand whose bones cannot be
+    // split so (too few, a group empty) closes all its fingers by their mean curl.
+    std::atomic<bool> g_FingersOn{ false };
+    std::atomic<float> g_FingerCurl[2][5];        // smoothed, Present
+    std::atomic<int> g_FingerSrc[2];              // XRInputState::fingerSrc
+    struct FingerMap { bool valid = false, tried = false; UINT bones = 0; int palm = -1; unsigned long long openFrame = 0, fistFrame = 0; int8_t f[256]; int count[5] = {}; };
+    FingerMap g_FMap[2];                          // under g_RigM (RestPass)
+    std::atomic<unsigned long long> g_FingerApplied[2];
+    void PowerIter(const double M[9], double v[3])
+    {
+        for (int it = 0; it < 40; it++)
+        {
+            double w[3] = { M[0] * v[0] + M[1] * v[1] + M[2] * v[2], M[3] * v[0] + M[4] * v[1] + M[5] * v[2], M[6] * v[0] + M[7] * v[1] + M[8] * v[2] };
+            const double nn = sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]); if (nn < 1e-12) return;
+            for (int i = 0; i < 3; i++) v[i] = w[i] / nn;
+        }
+    }
+    //! Which finger each hand bone is (0 thumb .. 4 little), from the open hand and the fist (see above).
+    void ClassifyFingers(int side, const FistPose& open, const FistPose& fist, const SegTable& T, UINT n, int p, FingerMap& fm)
+    {
+        fm = FingerMap{}; fm.tried = true; fm.bones = open.bones; fm.palm = p; fm.openFrame = open.frame; fm.fistFrame = fist.frame;
+        memset(fm.f, -1, sizeof fm.f);
+        struct Bn { int b; float d[3]; float ax[3]; float ang; };
+        std::vector<Bn> bs;
+        for (UINT b = 0; b < n && b < 256; b++)
+        {
+            if (T.seg[b] != sgHand || (int)b == p || !open.has.test(b) || !fist.has.test(b)) continue;
+            Bn x{}; x.b = (int)b;
+            float q[3]; Xform(open.rel[b], T.c[b], q);
+            for (int i = 0; i < 3; i++) x.d[i] = q[i] - T.c[p][i];
+            // the turn from the open hand to the fist: R = fist * open^T (row-major), its axis and angle
+            const float* A = fist.rel[b].r; const float* O = open.rel[b].r; float R[9];
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) R[i * 3 + j] = A[i * 3] * O[j * 3] + A[i * 3 + 1] * O[j * 3 + 1] + A[i * 3 + 2] * O[j * 3 + 2];
+            const float tr = std::clamp((R[0] + R[4] + R[8] - 1.f) * 0.5f, -1.f, 1.f);
+            x.ang = acosf(tr) * 57.29578f;
+            float ax[3] = { R[7] - R[5], R[2] - R[6], R[3] - R[1] };
+            const float na = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+            for (int i = 0; i < 3; i++) x.ax[i] = na > 1e-6f ? ax[i] / na : 0.f;
+            bs.push_back(x);
+        }
+        if (bs.size() < 10) { LOGI("gpuhands: side {} fingers: only {} hand bones in both poses: the whole hand closes together", side, bs.size()); return; }
+        // the knuckles' axis: the dominant turn axis of the bones that turn
+        double M[9] = {};
+        for (const Bn& x : bs) if (x.ang > 15.f) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) M[i * 3 + j] += x.ang * x.ax[i] * x.ax[j];
+        double K[3] = { 1, 0.3, 0.1 }; PowerIter(M, K);
+        // thumb: a bone that turns about another axis
+        std::vector<int> thumb, fing; float thumbA = 0.f;
+        auto lat = [&](const Bn& x) { return (float)(x.d[0] * K[0] + x.d[1] * K[1] + x.d[2] * K[2]); };
+        for (int i = 0; i < (int)bs.size(); i++)
+        {
+            const Bn& x = bs[i];
+            if (x.ang <= 15.f) continue;
+            const float c = fabsf((float)(x.ax[0] * K[0] + x.ax[1] * K[1] + x.ax[2] * K[2]));
+            if (c < 0.8f) { thumb.push_back(i); thumbA += lat(x); } else fing.push_back(i);
+        }
+        if (thumb.empty() || fing.size() < 4) { LOGI("gpuhands: side {} fingers: {} thumb / {} finger bones turn: cannot tell the fingers apart, the whole hand closes together", side, thumb.size(), fing.size()); return; }
+        thumbA /= (float)thumb.size();
+        // the four fingers: the three widest gaps along the knuckles' axis
+        std::vector<std::pair<float, int>> v; for (int i : fing) v.push_back({ lat(bs[i]), i });
+        std::sort(v.begin(), v.end());
+        std::vector<std::pair<float, int>> gaps; for (size_t i = 1; i < v.size(); i++) gaps.push_back({ v[i].first - v[i - 1].first, (int)i });
+        std::sort(gaps.begin(), gaps.end(), [](auto& a, auto& b) { return a.first > b.first; });
+        if (gaps.size() < 3) return;
+        int cut[3] = { gaps[0].second, gaps[1].second, gaps[2].second }; std::sort(cut, cut + 3);
+        float centre[4] = {}; int cnt[4] = {};
+        for (size_t i = 0; i < v.size(); i++) { const int g = (int)(i >= (size_t)cut[0]) + (int)(i >= (size_t)cut[1]) + (int)(i >= (size_t)cut[2]); centre[g] += v[i].first; cnt[g]++; }
+        for (int g = 0; g < 4; g++) { if (!cnt[g]) return; centre[g] /= (float)cnt[g]; }
+        // the index finger is the group nearest the thumb: number them from that end
+        const bool fromLow = fabsf(centre[0] - thumbA) < fabsf(centre[3] - thumbA);
+        auto fingerOfGroup = [&](int g) { return 1 + (fromLow ? g : 3 - g); };
+        for (size_t i = 0; i < v.size(); i++) { const int g = (int)(i >= (size_t)cut[0]) + (int)(i >= (size_t)cut[1]) + (int)(i >= (size_t)cut[2]); fm.f[bs[v[i].second].b] = (int8_t)fingerOfGroup(g); }
+        for (int i : thumb) fm.f[bs[i].b] = 0;
+        // the bones that barely turn: the nearest group along the axis (or the thumb's)
+        for (const Bn& x : bs)
+        {
+            if (fm.f[x.b] >= 0) continue;
+            const float a = lat(x); int best = 0; float bd = fabsf(a - thumbA);
+            for (int g = 0; g < 4; g++) if (fabsf(a - centre[g]) < bd) { bd = fabsf(a - centre[g]); best = fingerOfGroup(g); }
+            fm.f[x.b] = (int8_t)best;
+        }
+        for (const Bn& x : bs) fm.count[fm.f[x.b]]++;
+        fm.valid = true;
+        LOGI("gpuhands: side {} fingers told apart (palm {}, {} bones): thumb {} index {} middle {} ring {} little {} hand bones",
+             side, p, open.bones, fm.count[0], fm.count[1], fm.count[2], fm.count[3], fm.count[4]);
+    }
+    bool SavedGripFist(int side, UINT bones, int p, const SegTable& T, UINT n, FistPose& out);   // below (the weapon grips)
+    void RestPass(int side, float* pal, UINT bones, UINT n, const SegTable& T, int p, const Rigid& Mp, bool learnHere, bool powerHand = false)
     {
         FistPose& open = g_RestOpen[side]; FistPose& fist = g_RestFist[side];
+        const bool fingers = g_FingersOn.load() && g_FingerSrc[side].load() != 0;
         if (g_RestForget.exchange(false)) { g_RestOpen[0].valid = g_RestOpen[1].valid = g_RestFist[0].valid = g_RestFist[1].valid = false; LOGI("gpuhands: empty-hand poses forgotten"); }
         if (learnHere)
         {
             const bool crouch = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch");
-            if (PoseCover(open, bones, p, T, n) < 1.f && !crouch && g_StillMs.load() >= kStillMs && (!g_GripMode.load() || g_StatesClean.load()))
+            // (a hand with a power: its idle open hand, only while no power is being used)
+            if (PoseCover(open, bones, p, T, n) < 1.f && !crouch && g_StillMs.load() >= kStillMs && (!g_GripMode.load() || g_StatesClean.load())
+                && (!powerHand || !PlayerState::Running("UsePower")))
             {
                 LearnPose(open, pal, bones, n, T, p, Mp);
                 LOGI("gpuhands: side {} empty hand: the game's OPEN hand learned standing still: {} hand bones round palm {} ({} bones)", side, open.has.count(), p, bones);
             }
-            if (PoseCover(fist, bones, p, T, n) < 1.f && g_SprintMs.load() >= kSprintMs)
+            if (!powerHand && PoseCover(fist, bones, p, T, n) < 1.f && g_SprintMs.load() >= kSprintMs)
             {
                 LearnPose(fist, pal, bones, n, T, p, Mp);
                 LOGI("gpuhands: side {} empty hand: the game's sprinting FIST learned: {} hand bones round palm {} ({} bones)", side, fist.has.count(), p, bones);
@@ -2867,14 +2963,29 @@ namespace
         }
         if (!g_RestMode.load() || !PoseFits(open, bones, p, T, n)) { g_RestNoPose[side]++; return; }
         const FistPose* B = PoseFits(fist, bones, p, T, n) ? &fist : PoseFits(g_Fist[side], bones, p, T, n) ? &g_Fist[side] : nullptr;
+        static thread_local FistPose saved;
+        if (!B && fingers && SavedGripFist(side, bones, p, T, n, saved)) B = &saved;
         float t = std::clamp(g_RestCurl.load(), 0.f, 1.f);
         if (g_RestGrip.load()) { const float g = std::clamp(g_GripNow[side].load(), 0.f, 1.f); t += (1.f - t) * g; }
         if (!B) t = 0.f;
+        // the fingers from the controller: each bone by its finger's curl
+        float curl[5] = {}; const FingerMap* fm = nullptr;
+        if (fingers && B)
+        {
+            float mean = 0.f;
+            for (int f = 0; f < 5; f++) { curl[f] = std::clamp(g_FingerCurl[side][f].load(), 0.f, 1.f); mean += curl[f] * 0.2f; }
+            FingerMap& m = g_FMap[side];
+            if (!m.tried || m.bones != open.bones || m.palm != p || m.openFrame != open.frame || m.fistFrame != B->frame) ClassifyFingers(side, open, *B, T, n, p, m);
+            if (m.valid) fm = &m; else for (float& c : curl) c = mean;
+            t = mean;
+            g_FingerApplied[side]++;
+        }
         g_RestT[side] = t;
         for (UINT b = 0; b < n && b < 256; b++)
         {
             if (!open.has.test(b) || T.seg[b] != sgHand || (int)b == p) continue;   // only what moves with the palm now
-            const Rigid R = (t > 1e-3f && B->has.test(b)) ? BlendRigid(open.rel[b], B->rel[b], t, T.c[b]) : open.rel[b];
+            const float tb = fingers && B ? (fm && fm->f[b] >= 0 ? curl[fm->f[b]] : t) : t;
+            const Rigid R = (tb > 1e-3f && B->has.test(b)) ? BlendRigid(open.rel[b], B->rel[b], tb, T.c[b]) : open.rel[b];
             BoneWrite(pal + b * 12, Mul(Mp, R));
         }
         g_RestApplied[side]++;
@@ -2968,6 +3079,15 @@ namespace
         for (UINT b = 0; b < n && b < 256; b++)
             if (g.fing.has.test(b) && T.seg[b] == sgHand && (int)b != p) BoneWrite(pal + b * 12, Mul(Mp, g.fing.rel[b]));
         g_GripFingUsed[side & 1]++;
+    }
+    //! The weapon grip fingers saved for this side and skeleton (DVR_grips.txt): a closed hand when no fist was seen yet
+    //! (a hand that always holds a power never shows the game's empty fist). Copied: g_GripM is not held meanwhile.
+    bool SavedGripFist(int side, UINT bones, int p, const SegTable& T, UINT n, FistPose& out)
+    {
+        std::lock_guard lk(g_GripM);
+        for (const WeaponGrip& g : g_Grips)
+            if (g.side == side && g.fing.valid && PoseFits(g.fing, bones, p, T, n)) { out = g.fing; return true; }
+        return false;
     }
     std::wstring GripPath() { return GameInfo::GameDir() + L"\\DVR_grips.txt"; }
     //! DVR_grips.txt, one grip a line: class (hex) side bones palm verts (of the skin mesh's analysis), the palm (9 rotation +
@@ -3083,6 +3203,9 @@ namespace
         {
             if (EmptyHand(side)) { RestPass(side, pal, bones, n, T, p, Mp, learnHere); return; }
             if (g_RestMode.load() == 2 && PowerHand(side)) { RestPass(side, pal, bones, n, T, p, Mp, false); return; }   // nothing learned from a power's hand
+            // the fingers from the controller close a hand with a power too (its open hand learned from its own idle)
+            if (g_FingersOn.load() && g_FingerSrc[side].load() != 0 && PowerHand(side) && !PlayerState::Running("UsePower"))
+            { RestPass(side, pal, bones, n, T, p, Mp, learnHere, true); return; }
             // the fist an object is held with is the weapon's grip: learned under the weapon grip's rule (a regrip opens it)
             if (learnHere && g_WeaponHits[side].load() >= 3 && !PlayerState::Running("Slash") && g_PresentFrame - fp.frame >= 30 && (!g_GripMode.load() || g_GripClean[side].load()))
             {
@@ -4820,7 +4943,15 @@ void GpuTrace::OnPresent()
         g_StillMs = (unsigned long long)((now - stillSince) * 1000.0);
         g_SprintMs = (unsigned long long)((now - sprintSince) * 1000.0);
         XRInputState in;
-        if (VRRuntime::GetInput(in)) { g_GripNow[0] = in.gripL; g_GripNow[1] = in.gripR; }
+        if (VRRuntime::GetInput(in))
+        {
+            g_GripNow[0] = in.gripL; g_GripNow[1] = in.gripR;
+            for (int h = 0; h < 2; h++)
+            {   // smoothed a little (hand tracking twitches by a few degrees)
+                g_FingerSrc[h] = in.fingerSrc[h];
+                for (int f = 0; f < 5; f++) { const float o = g_FingerCurl[h][f].load(); g_FingerCurl[h][f] = o + (in.fingerCurl[h][f] - o) * 0.5f; }
+            }
+        }
     }
     FlushVbDump();
     AnalyseArmMesh();
@@ -5442,6 +5573,11 @@ void GpuTrace::SetHandRest(int mode, float curl, int grip)
     LOGI("gpuhands: empty hand {}, curl {:.2f}, grip {}", mode ? "keeps one pose" : "as the game animates it", g_RestCurl.load(), g_RestGrip.load() ? "closes it" : "ignored");
 }
 void GpuTrace::ForgetHandRest() { g_RestForget = true; }
+void GpuTrace::SetFingerTracking(bool on)
+{
+    g_FingersOn = on;
+    LOGI("gpuhands: the drawn fingers {}", on ? "follow the controller's fingers (FingerTracking, Index layout): an empty hand and a hand with a power" : "keep the game's / the grip's pose");
+}
 std::string GpuTrace::HandRestStats()
 {
     std::lock_guard lk(g_RigM);
@@ -5450,7 +5586,15 @@ std::string GpuTrace::HandRestStats()
                        g_RestOpen[0].valid ? (int)g_RestOpen[0].has.count() : 0, g_RestFist[0].valid ? (int)g_RestFist[0].has.count() : g_Fist[0].valid ? -1 : 0,
                        g_RestApplied[0].load(), g_RestNoPose[0].load(), g_RestT[0].load(), g_GripNow[0].load(),
                        g_RestOpen[1].valid ? (int)g_RestOpen[1].has.count() : 0, g_RestFist[1].valid ? (int)g_RestFist[1].has.count() : g_Fist[1].valid ? -1 : 0,
-                       g_RestApplied[1].load(), g_RestNoPose[1].load(), g_RestT[1].load(), g_GripNow[1].load());
+                       g_RestApplied[1].load(), g_RestNoPose[1].load(), g_RestT[1].load(), g_GripNow[1].load()) +
+           fmt::format(" | fingers {} L src {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} map {} applied {} | R src {} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} map {} applied {}",
+                       g_FingersOn.load() ? 1 : 0,
+                       g_FingerSrc[0].load(), g_FingerCurl[0][0].load(), g_FingerCurl[0][1].load(), g_FingerCurl[0][2].load(), g_FingerCurl[0][3].load(), g_FingerCurl[0][4].load(),
+                       g_FMap[0].valid ? fmt::format("{}/{}/{}/{}/{}", g_FMap[0].count[0], g_FMap[0].count[1], g_FMap[0].count[2], g_FMap[0].count[3], g_FMap[0].count[4]) : std::string(g_FMap[0].tried ? "whole" : "-"),
+                       g_FingerApplied[0].load(),
+                       g_FingerSrc[1].load(), g_FingerCurl[1][0].load(), g_FingerCurl[1][1].load(), g_FingerCurl[1][2].load(), g_FingerCurl[1][3].load(), g_FingerCurl[1][4].load(),
+                       g_FMap[1].valid ? fmt::format("{}/{}/{}/{}/{}", g_FMap[1].count[0], g_FMap[1].count[1], g_FMap[1].count[2], g_FMap[1].count[3], g_FMap[1].count[4]) : std::string(g_FMap[1].tried ? "whole" : "-"),
+                       g_FingerApplied[1].load());
 }
 int GpuTrace::HandItemDraws(int hand)
 {

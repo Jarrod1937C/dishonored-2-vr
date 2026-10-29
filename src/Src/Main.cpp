@@ -121,6 +121,7 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     KbmInject::SetGripThreshold(Settings::GripThreshold());
+    GpuTrace::SetFingerTracking(Settings::FingerTracking());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

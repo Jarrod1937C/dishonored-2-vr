@@ -179,6 +179,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        (the right grip still does too); in cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
    Right A / B ....................... jump / crouch, as above
+   Your fingers (FingerTracking = 1) .. the in-game fingers of a hand with a power (or with
+                                       nothing in it) open and close with yours. A hand that holds
+                                       the sword, a gun or an object keeps its grip on it.
 
  PS VR2 (Sense controllers through SteamVR)
    Square / Triangle are X / Y, Cross / Circle are A / B. SteamVR does not pass the Create button
