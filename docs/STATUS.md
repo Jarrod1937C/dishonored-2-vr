@@ -209,6 +209,7 @@ headset.
 | Feature | State | Verification | Notes / known issues |
 |---|---|---|---|
 | Choke, kills from behind, fatalities: the view rotates with the head, the animation keeps the arms and the weapon, a smooth return afterwards | Done | Validated (Q3) | Validated before the cutscene work changed the shared view and servo code. A re-check is pending. |
+| Knockout blow (`KnockoutBlow`): while the takedown is offered, a hard blow (2 m/s) to the back of the target's head with a fist, the sword's pommel or the left hand's gun knocks him out: the game's own choke knockout damage, no animation | Done, experimental | Not yet tested | Rebuilt from the choke's end (exe+0x82D310). The offer log line says whether you were SNEAKING or STANDING. |
 | Stealth kill by swinging the sword while the game offers it (the blade's contact clicks the attack instead of striking directly) | Done | Not yet tested | Reads the game's assassination sensor (slot 26), logged as `a stealth kill is offered`. While it is offered the right hand's reticle turns red (lethal) inside a thick blue border (non-lethal). |
 
 ### 2.13 Robustness

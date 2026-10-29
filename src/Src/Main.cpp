@@ -125,6 +125,7 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetGripThreshold(Settings::GripThreshold());
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
+    MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
     Collision::SetHands(Settings::HandCollision());
     Collision::SetWeapons(Settings::WeaponCollision());
     SwordContact::SetBodySink(Settings::SwordBodyDepth());

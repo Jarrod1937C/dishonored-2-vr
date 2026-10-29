@@ -105,6 +105,9 @@ int NpcSkel::Mode() { return g_Mode.load(); }
 
 bool NpcSkel::Get(void* entity, Skel& out)
 {
+    // SwordContact reads skeletons on the input thread, MeleeAim's knockout blow on the game thread: one at a time
+    // (the scratch buffers and the shape cache are shared)
+    static std::mutex s_M; std::lock_guard lk(s_M);
     out.n = 0; g_Gets++;
     if (!g_Mode.load() || !entity) return false;
     uint8_t* e = (uint8_t*)entity;

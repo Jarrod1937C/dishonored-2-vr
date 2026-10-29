@@ -52,6 +52,9 @@ namespace MeleeAim
     int BladeStrikeState(unsigned serial);
     //! Game thread, once a frame: asks the player's assassination sensor whether a stealth kill is on offer.
     void TickTakedown();
+    //! [Gameplay] KnockoutBlow: while the takedown is offered, a hard blow to the back of the target's head knocks him
+    //! out (the game's choke knockout, without its animation).
+    void SetKnockoutBlow(bool on);
     //! A stealth kill is on offer now (the game's "kill" prompt): the game's attack would be the takedown.
     bool KillOffered(void** target = nullptr);
     bool SlashRunning();             //!< the player's Slash state is running (seen at the last Present)

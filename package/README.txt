@@ -158,7 +158,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  with a ring where it will land. MinimalReticle = 1 shows only a small white dot where each one
  ends (the right one grows when it is on something you can take or use); ReticleOpacity sets how
  see-through they are. When you can take a guard down from behind, the right one turns RED inside a
- thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button).
+ thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button). With
+ KnockoutBlow = 1, hitting the back of his head hard (fist, the sword's pommel, the pistol) knocks him
+ out at once instead.
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab

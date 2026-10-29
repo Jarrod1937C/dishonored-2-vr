@@ -882,6 +882,13 @@ grenade as in the game. Mines and spring razors keep the game's placement, aimed
   whether a kill is on offer (its slot 26, what the "kill" prompt shows). While it is, a blade contact on a character
   clicks the game's attack instead of the blade's own strike (SwordContact), so the game turns it into its
   Assassination. An air swing already clicks the attack.
+- **Knockout blow** (`KnockoutBlow`): while the takedown is offered, each frame the game thread follows four striking
+  points (the palms from GpuTrace::RawHandPose, the sword's pommel 10 cm behind its grip, the left hand's weapon) and
+  the target's head (the joints within 18 cm of its skeleton's top, NpcSkel). A point moving faster than 2 m/s
+  (relative to the player) that passes within 13 cm of the head's centre, not in front of the face, knocks the guard
+  out with the game's own choke knockout: the choke state's damage (state 41 of the player's state machine, decl
+  +0x190) built and sent as exe+0x82D310 does, then ARK_MSG_HAS_CHOKED to the player. NpcSkel::Get is serialised
+  (it is now read from two threads).
 
 ### Collision: solid hands and weapons
 

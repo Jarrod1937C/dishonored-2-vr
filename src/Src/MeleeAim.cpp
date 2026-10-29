@@ -6,6 +6,8 @@
 #include "CVars.h"
 #include "GpuTrace.h"
 #include "BodyHide.h"
+#include "NpcSkel.h"
+#include "VRRuntime.h"
 #include <cmath>
 #include <sstream>
 #include <algorithm>
@@ -771,12 +773,13 @@ namespace
     std::atomic<long long> g_KillAt{ 0 };
     std::atomic<uint64_t> g_KillOffers{ 0 };
     bool g_KillWas = false;                                  // game thread
-    bool AskSensor(void* player, void** target, uint32_t* tid)
+    bool AskSensor(void* player, void** target, uint32_t* tid, uint8_t** sensor)
     {
         __try
         {
             uint8_t* s = ((FnGetComponent)(GameInfo::Base() + kGetComponent))(player, (const void*)(GameInfo::Base() + kSensorAssassination), 2);
             if (!s) return false;
+            *sensor = s;
             using FnCan = bool (*)(void*);
             if (!((FnCan)(*(void***)s)[kSlotCanAssassinate])(s)) return false;
             *tid = *(const uint32_t*)(s + 0x40);
@@ -786,18 +789,146 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 }
+// ---- the knockout blow ([Gameplay] KnockoutBlow) ----
+// While the game offers the takedown, a hard blow to the back of the target's head -- the sword's pommel, a fist, the
+// left hand's gun -- knocks him out at once: the game's own choke knockout without its animation. The choke ends in
+// exe+0x82D310 (its state object as `this`): unless the NPC is dead or a ragdoll (entity+0xD1 & 0x28), it builds the
+// damage of the choke state's declaration (state+0x18 -> +0x190) with exe+0x780260(damage 0x90 bytes, decl), sets
+// the attacker id (damage+0x54 = the player's, exe+0x854880(state) -> +0xA8), wraps it (exe+0x882E20(tmp, damage))
+// and sends it (exe+0x884920(npc, out, exe+0x39A9D20, tmp); exe+0x882FC0(out) after), then posts
+// ARK_MSG_HAS_CHOKED (0x13E, payload the NPC's id) to the player. The choke state is entry 41 (PLAYER_STATE_CHOKE)
+// of the player's state machine (the sensor's +0x20 -> +0x90 -> +0x10 + 8 * 41), as exe+0x803180 reads it.
+namespace
+{
+    constexpr int kStateChoke = 41;
+    constexpr uint32_t kBuildDamage = 0x780260, kWrapDamage = 0x882E20, kSendDamage = 0x884920, kFreeDamage = 0x882FC0;
+    constexpr uint32_t kDamageInfo = 0x39A9D20, kMsgHasChoked = 0x13E;
+    constexpr uint32_t kMsgSystem2 = 0x810240, kMsgPost2 = 0x8112C0, kMsgQueue2 = 0xC8E8;
+    std::atomic<bool> g_KoOn{ false };
+    std::atomic<uint64_t> g_Kos{ 0 }, g_KoFails{ 0 };
+    constexpr float kKoSpeed = 2.0f;        // m/s of the striking point (relative to the player)
+    constexpr float kKoRadius = 0.13f;      // m around the head's centre
+    struct KoPt { bool ok = false; float p[3] = {}; int hand = 0; const char* what = ""; };
+    KoPt g_KoPrev[4];                       // game thread
+    float g_KoPrevPlayer[3] = {}; bool g_KoPrevPlayerOk = false;
+    long long g_KoPrevT = 0, g_KoLast = 0;
+
+    //! The game's choke knockout on `npc`, from the player. 0 = done, else why not.
+    int Knockout(uint8_t* sensor, uint8_t* npc, uint8_t* player)
+    {
+        __try
+        {
+            const uintptr_t base = GameInfo::Base();
+            if (npc[0xD1] & 0x28) return 1;                                         // dead, or a ragdoll already
+            uint8_t* sm = *(uint8_t**)(sensor + 0x20); if (!sm) return 2;
+            uint8_t* states = *(uint8_t**)(sm + 0x90); if (!states) return 3;
+            uint8_t* choke = *(uint8_t**)(states + 0x10 + 8 * kStateChoke); if (!choke) return 4;
+            uint8_t* decl = *(uint8_t**)(choke + 0x18); if (!decl) return 5;
+            void* dmgDecl = *(void**)(decl + 0x190); if (!dmgDecl) return 6;
+            alignas(16) uint8_t dmg[0x100] = {}; alignas(16) uint8_t tmp[0x40] = {}; alignas(16) uint8_t out[0x40] = {};
+            ((void (*)(void*, void*))(base + kBuildDamage))(dmg, dmgDecl);
+            *(uint32_t*)(dmg + 0x54) = *(const uint32_t*)(player + 0xA8);
+            void* v = ((void* (*)(void*, void*))(base + kWrapDamage))(tmp, dmg);
+            ((void (*)(void*, void*, const void*, void*))(base + kSendDamage))(npc, out, (const void*)(base + kDamageInfo), v);
+            ((void (*)(void*))(base + kFreeDamage))(out);
+            uint8_t* sys = ((uint8_t* (*)())(base + kMsgSystem2))();
+            if (sys)
+            {
+                using FnPost = uint32_t* (*)(void*, uint32_t, uint32_t, uint32_t);
+                if (uint32_t* pl = ((FnPost)(base + kMsgPost2))(sys + kMsgQueue2, kMsgHasChoked, 4, *(const uint32_t*)(player + 0xA8)))
+                    *pl = *(const uint32_t*)(npc + 0xA8);
+            }
+            return 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 9; }
+    }
+    bool ReadAxis(const uint8_t* e, float fwd[3])
+    {
+        __try { memcpy(fwd, e + BodyHide::kEntityAxis, 12); return std::isfinite(fwd[0]) && std::isfinite(fwd[1]) && std::isfinite(fwd[2]); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    NpcSkel::Skel g_KoSkel;                 // game thread
+
+    void KnockoutCheck(uint8_t* sensor, uint8_t* target, uint8_t* player, const float* playerOrg)
+    {
+        const long long now = Qpc();
+        const double dt = g_KoPrevT ? (double)(now - g_KoPrevT) / (double)QpcFreq() : 0.0;
+        g_KoPrevT = now;
+        // the striking points this frame: each palm, the sword's pommel (10 cm behind the grip along the blade), the
+        // left hand's gun
+        KoPt cur[4];
+        float t[3], r[9];
+        if (GpuTrace::RawHandPose(1, t, r)) { cur[0] = KoPt{ true, { t[0], t[1], t[2] }, 1, "right fist" }; }
+        if (GpuTrace::RawHandPose(0, t, r)) { cur[1] = KoPt{ true, { t[0], t[1], t[2] }, 0, "left fist" }; }
+        float wo[3], wa[9]; void* went = nullptr;
+        if (GpuTrace::HandItemDraws(1) > 0 && GpuTrace::RawItemPose(1, wo, wa, &went))
+            cur[2] = KoPt{ true, { wo[0] - wa[0] * 0.10f, wo[1] - wa[1] * 0.10f, wo[2] - wa[2] * 0.10f }, 1, "sword's pommel" };
+        if (GpuTrace::HandItemDraws(0) > 0 && GpuTrace::RawItemPose(0, wo, wa, &went))
+            cur[3] = KoPt{ true, { wo[0], wo[1], wo[2] }, 0, "left hand's weapon" };
+        float pd[3] = {};
+        if (playerOrg && g_KoPrevPlayerOk) for (int k = 0; k < 3; k++) pd[k] = playerOrg[k] - g_KoPrevPlayer[k];
+        if (playerOrg) { memcpy(g_KoPrevPlayer, playerOrg, 12); g_KoPrevPlayerOk = true; }
+        KoPt prev[4]; memcpy(prev, g_KoPrev, sizeof prev); memcpy(g_KoPrev, cur, sizeof cur);
+        if (dt <= 1e-4 || dt > 0.1 || (double)(now - g_KoLast) / (double)QpcFreq() < 1.0) return;
+        // the head: the joints near the skeleton's top (a standing, unaware guard)
+        if (!NpcSkel::Get(target, g_KoSkel) || g_KoSkel.n < 5) return;
+        int top = 0; for (int j = 1; j < g_KoSkel.n; j++) if (g_KoSkel.p[j][2] > g_KoSkel.p[top][2]) top = j;
+        float head[3] = {}; int nh = 0;
+        for (int j = 0; j < g_KoSkel.n; j++)
+        {
+            const float d[3] = { g_KoSkel.p[j][0] - g_KoSkel.p[top][0], g_KoSkel.p[j][1] - g_KoSkel.p[top][1], g_KoSkel.p[j][2] - g_KoSkel.p[top][2] };
+            if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 0.18f * 0.18f) { nh++; for (int k = 0; k < 3; k++) head[k] += g_KoSkel.p[j][k]; }
+        }
+        if (!nh) return;
+        for (float& v : head) v /= (float)nh;
+        float fwd[3]; if (!ReadAxis(target, fwd)) return;
+        for (int i = 0; i < 4; i++)
+        {
+            if (!cur[i].ok || !prev[i].ok) continue;
+            float d[3]; for (int k = 0; k < 3; k++) d[k] = cur[i].p[k] - prev[i].p[k] - pd[k];
+            const float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            const float speed = len / (float)dt;
+            if (speed < kKoSpeed || len < 1e-4f) continue;
+            // the closest the point came to the head's centre this frame
+            const float a[3] = { head[0] - prev[i].p[0], head[1] - prev[i].p[1], head[2] - prev[i].p[2] };
+            float u = (a[0] * d[0] + a[1] * d[1] + a[2] * d[2]) / (len * len); u = fminf(1.f, fmaxf(0.f, u));
+            const float q[3] = { prev[i].p[0] + d[0] * u - head[0], prev[i].p[1] + d[1] * u - head[1], prev[i].p[2] + d[2] * u - head[2] };
+            const float miss = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+            if (miss > kKoRadius) continue;
+            // from behind: where it met the head is not in front of the face
+            const float hit[3] = { head[0] + q[0], head[1] + q[1], head[2] + q[2] };
+            if ((hit[0] - head[0]) * fwd[0] + (hit[1] - head[1]) * fwd[1] + (hit[2] - head[2]) * fwd[2] > 0.04f) continue;
+            g_KoLast = now;
+            const int why = Knockout(sensor, target, player);
+            if (why == 0) { g_Kos++; VRRuntime::Vibrate(cur[i].hand, 1.f, 0.08f); }
+            else g_KoFails++;
+            LOGI("MeleeAim: KNOCKOUT BLOW with the {} at {:.1f} m/s, {:.0f} cm from the back of the head's centre: {}", cur[i].what, speed, miss * 100.f,
+                 why == 0 ? "the game's choke knockout sent" : fmt::format("not sent (reason {})", why));
+            return;
+        }
+    }
+}
+void MeleeAim::SetKnockoutBlow(bool on)
+{
+    g_KoOn = on;
+    LOGI("MeleeAim: knockout blow {}", on ? "on (a hard blow to the back of the head knocks a guard out while the game offers the takedown)" : "off");
+}
 void MeleeAim::TickTakedown()
 {
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
-    void* target = nullptr; uint32_t tid = 0;
-    const bool can = an[BodyHide::aPlayer].valid && an[BodyHide::aPlayer].ent && AskSensor(an[BodyHide::aPlayer].ent, &target, &tid);
+    void* target = nullptr; uint32_t tid = 0; uint8_t* sensor = nullptr;
+    void* player = an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr;
+    const bool can = player && AskSensor(player, &target, &tid, &sensor);
     if (can) { g_KillTarget = target; g_KillAt = Qpc(); }
     if (can != g_KillWas)
     {
         g_KillWas = can;
-        if (can) { g_KillOffers++; LOGI("MeleeAim: a stealth kill is offered (target id {:#x}): a swing now is the game's takedown", tid); }
-        else LOGI("MeleeAim: the stealth kill is no longer offered");
+        if (can) { g_KillOffers++; LOGI("MeleeAim: a stealth takedown is offered (target id {:#x}) while {}: a swing now is the game's kill{}", tid,
+                                        PlayerState::Running("Sneaking") ? "SNEAKING" : "STANDING (not sneaking)", g_KoOn.load() ? ", a blow to the back of the head knocks him out" : ""); }
+        else LOGI("MeleeAim: the stealth takedown is no longer offered");
     }
+    if (can && g_KoOn.load()) KnockoutCheck(sensor, (uint8_t*)target, (uint8_t*)player, an[BodyHide::aPlayer].org);
+    else { for (auto& p : g_KoPrev) p.ok = false; g_KoPrevT = 0; g_KoPrevPlayerOk = false; }
 }
 bool MeleeAim::KillOffered(void** target)
 {

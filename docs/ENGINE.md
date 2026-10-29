@@ -609,6 +609,14 @@ Player aim component (vtable exe+0x1C52BF8): `m_currentAimLocalDir` +0x20, `m_cu
   a component of the player (exe+0x877720(player, type, 2)). Vtable slot 26 (exe+0x3A19A0) = "a kill is possible now":
   the target's id at +0x40 (exe+0x6DC560 -> entity), its state checks (exe+0x5BF440, the player's state machine at +0x20)
   and +0x48 clear. The choke sensor: type exe+0x39DD090 (registered exe+0x13D75F0, GetType exe+0x918D70).
+- The player's state machine (the sensor's +0x20): +0x90 -> states at +0x10 + 8 * index (PLAYER_STATE_* enum, from
+  0 = RUNNING: 6 SNEAKING, 7 SLIDING, 13 ASSASSINATION, 39 SLASH, 40 RECOIL, 41 CHOKE, 44 BLOCK; table of names at
+  exe+0x2391BC8 - 13 * 0x18); exe+0x803180(sm, i) = state i running (state+0x20), exe+0x803400(sm, i) = may enter.
+- **The choke's knockout** (exe+0x82D310, the choke state as `this`, target id at +0xB8): skipped when the NPC's +0xD1
+  has 0x20 or 0x8; damage = exe+0x780260(0x90-byte record, the state's decl +0x18 -> +0x190), attacker id at +0x54
+  (exe+0x854880(state) = the player), exe+0x882E20(tmp, record) -> exe+0x884920(npc, out, exe+0x39A9D20, tmp),
+  exe+0x882FC0(out); then ARK_MSG_HAS_CHOKED (0x13E, payload the NPC's id) to the player. The Wall of Light's knockout
+  is a damage too, followed by ARK_MSG_WALL_OF_LIGHT_STRIKE_UNCONSCIOUS (0x1B9).
 - During a takedown the game places the arms in the world from its own animated camera: a VR view may take its rotation
   from the head and its position from the animation and the arms still land on the victim.
 
