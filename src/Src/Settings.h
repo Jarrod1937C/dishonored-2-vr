@@ -31,7 +31,9 @@ namespace Settings
     bool HolsterWeapons();                        //!< [Gameplay] HolsterWeapons: left trigger at the left hip draws the pistol, behind the back the crossbow
     float SwordBodyDepth();                       //!< [Gameplay] SwordBodyDepth: m (the ini says cm) the blade sinks into a body
     float PushStrength();                         //!< [Gameplay] PushStrength: the hand's effective mass, kg
-    float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)
+    //! [Controls] GripThresholdLeft / GripThresholdRight (hand 0 / 1): how far that grip is pressed to count (KbmInject).
+    //! An ini without them that still has the old GripThreshold uses that for both.
+    float GripThreshold(int hand);
     bool SnapTurnBlank();                         //!< [Controls] SnapTurnBlank: black during a snap turn (KbmInject)
     bool StereoHud();                             //!< [Display] StereoHud: the game's HUD on one panel for both eyes (ScreenMode)
     float HudDistance();                          //!< [Display] HudDistance: that panel's distance, m

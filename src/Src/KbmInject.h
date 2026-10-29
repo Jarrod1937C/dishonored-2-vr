@@ -25,7 +25,7 @@ namespace KbmInject
     float StickTurnTotal();
     //! [Controls] SnapTurnBlank: black from a snap turn until the headset shows an image of the new heading.
     void SetSnapBlank(bool on);
-    void SetGripThreshold(float t);        //!< [Controls] GripThreshold: 0..1, how far a grip is pressed to count
+    void SetGripThreshold(int hand, float t);   //!< [Controls] GripThresholdLeft / Right (hand 0 / 1): 0..1, how far that grip is pressed to count
     void SetSnapBlankOpacity(float k);     //!< [Controls] SnapTurnBlankOpacity: 1 = black, 0.3 = 30 % darker (before SetSnapBlank)
     //! Brightness for the headset image built from view `serial` (a pair's left serial; 0 = unknown): 1 normally, 0 while
     //! a snap turn is blanked, then a short fade in. Render thread (VRRuntime::OnPresent).

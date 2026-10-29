@@ -29,7 +29,9 @@ namespace
         { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index" },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
         { "controls.fingertracking",    Kind::Bool,   "1", 0, 0, nullptr },   // Index layout: the drawn fingers follow the controller's
-        { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // KbmInject: grip press point
+        { "controls.gripthresholdleft", Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // KbmInject: the left grip's press point
+        { "controls.gripthresholdright", Kind::Float, "0.45", 0.05f, 0.95f, nullptr },  // ...the right grip's (more sensitive)
+        { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // (old: both grips) used when the two above are absent
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
@@ -90,6 +92,7 @@ namespace
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
+    std::map<std::string, bool> g_Given;          //!< the keys the file set (validly)
     bool g_FileFound = false;
     int g_Read = 0, g_Bad = 0;
 
@@ -173,7 +176,7 @@ void Settings::Load()
         if (!k) { LOGI("Settings: line {}: unknown setting '{}' ignored", lineNo, key); g_Bad++; continue; }
         std::string v;
         if (!Validate(*k, raw, v)) { LOGI("Settings: line {}: {} = '{}' is not a valid value: keeping the default '{}'", lineNo, k->name, raw, k->def); g_Bad++; continue; }
-        g_Val[k->name] = v; g_Read++;
+        g_Val[k->name] = v; g_Given[k->name] = true; g_Read++;
     }
     LOGI("Settings: DishonoredVR.ini read: {} settings, {} lines ignored", g_Read, g_Bad);
 }
@@ -255,7 +258,12 @@ bool Settings::SlideWindows() { return B("gameplay.slidewindows"); }
 bool Settings::HolsterWeapons() { return B("gameplay.holsterweapons"); }
 float Settings::SwordBodyDepth() { return F("gameplay.swordbodydepth") / 100.f; }
 float Settings::PushStrength() { return F("gameplay.pushstrength"); }
-float Settings::GripThreshold() { return F("controls.gripthreshold"); }
+float Settings::GripThreshold(int hand)
+{
+    const char* key = hand ? "controls.gripthresholdright" : "controls.gripthresholdleft";
+    if (!g_Given.count(key) && g_Given.count("controls.gripthreshold")) return F("controls.gripthreshold");
+    return F(key);
+}
 bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }
 bool Settings::StereoHud() { return B("display.stereohud"); }

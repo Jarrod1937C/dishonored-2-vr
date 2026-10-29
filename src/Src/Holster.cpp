@@ -4,6 +4,7 @@
 #include "Game.h"
 #include "BodyHide.h"
 #include <cmath>
+#include <unordered_map>
 
 namespace
 {
@@ -18,11 +19,14 @@ namespace
     // ARK_MSG_INVENTORY_EQUIP_ITEM: exe+0x8112C0(queue = exe+0x810240() + 0xC8E8, 0x9D, 0x10, the player's id)
     constexpr uint32_t kMsgSystem = 0x810240, kMsgPost = 0x8112C0, kMsgQueue = 0xC8E8, kMsgEquipItem = 0x9D;
     constexpr uint32_t kEntId = 0xA8;
+    // int arkCpntInventory::GetQuantity(inventory, decl) (TestAids::kInvQuantity)
+    constexpr uint32_t kInvQuantity = 0x615310;
+    constexpr int kKinds = 3;
 
     std::atomic<bool> g_On{ true };
     std::atomic<int> g_Req{ -1 };
-    std::atomic<bool> g_Owns[2] = {}, g_InHand[2] = {};
-    const void* g_LastDecl[2] = {};          // game thread: the item of that kind last seen in the left hand
+    std::atomic<bool> g_Owns[kKinds] = {}, g_InHand[kKinds] = {};
+    const void* g_LastDecl[kKinds] = {};     // game thread: the item of that kind last seen in the left hand
     double g_LastPost = -10, g_LastScan = -10;
     struct Pending { int kind = -1; double at = 0; const void* decl = nullptr; } g_Pending;
     std::atomic<unsigned long long> g_Requests{ 0 }, g_Posts{ 0 }, g_Drawn{ 0 }, g_NotDrawn{ 0 }, g_Missing{ 0 }, g_Already{ 0 };
@@ -51,11 +55,28 @@ namespace
         __try { return entity ? ((Fn)(base + BodyHide::kGetComponent))(entity, (void*)(base + tiRva), 2) : nullptr; }
         __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
     }
-    const char* KindName(int k) { return k == Holster::kPistol ? "pistol" : "crossbow"; }
+    const char* KindName(int k) { return k == Holster::kPistol ? "pistol" : k == Holster::kCrossbow ? "crossbow" : "magic"; }
+    //! A power ("magic"): its item is models/powers/<name>/... (the Heart, a story item held the same way, is not).
+    std::unordered_map<const void*, bool> g_IsPower;     // game thread: decls live as long as the game
+    bool IsPower(const void* decl)
+    {
+        if (!decl) return false;
+        auto it = g_IsPower.find(decl);
+        if (it != g_IsPower.end()) return it->second;
+        const bool p = DeclName(decl).rfind("models/powers/", 0) == 0;
+        g_IsPower[decl] = p;
+        return p;
+    }
+    int Quantity(void* inv, const void* decl)
+    {
+        using Fn = int (*)(void*, const void*);
+        __try { return ((Fn)(GameInfo::Base() + kInvQuantity))(inv, decl); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
 
     struct Entry { const uint8_t* e; const void* decl; int kind; int count; int hand; int type; };
-    struct Scan { std::vector<Entry> w; const uint8_t* left = nullptr; int leftKind = -1; bool ok = false; };
-    //! The left-hand weapons in the inventory's equipment list, and what the left hand holds.
+    struct Scan { std::vector<Entry> w; const uint8_t* left = nullptr; const void* leftDecl = nullptr; int leftKind = -1; bool ok = false; };
+    //! The left-hand weapons and the powers in the inventory's equipment list, and what the left hand holds.
     Scan Read(uint8_t* inv)
     {
         Scan s;
@@ -65,6 +86,8 @@ namespace
         n &= 0xFFFFFF;
         if (n > 512) return s;
         SafeRead(&s.left, inv + kInvLeft, 8);
+        if (s.left) SafeRead(&s.leftDecl, s.left + kEntryDecl, 8);
+        if (IsPower(s.leftDecl)) s.leftKind = Holster::kMagic;
         for (uint32_t i = 0; i < n; i++)
         {
             const uint8_t* e = nullptr;
@@ -72,7 +95,9 @@ namespace
             const void* decl = nullptr; int32_t id = 0; const uint8_t* cpnt = nullptr; const uint8_t* info = nullptr; int32_t count = 0;
             if (!SafeRead(&decl, e + kEntryDecl, 8) || !SafeRead(&id, e + kEntryEntId, 4) || !SafeRead(&cpnt, e + kEntryCpnt, 8)
                 || !SafeRead(&info, e + kEntryInfo, 8) || !SafeRead(&count, e + kEntryCount, 4)) continue;
-            if (!decl || !cpnt || !BodyHide::EntityById(id)) continue;   // the component is only valid while its entity is
+            if (!decl) continue;
+            if (IsPower(decl)) { s.w.push_back({ e, decl, Holster::kMagic, count, -1, -1 }); continue; }
+            if (!cpnt || !BodyHide::EntityById(id)) continue;   // the component is only valid while its entity is
             uintptr_t vt = 0; if (!SafeRead(&vt, cpnt, 8)) continue;
             const int kind = vt == base + BodyHide::kGunCpntVtable ? Holster::kPistol : vt == base + BodyHide::kCrossbowCpntVtable ? Holster::kCrossbow : -1;
             if (kind < 0) continue;
@@ -105,9 +130,9 @@ namespace
 
 void Holster::SetEnabled(bool on) { g_On = on; LOGI("Holster: {}", on ? "on (left hand: pistol at the left hip, crossbow behind the back, with the left trigger)" : "off"); }
 bool Holster::Enabled() { return g_On.load(); }
-bool Holster::Owns(int k) { return k >= 0 && k < 2 && g_Owns[k].load(); }
-bool Holster::InHand(int k) { return k >= 0 && k < 2 && g_InHand[k].load(); }
-void Holster::Request(int k) { if (k >= 0 && k < 2) { g_Req = k; g_Requests++; } }
+bool Holster::Owns(int k) { return k >= 0 && k < kKinds && g_Owns[k].load(); }
+bool Holster::InHand(int k) { return k >= 0 && k < kKinds && g_InHand[k].load(); }
+void Holster::Request(int k) { if (k >= 0 && k < kKinds) { g_Req = k; g_Requests++; } }
 
 void Holster::Tick()
 {
@@ -119,46 +144,51 @@ void Holster::Tick()
     g_LastScan = now;
     void* player = Game::LocalPlayer();
     uint8_t* inv = player ? (uint8_t*)GetComponent(player, BodyHide::kEquipCpntTypeInfo) : nullptr;
-    if (!inv) { for (int k = 0; k < 2; k++) { g_Owns[k] = false; g_InHand[k] = false; } return; }
+    if (!inv) { for (int k = 0; k < kKinds; k++) { g_Owns[k] = false; g_InHand[k] = false; } return; }
     const Scan s = Read(inv);
     if (!s.ok) return;
-    bool owns[2] = {};
-    for (const Entry& x : s.w) owns[x.kind] = true;
-    for (int k = 0; k < 2; k++) { g_Owns[k] = owns[k]; g_InHand[k] = s.leftKind == k; }
-    if (s.leftKind >= 0)
-        for (const Entry& x : s.w) if (x.e == s.left) g_LastDecl[x.kind] = x.decl;
+    if (s.leftKind >= 0 && s.leftDecl) g_LastDecl[s.leftKind] = s.leftDecl;   // the last pistol / crossbow / power held
+    bool owns[kKinds] = {};
+    for (const Entry& x : s.w) if (x.kind != kMagic || x.count > 0) owns[x.kind] = true;
+    // the last power may not be in the equipment list: then its quantity says whether it is still had
+    if (!owns[kMagic] && g_LastDecl[kMagic] && Quantity(inv, g_LastDecl[kMagic]) > 0) owns[kMagic] = true;
+    for (int k = 0; k < kKinds; k++) { g_Owns[k] = owns[k]; g_InHand[k] = s.leftKind == k; }
 
     if (g_Pending.kind >= 0)
     {   // did the draw take? (the equip runs its animation: give it a moment)
-        if (s.leftKind == g_Pending.kind) { g_Drawn++; LOGI("Holster: {} drawn ({:.2f} s)", KindName(g_Pending.kind), now - g_Pending.at); g_Pending = Pending{}; }
+        if (s.leftKind == g_Pending.kind && (g_Pending.kind != kMagic || s.leftDecl == g_Pending.decl)) { g_Drawn++; LOGI("Holster: {} drawn ({:.2f} s)", KindName(g_Pending.kind), now - g_Pending.at); g_Pending = Pending{}; }
         else if (now - g_Pending.at > 2.0) { g_NotDrawn++; LOGI("Holster: {} NOT drawn 2 s after the equip message ({}): the left hand still holds {}", KindName(g_Pending.kind), DeclName(g_Pending.decl), s.leftKind >= 0 ? KindName(s.leftKind) : "something else"); g_Pending = Pending{}; }
     }
     if (req < 0) return;
     g_Req = -1;
     if (now - g_LastPost < 0.5) return;
     if (s.leftKind == req) { g_Already++; LOGI("Holster: the {} is already in the left hand", KindName(req)); return; }
-    // Which one: the one last held, else the first with a quantity, else any
-    const Entry* pick = nullptr;
+    // Which one: the one last held, else the first with a quantity, else any (a weapon: one entry per ammunition)
+    const void* pick = nullptr;
     std::string all;
     for (const Entry& x : s.w)
     {
         if (x.kind != req) continue;
         all += fmt::format(" [{} x{} hand {} type {}]", DeclName(x.decl), x.count, x.hand, x.type);
-        if (x.decl == g_LastDecl[req] && x.count > 0) pick = &x;
+        if (x.decl == g_LastDecl[req] && x.count > 0) pick = x.decl;
     }
-    if (!pick) for (const Entry& x : s.w) if (x.kind == req && x.count > 0) { pick = &x; break; }
-    if (!pick) for (const Entry& x : s.w) if (x.kind == req) { pick = &x; break; }
+    // the last power held, even when the equipment list does not have it, as long as it is still owned
+    if (!pick && req == kMagic && g_LastDecl[req] && Quantity(inv, g_LastDecl[req]) > 0) pick = g_LastDecl[req];
+    if (!pick) for (const Entry& x : s.w) if (x.kind == req && x.count > 0) { pick = x.decl; break; }
+    if (!pick && req != kMagic) for (const Entry& x : s.w) if (x.kind == req) { pick = x.decl; break; }
     if (!pick) { g_Missing++; LOGI("Holster: no {} in the inventory: nothing drawn", KindName(req)); return; }
     uint32_t pid = 0; SafeRead(&pid, (uint8_t*)player + kEntId, 4);
-    if (!pid || !Post(pid, pick->decl)) { LOGI("Holster: the equip message for the {} could not be posted", KindName(req)); return; }
+    if (!pid || !Post(pid, pick)) { LOGI("Holster: the equip message for the {} could not be posted", KindName(req)); return; }
     g_Posts++; g_LastPost = now;
-    g_Pending = Pending{ req, now, pick->decl };
-    LOGI("Holster: drawing the {}: {} (the inventory has:{})", KindName(req), DeclName(pick->decl), all);
+    g_Pending = Pending{ req, now, pick };
+    LOGI("Holster: drawing the {}: {}{} (the inventory has:{})", KindName(req), DeclName(pick),
+         pick == g_LastDecl[req] ? " (the last one held)" : " (none held yet this session: the first one had)", all);
 }
 
 std::string Holster::Stats()
 {
-    return fmt::format("on {} owns pistol {} crossbow {} left {} requests {} posted {} drawn {} notdrawn {} missing {} already {}",
-                       (int)g_On.load(), (int)g_Owns[0].load(), (int)g_Owns[1].load(), g_InHand[0].load() ? "pistol" : g_InHand[1].load() ? "crossbow" : "other",
+    return fmt::format("on {} owns pistol {} crossbow {} magic {} left {} requests {} posted {} drawn {} notdrawn {} missing {} already {}",
+                       (int)g_On.load(), (int)g_Owns[0].load(), (int)g_Owns[1].load(), (int)g_Owns[2].load(),
+                       g_InHand[0].load() ? "pistol" : g_InHand[1].load() ? "crossbow" : g_InHand[2].load() ? "magic" : "other",
                        g_Requests.load(), g_Posts.load(), g_Drawn.load(), g_NotDrawn.load(), g_Missing.load(), g_Already.load());
 }

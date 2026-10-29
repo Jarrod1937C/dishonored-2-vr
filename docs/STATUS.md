@@ -98,7 +98,7 @@ headset.
 | Console-style movement: 8-way stick, latched sprint, crouch toggle | Done | Mock, then Played | |
 | Default layout: A jump, B crouch, Y / X quick slots 1-2 (held 0.5 s: 3-4), menu button short = journal / held = pause, potions B / A with the wheel open, in menus grips = next tab and triggers = sub-tabs | Done | Mock; pause Validated (Q3) | The game has no "previous tab": grips cycle through the tabs. With the wheel open, Y / X assign the highlighted item to a slot. |
 | `Layout = classic` (Y leans, X interacts, menu button pauses) | Done | Mock | |
-| Grips decided on the squeeze force on a Valve Index (not the finger curl, which a resting hand set off); `GripThreshold` | Done | Not yet tested | Reported on hardware: a resting hand activated the grips. |
+| Grips decided on the squeeze force on a Valve Index (not the finger curl, which a resting hand set off); `GripThresholdLeft` / `GripThresholdRight` | Done | Not yet tested | Reported on hardware: a resting hand activated the grips. |
 | The drawn fingers follow the player's (`FingerTracking`, Index layout): per finger from hand tracking, else thumb / index / the rest from the controller's sensors; empty hand and power hand | Done | Not yet tested | Bones are assigned to fingers from the game's open hand and fist; the heartbeat's `handrest` line shows the result. |
 | `Layout = index` (Valve Index: right trigger = interact, right trackpad = sword button, left trackpad = quick slots 1-4 by its edges and the menu button by its middle, left B / A = health / mana potion) | Done | Played (Index), trigger change not yet tested | Other controllers keep the default layout with it. |
 | The blade itself deals the damage (`SwordBladeDamage`, `SwordDamageScale`): a contact on a character calls the game's strike on its sweep record at once, scaled by the blade's speed, no Slash | Done, experimental | Not yet tested | Falls back to the game's attack when no record comes back within 0.35 s. Characters only (props keep the attack). NPCs block and parry it through the game's own handler. |
@@ -148,7 +148,7 @@ headset.
 | Power effects come out of the drawn hand | Done for Far Reach and Blink | Mock | Other powers' effects are unverified. |
 | Every power tried, including possession of humans (needs the upgrade) and rats | Done | Mock | Possession: yaw servo on the camera, pitch from the head, level roll, head translation scaled by the host's eye height. The host's arms are not drawn. Shadow Walk: camera only, the game's own arms. |
 | Grenades thrown with the hand's velocity (`ThrowGestures`) | Done | Mock | About 0.3 s between letting go and the throw (the game's animation). |
-| Pistol drawn from the left hip, crossbow from behind the back, with the left trigger (`HolsterWeapons`) | Done, experimental | Not yet tested | The zones are first guesses: each press logs where the hand was. The equip is the scripts' message (0x9D, flags 0); its flags are not decoded. |
+| Pistol drawn from the left hip, crossbow from behind the back, the last power from the chest, with the left grip (`HolsterWeapons`) | Done, experimental | Not yet tested | The zones are first guesses: each press logs where the hand was. The equip is the scripts' message (0x9D, flags 0); its flags are not decoded. |
 | Power wheel on a panel; the world stays in VR | Done | Validated (Q3) | Picking with the stick sometimes lands on the neighbouring slot (correct it by eye before releasing). |
 
 ### 2.7 Grabbing and carrying

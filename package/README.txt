@@ -173,7 +173,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  VALVE INDEX (experimental)
    The left controller's A / B act as X / Y. Menu button: press the left trackpad down hard.
    The grips react to how hard you SQUEEZE them (their force sensor), not to your fingers resting
-   on them: GripThreshold in DishonoredVR.ini sets how firmly. If you changed the game's grip
+   on them: GripThresholdLeft / GripThresholdRight in DishonoredVR.ini set how firmly. If you changed the game's grip
    bindings in SteamVR, reset them there.
    Layout = index in DishonoredVR.ini uses the trackpads instead (the rest is as above):
    Left trackpad, press its top / right / bottom / left .. quick slot 1 / 2 / 3 / 4
@@ -210,7 +210,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
                SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
                QuickSlotHoldTime = 0.5 (s)       Haptics = 1 (vibration)
-               GripThreshold = 0.6 (how firmly a grip is squeezed to count; Index: squeeze force)
+               GripThresholdLeft = 0.6  GripThresholdRight = 0.45 (how firmly each grip is squeezed to
+                                 count; lower = more sensitive; Index: squeeze force)
                Layout = default (the controls above; "index" = Valve Index trackpads; "classic" = Y leans, X interacts,
                                  menu button pauses)
                ControllerPitchOffset = 0 (tilts the hands up/down, degrees)
@@ -224,8 +225,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
                SwipeDials = 1 (with HandCollision: slide your hand up / down a safe's number wheel to turn it)
                SlideWindows = 1 (with HandCollision: slide your right hand up / down a window to raise / lower it)
-               HolsterWeapons = 1 (left hand at the left hip + left trigger: draw the pistol; behind the back:
-                                 the crossbow. A light buzz tells you the hand is at a holster)
+               HolsterWeapons = 1 (left hand at the left hip + left grip: draw the pistol; behind the back:
+                                 the crossbow; on the chest: the last power. A light buzz tells you the
+                                 hand is at a holster)
                PhysicalPickup = 0 (experimental, with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
