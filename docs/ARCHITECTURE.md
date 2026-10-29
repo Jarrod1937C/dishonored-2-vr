@@ -901,6 +901,11 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
 - **Pushing**: a contact with a physics-driven entity (entity+0xD1 bit 3) gets the game's impulse message 0xFA with
   `PushStrength` (the hand's mass) x the speed at which the raw point moves into it, relative to the object's own
   velocity (entity+0x33C), so a box being pushed comes along with the hand.
+- **Doors** (`PushDoors`): a contact with an arkDoor (class id within exe+0x39C0350 / +4) where the raw point moves
+  into it faster than 0.35 m/s, or is pressed 4 cm past its surface, posts the game's own door push,
+  ARK_MSG_DOOR_PUSH (0x138, payload the player's entity id) -- what Windblast sends, and the push NPCs walk through
+  doors with. At most once per 1.5 s per door. Whether the door refuses the push while locked is the game's handler's
+  decision (not yet confirmed: the log line `pushed door` says each push).
 - A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
 
 ### GrabHand: holding objects in the hand

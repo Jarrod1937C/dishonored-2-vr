@@ -39,6 +39,7 @@ namespace
         { "gameplay.weaponcollision",   Kind::Bool,   "0", 0, 0, nullptr },   // Collision: the held weapons too, and at characters' bodies
         { "gameplay.swordbodydepth",    Kind::Float,  "4", 0, 15, nullptr },  // cm the blade sinks into a body before it stops
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
+        { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.pushstrength",      Kind::Float,  "1", 0.1f, 10, nullptr },   // the hand's effective mass, kg
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
@@ -239,6 +240,7 @@ float Settings::SwordDamageScale() { return F("gameplay.sworddamagescale"); }
 bool Settings::HandCollision() { return B("gameplay.handcollision"); }
 bool Settings::WeaponCollision() { return B("gameplay.weaponcollision"); }
 bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
+bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 float Settings::SwordBodyDepth() { return F("gameplay.swordbodydepth") / 100.f; }
 float Settings::PushStrength() { return F("gameplay.pushstrength"); }
 float Settings::GripThreshold() { return F("controls.gripthreshold"); }

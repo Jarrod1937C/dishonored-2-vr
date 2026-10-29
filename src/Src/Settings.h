@@ -22,6 +22,7 @@ namespace Settings
     bool HandCollision();                         //!< [Gameplay] HandCollision: the drawn hands stop at the world (Collision)
     bool WeaponCollision();                       //!< [Gameplay] WeaponCollision: the held weapons too, and at bodies (Collision)
     bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
+    bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
     float SwordBodyDepth();                       //!< [Gameplay] SwordBodyDepth: m (the ini says cm) the blade sinks into a body
     float PushStrength();                         //!< [Gameplay] PushStrength: the hand's effective mass, kg
     float GripThreshold();                        //!< [Controls] GripThreshold: how far a grip is pressed to count (KbmInject)

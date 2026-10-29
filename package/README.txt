@@ -217,6 +217,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  walls, tables, props and, for the blade, people's bodies, instead of passing through)
                PushObjects = 1   PushStrength = 1 (with those: hands and weapons push loose objects; kg)
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
+               PushDoors = 1 (with HandCollision: push a door with your hand to open it)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
                MinimalReticle = 0 (1 = only a dot where each hand points)  ReticleOpacity = 0.5
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)

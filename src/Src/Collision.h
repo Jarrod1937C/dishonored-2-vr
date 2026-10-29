@@ -24,6 +24,7 @@ namespace Collision
     void SetHands(bool on);                    //!< [Gameplay] HandCollision
     void SetWeapons(bool on);                  //!< [Gameplay] WeaponCollision (the sword, the left hand's guns, characters' bodies)
     void SetPush(bool on, float handMass);     //!< [Gameplay] PushObjects / PushStrength (the hand's effective mass, kg)
+    void SetDoors(bool on);                    //!< [Gameplay] PushDoors: a hand pushing a door opens it (the game's own push)
     bool HandsOn();
     bool WeaponsOn();
 

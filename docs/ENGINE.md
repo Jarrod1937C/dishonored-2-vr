@@ -917,6 +917,13 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   the damage knockback (exe+0x7B2D19, impulse = direction x the damage decl's knockback), only to entities with
   entity+0xD1 bit 3. 0xE6 / 0xE7 are the melee block / hit events (exe+0x6357D0, exe+0x62CB80).
 - The entity velocity at +0x33C is a plain field (exe+0x87C2A0 only writes it): no use for pushing a body.
+- **Message ids** are the ARK_MSG_* enum (names table at exe+0x2381F98, 0x18-byte entries, value = index - 1:
+  ARK_MSG_NONE = -1). 0xE6 ATTACK_BLOCKED, 0xFA IMPULSE, 0x138 DOOR_PUSH, 0x149 VELOCITY_IMPULSE (payload 0x1C,
+  ten senders, not yet decoded: a mass-independent push).
+- **Doors**: arkDoor (RTTI vtable exe+0x1CB7C68) is told apart by its class id range at exe+0x39C0350 / +4 (tested by
+  Windblast exe+0x4D89D5, and at exe+0x38FC51, 0x3B29E9 (interaction), 0x3CFF28, 0x4C7DA9, 0x5F9FBA, 0x6B7B07,
+  0x801102, 0x86E91F, 0x8DC9A8). Windblast opens a door with exe+0x4D7E80: ARK_MSG_DOOR_PUSH {pusher's entity id, or
+  0x3FFF0010}. Door states: ARK_DOOR_DEFAULT_OPENED / OPENED_CCW / CLOSED; phases OPENED / OPENING / CLOSING / CLOSED.
 
 ### 8.1 The interaction sensor (two phases, asynchronous)
 `arkCpntPlayerSensorInteraction` ([GrabHand.cpp](../src/Src/GrabHand.cpp)):

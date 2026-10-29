@@ -34,6 +34,11 @@ namespace
     // 0xFA = an impulse {impulse xyz, world point xyz} (Windblast exe+0x4D7750, the damage knockback exe+0x7B2D19), sent
     // only to entities with entity+0xD1 bit 3 (physics-driven) -- the test the game makes too.
     constexpr uint32_t kMsgSystem = 0x810240, kMsgPost = 0x8112C0, kMsgQueue = 0xC8E8, kMsgImpulse = 0xFA;
+    // Doors: an entity whose class id (vtable slot 0 -> type info +0x60) lies between the globals exe+0x39C0350 / +4 is
+    // an arkDoor. Windblast opens one with ARK_MSG_DOOR_PUSH (0x138, payload = the pusher's entity id; exe+0x4D7E80,
+    // chosen by that class test at exe+0x4D89D5) -- the push NPCs walking through use too: the door swings away from
+    // the pusher.
+    constexpr uint32_t kDoorClassRange = 0x39C0350, kMsgDoorPush = 0x138;
     constexpr uint32_t kEntId = 0xA8, kEntFlags = 0xD1, kEntVelocity = 0x33C, kEntModel = 0xF0, kEntScale = 0x330, kModelBoundsSlot = 0x80;
     constexpr uint32_t kWorldLayers = 0x27, kWorldFlags = 0x100000;
 
@@ -80,9 +85,12 @@ namespace
         float pushMaxV = 6.f;        // m/s: the push's cap
         float buzzMin = 0.12f, buzzMax = 0.7f, buzzGap = 0.15f;
         float bodyDepth = 0.22f;     // m: the raw blade this deep in a body lets go (SwordContact applies it)
+        float doorSpeed = 0.35f;     // m/s into a door, or...
+        float doorPress = 0.04f;     // ...the real hand this far past the door's surface: a push opens it
+        float doorGap = 1.5f;        // s before the same door is pushed again
     } C;
 
-    std::atomic<bool> g_Hands{ false }, g_Weapons{ false }, g_Push{ false };
+    std::atomic<bool> g_Hands{ false }, g_Weapons{ false }, g_Push{ false }, g_Doors{ false };
     std::atomic<float> g_HandMass{ 1.f };
 
     double Now() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
@@ -339,6 +347,41 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
+    bool IsDoor(void* ent)
+    {
+        if (!ent) return false;
+        __try
+        {
+            using FnType = const uint8_t* (*)(void*);
+            const uint8_t* ti = ((FnType)(*(void***)ent)[0])(ent);
+            if (!ti) return false;
+            const int id = *(const int*)(ti + 0x60);
+            const int* range = (const int*)(GameInfo::Base() + kDoorClassRange);
+            return id >= range[0] && id <= range[1];
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    std::atomic<uint64_t> g_DoorPushes{ 0 };
+    //! The game's own door push, from the player (as Windblast sends it).
+    bool PushDoor(void* door, void* player)
+    {
+        __try
+        {
+            const uint32_t id = *(const uint32_t*)((const uint8_t*)door + kEntId);
+            const uint32_t from = player ? *(const uint32_t*)((const uint8_t*)player + kEntId) : 0x3FFF0010u;
+            const uintptr_t base = GameInfo::Base();
+            uint8_t* sys = ((uint8_t* (*)())(base + kMsgSystem))();
+            if (!sys) return false;
+            using FnPost = uint32_t* (*)(void*, uint32_t, uint32_t, uint32_t);
+            uint32_t* pl = ((FnPost)(base + kMsgPost))(sys + kMsgQueue, kMsgDoorPush, 4, id);
+            if (!pl) return false;
+            *pl = from;
+            g_DoorPushes++;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    std::unordered_map<void*, double> g_DoorAt;   // game thread: when each door was last pushed
     bool Dynamic(void* ent)
     {
         uint8_t f = 0;
@@ -385,6 +428,7 @@ void Collision::SetPush(bool on, float m)
     g_Push = on; g_HandMass = fminf(10.f, fmaxf(0.1f, m));
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
 }
+void Collision::SetDoors(bool on) { g_Doors = on; LOGI("Collision: doors {}", on ? "open when a hand pushes them (with HandCollision)" : "only open with the interact button"); }
 bool Collision::HandsOn() { return g_Hands.load(); }
 bool Collision::WeaponsOn() { return g_Weapons.load(); }
 bool Collision::Touching(int hand) { return g_Touch[hand & 1].load(); }
@@ -459,6 +503,31 @@ void Collision::Tick()
         }
         g_LastOff[h] = sep > C.maxSep ? 0.f : sep;
 
+        // doors: pushed by the real hand (moving into it, or pressed past its surface) -- the game's own door push
+        if (g_Doors.load() && S.valid && dt > 1e-4 && dt < 0.1 && nc > 0)
+        {
+            for (int i = 0; i < nc; i++)
+            {
+                void* e = cents[i];
+                if (!e || !IsDoor(e)) continue;
+                auto it = g_DoorAt.find(e);
+                if (it != g_DoorAt.end() && now - it->second < C.doorGap) continue;
+                int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
+                if (pi < 0) continue;
+                float v[3]; for (int k = 0; k < 3; k++) v[k] = (goal[pi][k] - S.prevRaw[pi][k]) / (float)dt;
+                const float into = -Dot(v, cs[i].n);
+                const float d[3] = { goal[pi][0] - cs[i].p[0], goal[pi][1] - cs[i].p[1], goal[pi][2] - cs[i].p[2] };
+                const float past = cs[i].clear - Dot(d, cs[i].n);    // how far the real point is behind the surface
+                if (into < C.doorSpeed && past < C.doorPress) continue;
+                if (g_DoorAt.size() > 64) g_DoorAt.clear();
+                g_DoorAt[e] = now;
+                const bool ok = PushDoor(e, an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr);
+                uint32_t id = 0; SafeRead(&id, (uint8_t*)e + kEntId, 4);
+                LOGI("Collision: {} hand pushed door {} (id {:#x}) at {:.2f} m/s, {:.0f} cm past its surface: {}",
+                     h ? "right" : "left", e, id, into, past * 100.f, ok ? "the game's door push sent" : "COULD NOT SEND");
+                VRRuntime::Vibrate(h, 0.35f, 0.04f);
+            }
+        }
         // pushes: what the real hand drives into a loose object (relative to the object's own velocity)
         if (g_Push.load() && S.valid && dt > 1e-4 && dt < 0.1 && nc > 0)
         {
@@ -466,7 +535,7 @@ void Collision::Tick()
             for (int i = 0; i < nc; i++)
             {
                 void* e = cents[i];
-                if (!Dynamic(e)) continue;
+                if (!Dynamic(e) || IsDoor(e)) continue;
                 bool dup = false; for (int k = 0; k < npushed; k++) if (pushed[k] == e) dup = true;
                 if (dup) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
@@ -554,7 +623,7 @@ std::string Collision::Stats()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()
       << " touching L " << g_Touch[0].load() << " R " << g_Touch[1].load() << " off L " << g_LastOff[0].load() << " R " << g_LastOff[1].load()
-      << " pushes " << g_Pushes.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
+      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
     std::lock_guard lk(g_DescM);
     if (!g_LastHitDesc.empty()) o << " | last: " << g_LastHitDesc;
     return o.str();

@@ -161,6 +161,7 @@ headset.
 | Solid hands (`HandCollision`): the drawn hand stops at walls, tables and props, slides along them, buzzes on contact; far through a wall it lets go | Done, experimental | Not yet tested | The game's own Havok ray casts (layers 0x27, flags 0x100000, as the sword's world sweep). Only the palm collides (not each finger). Translation only: the hand never turns to fit a surface. |
 | Solid weapons (`WeaponCollision`): the sword and the left hand's guns stop at the world as one piece with the hand; the blade stops at characters' bones | Done, experimental | Not yet tested | Points along each weapon model's box. The strike uses the RAW blade, so it still lands when the drawn blade halts at a body. |
 | Hands and weapons push loose objects (`PushObjects`, `PushStrength` = the hand's mass) | Done, experimental | Not yet tested | The game's impulse message 0xFA (Windblast's), only to physics-driven entities. |
+| Push a door with a hand to open it (`PushDoors`, needs `HandCollision`) | Done, experimental | Not yet tested | The game's own door push (ARK_MSG_DOOR_PUSH, Windblast's). Whether a locked door refuses it is the game's call, unconfirmed. |
 | While carrying a body the interaction sensor aims with the eyes (doors open instead of the body dropping) | Done | Fixed, unverified | `vr carrygaze 0` restores the old behaviour. |
 
 ### 2.8 Menus and screens
