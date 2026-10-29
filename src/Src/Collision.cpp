@@ -467,17 +467,24 @@ namespace
     struct WinSwipe { void* ent = nullptr; float acc = 0.f; double lastAt = 0, movedAt = 0; float prev[3] = {}; bool prevOk = false; int lastDir = 0; };
     WinSwipe g_Win[2];                          // game thread
     constexpr float kWindowSwipe = 0.06f;       // m of the hand along the window, up or down
-    //! The entity's level name, or "" (read under SEH, printable characters only).
-    std::string EntityName(void* ent)
+    //! The entity's level name into `buf` (printable characters only; empty when unreadable). Kept free of C++ objects:
+    //! MSVC refuses __try in a function that has to unwind one (C2712).
+    void ReadEntityName(void* ent, char (&buf)[128])
     {
-        char buf[128] = {};
+        buf[0] = 0;
         __try
         {
             const char* s = *(const char* const*)((const uint8_t*)ent + 0x20);
-            if (!s) return std::string();
-            for (int i = 0; i < 127; i++) { const char c = s[i]; if (!c) break; if (c < 32 || c > 126) { buf[0] = 0; break; } buf[i] = c; }
+            if (!s) return;
+            for (int i = 0; i < 127; i++) { const char c = s[i]; buf[i] = 0; if (!c) break; if (c < 32 || c > 126) { buf[0] = 0; break; } buf[i] = c; buf[i + 1] = 0; }
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { buf[0] = 0; }
+    }
+    //! The entity's level name, or "".
+    std::string EntityName(void* ent)
+    {
+        char buf[128];
+        ReadEntityName(ent, buf);
         return std::string(buf);
     }
     bool NameHas(const std::string& s, const char* what)
