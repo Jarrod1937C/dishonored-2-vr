@@ -45,6 +45,9 @@ namespace
     // one, presses the interact (KbmInject) rather than forcing the state (exe+0x74E4C0(openable, open, animate), the
     // script's Open / Close, checks no lock).
     constexpr uint32_t kOpenableType = 0x39C59A0, kOpenableIsOpen = 0x1E8, kGetComponent = 0x877720;
+    // Pickups: arkCpntLoot (type exe+0x39C5880, registered exe+0x13BB850: coins, ammo, elixirs, runes, charms, keys...)
+    // and arkCpntMissionItem (type exe+0x39AE970, exe+0x13A0430). Taking one is the player's interact on it.
+    constexpr uint32_t kLootType = 0x39C5880, kMissionItemType = 0x39AE970;
     constexpr uint32_t kEntId = 0xA8, kEntFlags = 0xD1, kEntVelocity = 0x33C, kEntModel = 0xF0, kEntScale = 0x330, kModelBoundsSlot = 0x80;
     constexpr uint32_t kWorldLayers = 0x27, kWorldFlags = 0x100000;
 
@@ -401,6 +404,22 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
     }
+    bool IsItem(void* ent)
+    {
+        if (!ent) return false;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            const uintptr_t base = GameInfo::Base();
+            return ((FnGet)(base + kGetComponent))(ent, (const void*)(base + kLootType), 2) != nullptr
+                || ((FnGet)(base + kGetComponent))(ent, (const void*)(base + kMissionItemType), 2) != nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    std::atomic<bool> g_Items{ false };
+    // after the interact that stores an item: is its entity still in the world (the game refused it: inventory full)?
+    std::atomic<uint32_t> g_WatchId{ 0 }; std::atomic<int> g_WatchState{ -1 };
+    std::atomic<uint32_t> g_PointerItem{ 0 };      // the pointer's pick when it is an item (game thread -> KbmInject)
     std::mutex g_TouchM;
     Collision::Touch g_TouchPub[2];
     double g_TouchAt[2] = {};
@@ -452,6 +471,11 @@ void Collision::SetPush(bool on, float m)
     g_Push = on; g_HandMass = fminf(10.f, fmaxf(0.1f, m));
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
 }
+void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
+bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
+uint32_t Collision::PointerItem() { return g_PointerItem.load(); }
+void Collision::WatchItem(uint32_t id) { g_WatchState = -1; g_WatchId = id; }
+int Collision::ItemPresent() { return g_WatchState.load(); }
 void Collision::SetOpenables(bool on) { g_Openables = on; LOGI("Collision: drawers and cabinets {}", on ? "open by grabbing and pulling, close by pushing (with HandCollision)" : "use the interact button only"); }
 bool Collision::Touched(int hand, Touch& out)
 {
@@ -497,6 +521,18 @@ void Collision::Tick()
     if (jump) g_Resets++;
 
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+    if (const uint32_t wid = g_WatchId.load())
+    {   // the item being stored: gone from the world (taken, eaten) or still there (refused)
+        void* we = BodyHide::EntityById((int)wid);
+        uint8_t hidden = 0; if (we) SafeRead(&hidden, (uint8_t*)we + 0xD0, 1);
+        g_WatchState = (we && !(hidden & 1) && IsItem(we)) ? 1 : 0;
+    }
+    if (g_Items.load())
+    {   // is what the pointer has picked an item (taken only by hand, PhysicalPickup)?
+        const int pid = GrabHand::TargetId();
+        void* pe = pid > 0 && pid != 0x3FFF0010 ? BodyHide::EntityById(pid) : nullptr;
+        g_PointerItem = pe && IsItem(pe) ? (uint32_t)pid : 0u;
+    }
     void* skip[8]; int nskip = 0;
     for (int k = 0; k < BodyHide::aCount; k++) if (an[k].valid && an[k].ent) skip[nskip++] = an[k].ent;
     if (void* held = GrabHand::HeldEntity()) skip[nskip++] = held;
@@ -576,7 +612,8 @@ void Collision::Tick()
             {
                 void* e = cents[i];
                 if (!e) continue;
-                tch.valid = true; tch.ent = e; memcpy(tch.n, cs[i].n, 12);
+                tch.valid = true; tch.ent = e; memcpy(tch.n, cs[i].n, 12); memcpy(tch.p, cs[i].p, 12);
+                tch.item = g_Items.load() && IsItem(e);
                 SafeRead(&tch.id, (uint8_t*)e + kEntId, 4);
                 const int os = g_Openables.load() ? OpenableState(e) : -1;
                 tch.openable = os >= 0; tch.open = os == 1;

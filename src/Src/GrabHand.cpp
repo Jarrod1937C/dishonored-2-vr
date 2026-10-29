@@ -411,6 +411,10 @@ namespace
     // metres behind the controller the pointer's casts start: a hand touching an object starts its ray outside it
     float g_Back = 0.10f;
     std::atomic<int> g_DiagFrames{ 0 };   // `vr grabdiag n`: log the next n RESULTS calls (pointer, pick, its offset from the ray)
+    // PhysicalPickup: while an item is carried to the back / the mouth, the sensor keeps aiming at where it was taken,
+    // from the eye, so the interact that stores it finds it (the hand's own pointer is behind the player by then)
+    std::mutex g_LockM; bool g_LockOn = false; float g_LockPt[3] = {}; ULONGLONG g_LockAt = 0;
+    std::atomic<unsigned long long> g_LockAimed{ 0 };
 
     // An entity's world AABB (min xyz, max xyz) from its render model's bounds and its transform (+0x300/+0x30C/+0x330):
     // exe+0x8780D0(entity, out). The interaction sensor's own height rule takes the object's height from it.
@@ -476,7 +480,23 @@ namespace
         static bool s_Gaze = false;
         if (!results) s_Gaze = g_CarryGaze.load() && PlayerState::Running("CarryCorpse");
         float po[3], pf[3], back = g_Back;
-        if (s_Gaze)
+        bool locked = false; float lockPt[3] = {};
+        {
+            std::lock_guard lk(g_LockM);
+            if (g_LockOn && GetTickCount64() - g_LockAt > 8000) g_LockOn = false;   // never longer than a carry can last
+            if (g_LockOn) { locked = true; memcpy(lockPt, g_LockPt, 12); }
+        }
+        float lockAxis[9];
+        if (locked && HandAimHook::RealCamera(po, lockAxis))
+        {
+            for (int k = 0; k < 3; k++) pf[k] = lockPt[k] - po[k];
+            const float n = sqrtf(Dot(pf, pf));
+            if (n < 1e-3f) return finish(real(self));
+            for (float& v : pf) v /= n;
+            back = 0.f;
+            g_LockAimed++;
+        }
+        else if (s_Gaze)
         {
             float ca[9];
             if (!HandAimHook::RealCamera(po, ca)) return finish(real(self));
@@ -948,6 +968,12 @@ bool GrabHand::TargetPoint(float out[3])
     return true;
 }
 float GrabHand::PickRange() { return g_GameRange; }
+void GrabHand::LockSensor(const float point[3])
+{
+    std::lock_guard lk(g_LockM);
+    g_LockOn = true; memcpy(g_LockPt, point, 12); g_LockAt = GetTickCount64();
+}
+void GrabHand::UnlockSensor() { std::lock_guard lk(g_LockM); g_LockOn = false; }
 int GrabHand::TargetId() { return GetTickCount64() - g_TargetAt.load() < 500 ? g_TargetId.load() : kNoTarget; }
 void GrabHand::SetReach(int mode, float back)
 {

@@ -29,6 +29,10 @@ namespace GrabHand
     //! The picked object's origin (world), while there is one; for the reticle.
     bool TargetPoint(float out[3]);
     int TargetId();                              //!< the sensor's pick (spawn id), 0x3FFF0010 = none
+    //! PhysicalPickup: aim the interaction sensor from the eye at this world point (an item being carried) instead of
+    //! along the hand's pointer, until UnlockSensor (or 8 s).
+    void LockSensor(const float point[3]);
+    void UnlockSensor();
     float PickRange();                           //!< the sensor's reach (its decl, the game's 3 m)
     //! Letting go now: throw (the hand is moving faster than grabcfg dropspeed) or drop? `speed` = the hand's, m/s.
     bool ReleaseThrows(float* speed = nullptr);

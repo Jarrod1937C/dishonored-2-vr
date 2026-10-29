@@ -12,6 +12,8 @@
 #include "ThrowGesture.h"
 #include "GrabHand.h"
 #include "Collision.h"
+#include "VRMath.h"
+#include "BodyHide.h"
 #include "KeyBinds.h"
 #include "CVars.h"
 #include "ScreenMode.h"
@@ -425,6 +427,32 @@ namespace
     bool g_WasHolding = false; double g_HoldEndedAt = -1;
     // PullToOpen: the grip closed on a drawer / cabinet the hand touches waits for the pull before it presses interact
     struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; } g_Pull;
+    // PhysicalPickup: an item grabbed by hand, on its way to the back (stored) or the mouth (eaten)
+    struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; } g_Carry;
+    struct Verify { uint32_t id = 0; double at = -1; } g_Verify;   // the store's interact sent: did the game take it?
+    double g_CarryClearAt = -1;                                     // when a returning item's drawing is handed back
+    //! The item goes back where it was taken from (refused, let go, out of reach): it flies there, then is drawn as is.
+    void CarryReturn()
+    {
+        GpuTrace::ReturnCarry(); g_CarryClearAt = g_Now + 0.4;
+        GrabHand::UnlockSensor();
+    }
+    //! Where the hand is, relative to the head, in the room: behind the back (stores) or at the mouth (eats).
+    int CarryZone(const XRInputState& in, int hand)
+    {
+        const XRHandPose& h = in.hand[hand & 1];
+        const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
+        if (!h.valid || !hp.valid) return 0;
+        float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
+        float f[3] = { hf[0], 0.f, hf[2] }; float n = sqrtf(f[0] * f[0] + f[2] * f[2]); if (n < 1e-3f) { f[0] = 0; f[2] = -1; n = 1; }
+        f[0] /= n; f[2] /= n;
+        const float right[3] = { -f[2], 0.f, f[0] };
+        const float rel[3] = { h.posX - hp.pos[0], h.posY - hp.pos[1], h.posZ - hp.pos[2] };
+        const float rx = rel[0] * right[0] + rel[2] * right[2], ry = rel[1], rz = rel[0] * f[0] + rel[2] * f[2];
+        if (rz < -0.12f && ry > -0.9f && ry < 0.35f) return 1;                         // behind the back / over the shoulder
+        if (fabsf(rx) < 0.12f && ry > -0.22f && ry < 0.02f && rz > -0.02f && rz < 0.20f) return 2;   // at the mouth
+        return 0;
+    }
     void Hold(Slot s, bool want)
     {
         if (g_TapUntil[s] > 0) { if (want) g_TapUntil[s] = 0; else return; }   // a tap in flight ends on its own
@@ -1292,11 +1320,32 @@ void KbmInject::Tick()
                          && GrabHand::TargetId() == (int)touch.id;
     float handNow[3], handRot[9];
     const bool handOk = GpuTrace::RawHandPose(grabHand, handNow, handRot);
+    // Physical pickup (Collision::ItemsOn): the grip closing on an item the hand touches (and the pointer has) takes it
+    // in the hand; it is stored when the hand goes behind the back (or eaten at the mouth) -- the game's interact then.
+    const bool itemsByHand = Collision::ItemsOn();
+    const bool onItem = itemsByHand && !holding && !carrying && Collision::Touched(grabHand, touch) && touch.item
+                     && GrabHand::TargetId() == (int)touch.id;
     if (pressed & grabGrip)
     {
         g_GripTakes = holding || carrying || GrabHand::HandHasTarget();
         g_GripF = g_GripTakes && !holding;
-        if (g_GripF && onOpenable && handOk)
+        if (g_GripF && onItem)
+        {
+            g_GripF = false;
+            const float in2[3] = { touch.p[0] - touch.n[0] * 0.02f, touch.p[1] - touch.n[1] * 0.02f, touch.p[2] - touch.n[2] * 0.02f };
+            GrabHand::LockSensor(in2);
+            g_Carry = Carry{ true, touch.id, g_Now, -1 };
+            g_CarryClearAt = -1; g_Verify = Verify{};
+            BodyHide::SetCarryEntity(touch.ent); GpuTrace::SetCarry(grabHand);   // drawn in the hand from now on
+            VRRuntime::Vibrate(grabHand, 0.25f, 0.03f);
+            LOGI("KbmInject: {} hand took item id {:#x}: put it behind your back to keep it (or to your mouth to eat it)", grabSide, touch.id);
+        }
+        else if (g_GripF && itemsByHand && Collision::PointerItem() && Collision::PointerItem() == (uint32_t)GrabHand::TargetId())
+        {   // an item pointed at from afar is not taken by the grip: reach for it
+            g_GripF = false;
+            LOGI("KbmInject: {} grip on item id {:#x} from afar: not taken (PhysicalPickup: grab it by hand)", grabSide, Collision::PointerItem());
+        }
+        else if (g_GripF && onOpenable && handOk)
         {
             g_GripF = false;
             g_Pull = Pull{ true, { handNow[0], handNow[1], handNow[2] }, { touch.n[0], touch.n[1], touch.n[2] }, g_Now, touch.id };
@@ -1309,7 +1358,47 @@ void KbmInject::Tick()
     {
         if (g_GripF) LOGI("KbmInject: {} grip released: F up", grabSide);
         if (g_Pull.armed) LOGI("KbmInject: {} grip let go of the drawer / cabinet without pulling it", grabSide);
-        g_GripTakes = g_GripF = false; g_Pull.armed = false;
+        if (g_Carry.on) { LOGI("KbmInject: {} hand let go of item id {:#x} before storing it: it goes back", grabSide, g_Carry.id); CarryReturn(); }
+        g_GripTakes = g_GripF = false; g_Pull.armed = false; g_Carry.on = false;
+    }
+    if (g_Carry.on)
+    {
+        const int zone = CarryZone(in, grabHand);
+        if (zone && g_Carry.zoneAt < 0) g_Carry.zoneAt = g_Now;
+        if (!zone) g_Carry.zoneAt = -1;
+        if (zone && GrabHand::TargetId() == (int)g_Carry.id && !g_Held[kF])
+        {
+            Tap(kF);
+            LOGI("KbmInject: item id {:#x} {} ({:.1f} s after taking it): interact", g_Carry.id, zone == 1 ? "put behind the back: storing" : "brought to the mouth: eating", g_Now - g_Carry.at);
+            g_Verify = Verify{ g_Carry.id, g_Now }; Collision::WatchItem(g_Carry.id);
+            g_Carry.on = false; GrabHand::UnlockSensor();
+        }
+        else if (zone && g_Now - g_Carry.zoneAt > 0.6)
+        {
+            LOGI("KbmInject: item id {:#x} could not be taken: the sensor no longer finds it (out of reach?) -- it goes back", g_Carry.id);
+            g_Carry.on = false; CarryReturn();
+        }
+        else if (g_Now - g_Carry.at > 7.0) { g_Carry.on = false; CarryReturn(); LOGI("KbmInject: item id {:#x} carried too long: it goes back", g_Carry.id); }
+    }
+    if (g_Verify.at >= 0)
+    {   // the game took it (its entity left the world) or refused it (still there: a full inventory, as the game says)
+        const int st = Collision::ItemPresent();
+        if (st == 0)
+        {
+            VRRuntime::Vibrate(grabHand, 0.6f, 0.06f);
+            LOGI("KbmInject: item id {:#x} taken by the game", g_Verify.id);
+            GpuTrace::EndCarry(); BodyHide::SetCarryEntity(nullptr); Collision::WatchItem(0); g_Verify = Verify{};
+        }
+        else if (g_Now - g_Verify.at > (st == 1 ? 0.7 : 1.5))
+        {
+            VRRuntime::Vibrate(grabHand, 0.25f, 0.15f);
+            LOGI("KbmInject: item id {:#x} REFUSED by the game (still in the world {:.1f} s later: inventory full?): it goes back", g_Verify.id, g_Now - g_Verify.at);
+            CarryReturn(); Collision::WatchItem(0); g_Verify = Verify{};
+        }
+    }
+    if (g_CarryClearAt >= 0 && g_Now >= g_CarryClearAt)
+    {   // back in its place: drawn as the game has it again
+        GpuTrace::EndCarry(); BodyHide::SetCarryEntity(nullptr); g_CarryClearAt = -1;
     }
     if (g_Pull.armed && handOk)
     {
@@ -1336,8 +1425,10 @@ void KbmInject::Tick()
     if (holding && g_GripF) { g_GripF = false; LOGI("KbmInject: {} grip took an object: F up", grabSide); }
     // Index layout: the right TRIGGER is interact (on what the right hand's pointer picked), held like a key; the sword
     // strikes by gesture and by the blade's contact (its button is the right trackpad). Not while it lets an object go.
-    const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets);
-    Hold(kF, (!quick && (live & kXRBtnX) != 0) || g_GripF || trigUse);   // the grabbing grip (above), (old) X, Index trigger : interact
+    // PhysicalPickup: the interact buttons do not take an item from afar either (the zone's tap above is how)
+    const bool itemAimed = itemsByHand && Collision::PointerItem() && Collision::PointerItem() == (uint32_t)GrabHand::TargetId();
+    const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
+    Hold(kF, (!quick && (live & kXRBtnX) != 0 && !itemAimed) || g_GripF || trigUse);   // the grabbing grip (above), (old) X, Index trigger : interact
     if (holding && relMode == 1 && (released & grabGrip))
     {
         float speed = 0; const bool thr = GrabHand::ReleaseThrows(&speed);

@@ -15,6 +15,7 @@ namespace
     std::atomic<bool> g_HideWeapon[2];
     std::atomic<bool> g_HideArmSide[2];
     std::atomic<void*> g_LeftArm{ nullptr }, g_RightArm{ nullptr }, g_LeftWeapon{ nullptr }, g_RightWeapon{ nullptr };
+    std::atomic<void*> g_CarryEnt{ nullptr };     // PhysicalPickup: the item being carried (the aCarry anchor)
     std::atomic<uint32_t> g_ItemClass[2] = {};
     std::atomic<void*> g_WeaponTset[2][2], g_ArmTset[2][2], g_WeaponModel[2][2];
     int g_Frame = 0;
@@ -82,7 +83,7 @@ namespace
     //! destroys the entity and the stale pointer would otherwise be read as geometry.
     void SampleInto(BodyHide::Anchor* a)
     {
-        void* ents[BodyHide::aCount] = { g_LeftWeapon.load(), g_RightWeapon.load(), g_LeftArm.load(), g_RightArm.load(), Game::LocalPlayer() };
+        void* ents[BodyHide::aCount] = { g_LeftWeapon.load(), g_RightWeapon.load(), g_LeftArm.load(), g_RightArm.load(), Game::LocalPlayer(), g_CarryEnt.load() };
         for (int i = 0; i < BodyHide::aCount; i++)
         {
             uint8_t* e = (uint8_t*)ents[i];
@@ -255,10 +256,11 @@ bool BodyHide::HoldsGadget(int side) { const uint32_t c = g_ItemClass[side & 1].
 bool BodyHide::HoldsGun(int side) { const uint32_t c = g_ItemClass[side & 1].load(); return c == kGunCpntVtable || c == kCrossbowCpntVtable; }
 void* BodyHide::RightWeaponEntity() { return g_RightWeapon.load(); }
 BodyHide::Stats BodyHide::GetStats() { std::lock_guard lk(g_M); return g_Stats; }
+void BodyHide::SetCarryEntity(void* ent) { g_CarryEnt = ent; }
 void BodyHide::GetAnchors(Anchor out[aCount]) { std::lock_guard lk(g_AnchorM); memcpy(out, g_Anchors, sizeof g_Anchors); }
 void BodyHide::SampleNow(Anchor out[aCount]) { for (int i = 0; i < aCount; i++) out[i] = Anchor(); SampleInto(out); }
 const char* BodyHide::AnchorName(int id)
 {
-    static const char* kN[aCount] = { "weaponL", "weaponR", "armL", "armR", "player" };
+    static const char* kN[aCount] = { "weaponL", "weaponR", "armL", "armR", "player", "carry" };
     return (unsigned)id < aCount ? kN[id] : "?";
 }

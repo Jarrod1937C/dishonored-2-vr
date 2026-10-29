@@ -923,6 +923,17 @@ real controller cannot be stopped, so the DRAWN hand is, with whatever it holds 
   touches a CLOSED openable that the pointer has picked does not press interact; pulling the hand back 6 cm along the
   contact's normal (grip held) taps it. A push on an OPEN one (not a door) like a door push asks for the tap that
   closes it (`TakeCloseRequest`, only when the pointer has it). The interact is the game's: locks and keys apply.
+- **Items by hand** (`PhysicalPickup`, needs HandCollision): an entity with arkCpntLoot (exe+0x39C5880) or
+  arkCpntMissionItem (exe+0x39AE970) is an item. KbmInject: the grabbing grip closing on an item the hand touches and
+  the pointer has picked starts a carry -- GrabHand::LockSensor aims the interaction sensor from the eye at the point
+  taken until it ends -- and the hand reaching behind the head plane (12 cm, in the room, head yaw frame) or the mouth
+  taps interact while the sensor still has it (stored / eaten by the game, its rules). Letting go first leaves the item.
+  The carried item is DRAWN in the hand: BodyHide samples it as the sixth anchor (aCarry) and GpuTrace moves the draws
+  whose model origin sits on it (within 3 cm, exempt from the near-the-eye filter) to hand * rel, rel taken from the
+  first draw after the grab; the entity itself never moves. After the store's tap the game thread watches the entity
+  (Collision::WatchItem): gone = taken; still in the world after 0.7 s = refused (e.g. a full inventory) -- the item then
+  flies back to its place (0.35 s, GpuTrace::ReturnCarry) and is drawn there again, as it is when let go.
+  An item picked from afar (Collision::PointerItem) is not taken by the grip, the Index trigger or X.
 - A buzz on each new contact, stronger the faster the hand came in. Heartbeat line `collision`.
 
 ### GrabHand: holding objects in the hand

@@ -216,6 +216,12 @@ namespace GpuTrace
     bool RawItemPose(int hand, float org[3], float axis[9], void** ent);
     //! The controller pose (columns fwd/left/up, as HandPoseWorld) of the latest view BEFORE Collision moved it.
     bool RawHandPose(int hand, float org[3], float rot[9]);
+    //! PhysicalPickup: the item on the aCarry anchor (BodyHide::SetCarryEntity) is drawn in this hand, held where it was
+    //! touched; ReturnCarry flies it back to its own place (0.35 s); EndCarry draws it where it is again.
+    void SetCarry(int hand);
+    void ReturnCarry();
+    void EndCarry();
+    unsigned long long CarryDraws();          //!< draws moved into a hand so far (diagnostics)
     //! The hand whose weapon a model with its origin at w (world) is drawn with -- the weapon test's own rule (nearest
     //! first-person entity is that hand's equipment, within the anchor radius) -- or -1. Lock-free, any thread.
     int WeaponClaim(const float w[3]);

@@ -75,7 +75,9 @@ namespace BodyHide
     //! The first-person entities, sampled on the game thread once per frame. The renderer identifies the weapon's
     //! draws by matching each draw's recovered model origin against these, which needs no scan, no flicker and no
     //! diff taken across two different frames -- see the "6DOF weapon" section of ENGINE.md.
-    enum AnchorId { aWeaponL, aWeaponR, aArmL, aArmR, aPlayer, aCount };
+    enum AnchorId { aWeaponL, aWeaponR, aArmL, aArmR, aPlayer, aCarry, aCount };
+    //! PhysicalPickup: the item carried in a hand (sampled as the aCarry anchor: GpuTrace draws it in the hand), or null.
+    void SetCarryEntity(void* ent);
     //! `ent` identifies WHICH entity this is: a weapon swap builds a new equipment entity, and the 6DOF anchor
     //! (the model's rest pose) belongs to the old model and has to be retaken when it changes.
     struct Anchor { bool valid = false; void* ent = nullptr; float org[3] = {}; float axis[9] = {}; };

@@ -932,6 +932,8 @@ nearly straight down; a ray that lands on a placed mine places nothing).
 - **Message ids** are the ARK_MSG_* enum (names table at exe+0x2381F98, 0x18-byte entries, value = index - 1:
   ARK_MSG_NONE = -1). 0xE6 ATTACK_BLOCKED, 0xFA IMPULSE, 0x138 DOOR_PUSH, 0x149 VELOCITY_IMPULSE (payload 0x1C,
   ten senders, not yet decoded: a mass-independent push).
+- **Items**: arkCpntLoot, type exe+0x39C5880 (registered exe+0x13BB850); arkCpntMissionItem, type exe+0x39AE970
+  (exe+0x13A0430); also arkCpntPickableHolder, arkCpntInventory, arkCpntBoneCharmInventory. Taken by the player's interact.
 - **Openables** (drawers, cabinets, some doors): arkCpntOpenable, type exe+0x39C59A0 (registered exe+0x13BB9B0, GetType
   exe+0x8EB600, vtable exe+0x1C569C8); +0x1E8 = open; a state machine at +0x40 (current at +0x48: Closed / Animated /
   Opened, arkStateOpenable_*). exe+0x74E4C0(openable, open, animate) sets it (sends the opened / closed event

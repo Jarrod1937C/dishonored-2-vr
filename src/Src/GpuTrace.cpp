@@ -617,6 +617,15 @@ namespace
     // Collision: the controller pose BEFORE it was pushed out of what it touches, and the push (world translation) the
     // latest view applied -- g_HandPose and g_TargetPose are the drawn (pushed) ones.
     Rigid g_HandRaw[2]; float g_CollOff[2][3] = {};
+    // PhysicalPickup: the item carried in a hand is DRAWN there (its draws sit on the aCarry anchor, the entity's real
+    // place); the game's entity never moves. rel = the item in the hand's frame, taken from its first draw after the
+    // grab (so it starts where it lies under the fingers). Returning: it flies back to its place over kCarryBack s.
+    struct CarryState { bool on = false; int hand = 1; bool relValid = false; Rigid rel; Rigid last; bool lastValid = false;
+                        bool returning = false; double retStart = 0; Rigid retFrom; };
+    std::mutex g_CarryM; CarryState g_Carry;
+    constexpr double kCarryBack = 0.35;
+    std::atomic<unsigned long long> g_CarryDraws{ 0 };
+    double CarryNow() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
     // The projection recovered from a factored MVP, kept so the screen-space overlay (the reticle) can put a world
     // point on the screen. Using the engine's OWN projection instead of rebuilding one from the camera's FOV means
     // there is nothing to calibrate: `p` is exactly what the shader multiplies by, expressed in the same view basis
@@ -1434,6 +1443,7 @@ namespace
             t_XfUsed = xfSerial;
         }
         Rigid ownDv; bool useOwnDv = false;      // an arm draw whose hand pose comes from the palette, not the equipment entity
+        bool carryDraw = false;                  // a draw of the item carried in a hand (PhysicalPickup)
         bool torso = false;                      // a draw of the player entity's own models (torso, legs): follows the HMD body frame
         const bool fullArm = g_ArmMode.load() == 1;
         const int diag = g_DiagLeft.load();
@@ -1479,7 +1489,15 @@ namespace
             LOGI("gunparts: REJECTED ({}) draw n={} cb{} | engine origin ({:.3f},{:.3f},{:.3f}), {:.3f} m from weapon {}", why, draw, bytes, worldOrg[0], worldOrg[1], worldOrg[2], sqrtf(best), wk);
         };
         if (g_CensusLeft.load() > 0) CensusAdd(f.p, sqrtf(rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]), false);
-        if (!byIndex)
+        {   // a draw of the carried item: its model origin is the item entity's (wherever it was taken from)
+            const BodyHide::Anchor& ca = anch[BodyHide::aCarry];
+            if (ca.valid && byAnchor)
+            {
+                const float dx = worldOrg[0] - ca.org[0], dy = worldOrg[1] - ca.org[1], dz = worldOrg[2] - ca.org[2];
+                if (dx * dx + dy * dy + dz * dz < 0.03f * 0.03f) { std::lock_guard lk(g_CarryM); carryDraw = g_Carry.on; }
+            }
+        }
+        if (!byIndex && !carryDraw)
         {
             float n = g_Near.load();
             if (n > 0.f && g_BodyFollow.load() && n < 2.5f) n = 2.5f;   // the player entity's origin is at the feet, farther than any weapon
@@ -1497,7 +1515,50 @@ namespace
             float d = 0.f, margin = 0.f;
             const int a = NearestAnchor(anch, worldOrg, &d, &margin);
             if (a < 0) { partsReject("no anchor"); g_NoAnchor++; return false; }
-            if (a == BodyHide::aPlayer && d < 0.05f)
+            if (carryDraw)
+            {   // the carried item: drawn at hand * rel (or on its way back), the entity left where it is
+                const BodyHide::Anchor& ca = anch[BodyHide::aCarry];
+                Rigid ent; for (int i = 0; i < 3; i++) { ent.r[i * 3] = ca.axis[i]; ent.r[i * 3 + 1] = ca.axis[3 + i]; ent.r[i * 3 + 2] = ca.axis[6 + i]; ent.t[i] = ca.org[i]; }
+                Rigid target = ent; bool moved = false;
+                {
+                    std::lock_guard lk(g_CarryM);
+                    const int ch = g_Carry.hand & 1;
+                    if (g_Carry.returning)
+                    {
+                        const double u = (CarryNow() - g_Carry.retStart) / kCarryBack;
+                        if (u < 1.0 && g_Carry.lastValid)
+                        {   // smoothstep from where it was in the hand back to its place: positions lerped, the rotation
+                            // blended and re-orthonormalised (short and small: good enough for a quarter second)
+                            const float s = (float)(u * u * (3.0 - 2.0 * u));
+                            const Rigid& a0 = g_Carry.retFrom;
+                            for (int i = 0; i < 3; i++) target.t[i] = a0.t[i] + (ent.t[i] - a0.t[i]) * s;
+                            float c[3][3];
+                            for (int col = 0; col < 3; col++) for (int i = 0; i < 3; i++) c[col][i] = a0.r[i * 3 + col] + (ent.r[i * 3 + col] - a0.r[i * 3 + col]) * s;
+                            auto nrm = [](float* v) { const float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); if (l > 1e-6f) for (int k = 0; k < 3; k++) v[k] /= l; };
+                            nrm(c[0]);
+                            const float dp = c[1][0] * c[0][0] + c[1][1] * c[0][1] + c[1][2] * c[0][2];
+                            for (int k = 0; k < 3; k++) c[1][k] -= c[0][k] * dp;
+                            nrm(c[1]);
+                            c[2][0] = c[0][1] * c[1][2] - c[0][2] * c[1][1]; c[2][1] = c[0][2] * c[1][0] - c[0][0] * c[1][2]; c[2][2] = c[0][0] * c[1][1] - c[0][1] * c[1][0];
+                            for (int col = 0; col < 3; col++) for (int i = 0; i < 3; i++) target.r[i * 3 + col] = c[col][i];
+                            moved = true;
+                        }
+                    }
+                    else if (targetValid[ch])
+                    {
+                        if (!g_Carry.relValid) { g_Carry.rel = Mul(Inv(handH[ch]), ent); g_Carry.relValid = true; }
+                        target = Mul(handH[ch], g_Carry.rel);
+                        g_Carry.last = target; g_Carry.lastValid = true;
+                        moved = true;
+                    }
+                    hand = ch;
+                }
+                if (!moved) { g_NotWeapon++; return false; }      // drawn where it lies
+                const Rigid gdw = Mul(target, Inv(ent));
+                ownDv = Mul(vw, Mul(gdw, Inv(vw))); useOwnDv = true;
+                g_CarryDraws++;
+            }
+            else if (a == BodyHide::aPlayer && d < 0.05f)
             {   // The torso (PlayerBody): its models have their origin at the player entity. With body follow on
                 // they get the HMD body delta, so leaning and crouching move the chest with the head.
                 if (!g_BodyFollow.load() || !bodyValid) { g_NotWeapon++; return false; }
@@ -1926,7 +1987,7 @@ namespace
             {
                 std::lock_guard lk(g_XfM);
                 // still settling after a weapon change -- which only matters to a draw that rides the weapon's delta
-                if (!g_RestModelValid[hand] && !(ai && ai->side >= 0 && (ai->full || useOwnDv))) { g_NotWeapon++; return false; }
+                if (!carryDraw && !g_RestModelValid[hand] && !(ai && ai->side >= 0 && (ai->full || useOwnDv))) { g_NotWeapon++; return false; }
             }
             if (ai && ai->full)
             {   // Full arm: the draw's own matrix stays exactly as the game made it (the model origin is the shoulder
@@ -5287,6 +5348,19 @@ bool GpuTrace::RawItemPose(int hand, float org[3], float axis[9], void** ent)
     if (ent) *ent = wa.ent;
     return true;
 }
+void GpuTrace::SetCarry(int hand)
+{
+    std::lock_guard lk(g_CarryM);
+    g_Carry = CarryState{}; g_Carry.on = true; g_Carry.hand = hand & 1;
+}
+void GpuTrace::ReturnCarry()
+{
+    std::lock_guard lk(g_CarryM);
+    if (!g_Carry.on || g_Carry.returning) return;
+    g_Carry.returning = true; g_Carry.retStart = CarryNow(); g_Carry.retFrom = g_Carry.last;
+}
+void GpuTrace::EndCarry() { std::lock_guard lk(g_CarryM); g_Carry = CarryState{}; }
+unsigned long long GpuTrace::CarryDraws() { return g_CarryDraws.load(); }
 bool GpuTrace::RawHandPose(int hand, float org[3], float rot[9])
 {
     const int h = hand & 1;

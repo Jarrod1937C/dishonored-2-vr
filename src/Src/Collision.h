@@ -25,9 +25,19 @@ namespace Collision
     void SetWeapons(bool on);                  //!< [Gameplay] WeaponCollision (the sword, the left hand's guns, characters' bodies)
     void SetPush(bool on, float handMass);     //!< [Gameplay] PushObjects / PushStrength (the hand's effective mass, kg)
     void SetDoors(bool on);                    //!< [Gameplay] PushDoors: a hand pushing a door opens it (the game's own push)
+    //! [Gameplay] PhysicalPickup: items (loot, mission items) are taken by grabbing them and putting them behind the back
+    //! (or to the mouth); the interact from afar does not take them.
+    void SetItems(bool on);
+    bool ItemsOn();
+    //! The pointer's pick when it is an item (its id), else 0.
+    uint32_t PointerItem();
+    //! Watch an item's entity (0 = stop): ItemPresent() = 1 while it is still in the world, 0 once it is gone (taken),
+    //! -1 not checked yet. The game thread checks once a frame.
+    void WatchItem(uint32_t id);
+    int ItemPresent();
     void SetOpenables(bool on);                //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     //! What a hand touched this frame (its first contact with an entity), fresh within ~0.1 s.
-    struct Touch { bool valid = false; void* ent = nullptr; uint32_t id = 0; bool openable = false, open = false; float n[3] = {}; };
+    struct Touch { bool valid = false; void* ent = nullptr; uint32_t id = 0; bool openable = false, open = false, item = false; float n[3] = {}, p[3] = {}; };
     bool Touched(int hand, Touch& out);
     //! A push on an open drawer / cabinet asks for the interact that closes it: its entity id, once.
     bool TakeCloseRequest(int hand, uint32_t* id);
