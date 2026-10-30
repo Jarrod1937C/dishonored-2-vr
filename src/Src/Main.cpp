@@ -121,6 +121,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     VrTweaks::SetFog(Settings::Fog());
+    VrTweaks::SetFogMaps(Settings::FogMaps());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
@@ -129,6 +130,7 @@ static DWORD WINAPI InitThread(LPVOID)
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
     MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
+    BinkVideo::SetSkipIntros(Settings::SkipIntroVideos());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());
     KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
     Collision::SetHands(Settings::HandCollision());

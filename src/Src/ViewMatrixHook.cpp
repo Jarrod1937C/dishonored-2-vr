@@ -292,6 +292,11 @@ namespace
         float stand = g_StandCamH.load();
         if (!low && fabsf(camH - stand) < 0.3f) { stand += (camH - stand) * 0.01f; g_StandCamH = stand; }
         const bool own = KbmInject::PhysicalCrouchOwns();
+        // B back down after a kept stand-up (KbmInject::VirtualStand): the game never stood, so there is no camera
+        // rise to wait for -- the lift fades out over 0.3 s instead of holding for 2
+        static unsigned cancelsSeen = 0; static double fadeAt = -1e9; static float fadeFrom = 0.f;
+        if (const unsigned c = KbmInject::CrouchLiftCancels(); c != cancelsSeen) { cancelsSeen = c; if (!own) { fadeAt = now; fadeFrom = g_CrouchLift.load(); lastOwn = -1e9; } }
+        if (now - fadeAt < 0.3 && !own) { const float l = fadeFrom * (float)(1.0 - (now - fadeAt) / 0.3); g_CrouchLift = l; return l; }
         if (own) lastOwn = now;
         if (!own && (now - lastOwn > 2.0 || camH >= stand - 0.02f)) { lastOwn = -1e9; g_CrouchLift = 0.f; return 0.f; }
         const float lift = Clampf(stand - camH, 0.f, 1.0f);

@@ -65,6 +65,8 @@ namespace Collision
     //! The game's interact was sent on this entity (KbmInject: the trigger, a pull, a hand's push): a cabinet front's
     //! open / closed count flips.
     void NoteInteract(uint32_t id);
+    //! The game's impulse message to an entity (only physics-driven ones take it), at a world point.
+    void Push(void* ent, const float impulse[3], const float at[3]);
     bool HandsOn();
     bool WeaponsOn();
 

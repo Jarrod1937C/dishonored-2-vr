@@ -25,7 +25,8 @@ namespace Settings
     bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
     bool FinisherAnimations();
-    float KnockoutSoundVolume();                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
+    float KnockoutSoundVolume();
+    bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
@@ -48,6 +49,7 @@ namespace Settings
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
+    std::string FogMaps();                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
 }

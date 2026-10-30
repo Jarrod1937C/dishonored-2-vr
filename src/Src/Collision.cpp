@@ -810,6 +810,32 @@ namespace
         uint8_t f = 0;
         return ent && SafeRead(&f, (uint8_t*)ent + kEntFlags, 1) && (f & 0x8);
     }
+    // A loose prop at REST does not have entity+0xD1 bit 3: the game sets it while the body is being simulated
+    // (exe+0x878D70) and clears it once it has settled (exe+0x879B20) -- so every bottle and crate standing still
+    // failed Dynamic() and was never pushed (reported: hitting grabbable objects moved nothing). Windblast, which does
+    // move resting props, asks the physics component instead: arkCpntPhysicsBase (type exe+0x39E85B0, exe+0x13E4C95)
+    // and its vtable +0x178 (arkCpntPhysicsSystem: exe+0x76A8F0, "one of my bodies has motion type 2 = dynamic"),
+    // exe+0x4D83B1 / exe+0x4D83CD. The impulse message (0xFA) is handled by that component (exe+0x809C90): a point
+    // impulse on its body, which wakes it.
+    constexpr uint32_t kPhysicsBaseType = 0x39E85B0;
+    constexpr int kPhysicsHasDynamicSlot = 0x178 / 8;
+    bool PhysicsDynamic(void* ent)
+    {
+        if (!ent) return false;
+        __try
+        {
+            using FnGet = uint8_t* (*)(void*, const void*, int);
+            uint8_t* c = ((FnGet)(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kPhysicsBaseType), 2);
+            if (!c) return false;
+            using FnHas = bool (*)(void*);
+            return ((FnHas)(*(void***)c)[kPhysicsHasDynamicSlot])(c);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    //! A loose object a hand can push: one being simulated (as before: a prop in motion, a ragdoll), or a resting body
+    //! the physics would move. A standing character is not (its own impulse handler would shove the guard; the hands
+    //! stop at them instead).
+    bool Pushable(void* ent) { return ent && (Dynamic(ent) || (!IsCharacter(ent) && PhysicsDynamic(ent))); }
     //! The entity's C++ class (MSVC RTTI: vtable[-1] = the complete object locator, +0x0C its type descriptor's RVA,
     //! +0x14 its own; the name at descriptor+0x10, ".?AVarkDoor@@") and its class id (type info +0x60). POD only (C2712).
     void ReadClass(void* ent, char (&buf)[96], int* classId)
@@ -849,6 +875,7 @@ namespace
         if (IsUsableFront(e)) d += " cabinet-front";
         if (HasComponent(e, kPickableSimpleType)) d += " holdable";
         if (Dynamic(e)) d += " physics";
+        else if (PhysicsDynamic(e)) d += " physics(resting)";
         uint8_t f = 0; if (SafeRead(&f, (uint8_t*)e + kEntFlags, 1) && (f & 0x28) && IsCharacter(e)) d += " (down)";
         return d;
     }
@@ -940,6 +967,7 @@ bool Collision::TakeCloseRequest(int hand, uint32_t* id, float point[3])
     return true;
 }
 std::string Collision::PointerDescribe() { std::lock_guard lk(g_TouchM); return g_PointerDesc; }
+void Collision::Push(void* ent, const float impulse[3], const float at[3]) { if (ent) PostImpulse(ent, impulse, at); }
 void Collision::NoteInteract(uint32_t id)
 {
     if (!id || id == 0x3FFF0010u) return;
@@ -1321,7 +1349,7 @@ void Collision::Tick()
             for (int i = 0; i < nc; i++)
             {
                 void* e = cents[i];
-                if (!Dynamic(e) || IsDoor(e) || OpenableState(e) >= 0) continue;
+                if (!Pushable(e) || IsDoor(e) || OpenableState(e) >= 0) continue;
                 bool dup = false; for (int k = 0; k < npushed; k++) if (pushed[k] == e) dup = true;
                 if (dup) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
@@ -1335,6 +1363,15 @@ void Collision::Tick()
                 const float imp[3] = { -cs[i].n[0] * J, -cs[i].n[1] * J, -cs[i].n[2] * J };
                 PostImpulse(e, imp, cs[i].p);
                 pushed[npushed++] = e;
+                static std::unordered_map<void*, double> told;   // game thread
+                if (told.size() > 64) told.clear();
+                double& at = told[e];
+                if (now - at > 1.0)
+                {
+                    at = now;
+                    LOGI("Collision: {} hand pushed '{}' at {:.2f} m/s: impulse {:.2f} (PushStrength {:.1f} kg){}", h ? "right" : "left",
+                         EntityName(e), into, J, g_HandMass.load(), Dynamic(e) ? "" : ", it was at rest");
+                }
             }
         }
         // a buzz on touching, as hard as the hand came in
@@ -1355,7 +1392,7 @@ void Collision::Tick()
             std::lock_guard lk(g_DescM);
             g_LastHitDesc = fmt::format("hand {} met entity {} {} body {:#x} layer {} flags {:#x} at ({:.2f},{:.2f},{:.2f}){} {:.2f} m/s",
                                         h, logs[0].ent, logs[0].ent ? DescribeEnt(logs[0].ent) : std::string("(the level)"), logs[0].body, logs[0].cfi & 0x1F, logs[0].cfi >> 5, logs[0].p[0], logs[0].p[1], logs[0].p[2],
-                                        Dynamic(logs[0].ent) ? " (loose: pushed)" : "", vn);
+                                        Pushable(logs[0].ent) ? " (loose: pushed)" : "", vn);
             LOGI("Collision: {}", g_LastHitDesc);
         }
         S.contact = touching;

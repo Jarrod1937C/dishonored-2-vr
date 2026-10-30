@@ -430,7 +430,7 @@ namespace
     // PullToOpen: the grip closed on a drawer / cabinet the hand touches waits for the pull before it presses interact
     struct Pull { bool armed = false; float start[3] = {}, n[3] = {}; double at = 0; uint32_t id = 0; float org[3] = {}; float d0 = -1.f; } g_Pull;
     // PhysicalPickup: an item grabbed by hand, on its way to the back (stored) or the mouth (eaten)
-    struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; bool foodToldBack = false; } g_Carry;
+    struct Carry { bool on = false; uint32_t id = 0; double at = 0, zoneAt = -1; bool foodToldBack = false, relocked = false, toldZone = false; } g_Carry;
     struct Verify { uint32_t id = 0; double at = -1; } g_Verify;   // the store's interact sent: did the game take it?
     double g_CarryClearAt = -1;                                     // when a returning item's drawing is handed back
     // a hand's interact on what it met (Collision's request: an open door pushed, a window slid), waiting for the sensor
@@ -542,6 +542,7 @@ namespace
         bool refOk = false; float standY = 0.f, drop = 0.f; unsigned gen = 0;
         bool own = false, suppress = false; double tapAt = -10, outSince = -1, logAt = 0, refusedAt = -10;
         unsigned taps = 0, ups = 0, claims = 0, lost = 0;
+        double takedownAt = -10; bool heldLogged = false;
     } g_Pc;
     //! Per input tick (play only): true when it pressed crouch this tick.
     bool PhysicalCrouch()
@@ -566,14 +567,23 @@ namespace
                        || PlayerState::Running("Mantle") || PlayerState::Running("Vault") || PlayerState::Running("CarryCorpse")
                        || PlayerState::Running("Powerwheel") || PlayerState::Running("InAir") || PlayerState::Running("Falling");
         bool tapped = false;
+        // A takedown on offer (the dot): the head rises to strike -- in VR one stands up to hit a guard's head, which
+        // with this crouch stood the character up and could end the offer under the blow. The game's crouch is HELD
+        // while a takedown is ready, and for a second after; the view keeps the real head's height (ViewMatrixHook).
+        { float tk[3]; if (MeleeAim::KnockoutAim(tk)) P.takedownAt = g_Now; }
+        const bool holdForTakedown = g_Now - P.takedownAt < 1.0;
         if (P.suppress && d < exit) { P.suppress = false; LOGI("KbmInject: physical crouch: head back up ({:.0f} cm down): crouching for real works again", d * 100.f); }
         if (P.own)
         {
             if (d < exit)
             {   // stood up for real: out of the game's crouch (again a second later if the game kept it: a low ceiling)
-                if (crouched && g_Now - P.tapAt > 1.0 && !busy)
+                if (crouched && holdForTakedown)
                 {
-                    Tap(kC); P.tapAt = g_Now; P.ups++; tapped = true;
+                    if (!P.heldLogged) { P.heldLogged = true; LOGI("KbmInject: physical crouch: head up ({:.0f} cm under standing) but a takedown is ready: the crouch is kept", d * 100.f); }
+                }
+                else if (crouched && g_Now - P.tapAt > 1.0 && !busy)
+                {
+                    Tap(kC); P.tapAt = g_Now; P.ups++; tapped = true; P.heldLogged = false;
                     LOGI("KbmInject: physical crouch: head up ({:.0f} cm under standing): crouch key to stand", d * 100.f);
                 }
                 else if (!crouched && g_Now - P.tapAt > 0.3) { P.own = false; LOGI("KbmInject: physical crouch: standing ({})", P.ups ? "the game stood up" : "it was not crouched"); }
@@ -610,6 +620,36 @@ namespace
                  ch, st, lift * 100.f, P.taps, P.ups, P.lost);
         }
         return tapped;
+    }
+    // Standing up with B while a takedown is ready (the dot: knockout, choke, stealth kill) does not end it: the B
+    // press is kept from the game, which stays in its crouch -- the takedown stays on offer -- and the view (and the
+    // hands with it) goes up to the real head's height as if standing (ViewMatrixHook's crouch lift). The character
+    // really stands a second after no takedown is ready any more; B again before that goes back down. Asked for:
+    // "if I uncrouch while the stealth state is offered, uncrouching alone doesn't remove this state".
+    std::atomic<bool> g_VStandA{ false };
+    std::atomic<unsigned> g_LiftCancels{ 0 };   // the view goes back down at once (ViewMatrixHook: no stand-up to wait for)
+    struct VStand { bool on = false, swallow = false; double readyAt = -10, since = 0; } g_VS;
+    //! Per input tick, before B goes to the game: true while this B press is kept from it.
+    bool VirtualStand(uint32_t pressed, uint32_t live)
+    {
+        VStand& V = g_VS;
+        { float tk[3]; if (MeleeAim::KnockoutAim(tk)) V.readyAt = g_Now; }
+        const bool ready = g_Now - V.readyAt < 1.0;
+        const bool crouched = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch");
+        if (!(live & kXRBtnB)) V.swallow = false;
+        if (pressed & kXRBtnB)
+        {
+            if (V.on) { V.on = false; V.swallow = true; g_LiftCancels++; LOGI("KbmInject: B: back down (the game never stood up)"); }
+            else if (crouched && ready) { V.on = true; V.swallow = true; V.since = g_Now; LOGI("KbmInject: B to stand while a takedown is ready: the game stays crouched (the takedown stays on offer), the view goes up to your height"); }
+        }
+        if (V.on && !crouched) { V.on = false; LOGI("KbmInject: the game left its crouch by itself: standing as asked"); }
+        if (V.on && !ready && !g_Held[kC])
+        {   // no takedown any more: stand up for real now
+            Tap(kC); V.on = false;
+            LOGI("KbmInject: no takedown ready for a second: the game stands up now ({:.1f} s after B)", g_Now - V.since);
+        }
+        g_VStandA = V.on;
+        return V.swallow;
     }
     void MouseMove(int dx, int dy)
     {
@@ -1419,7 +1459,8 @@ void KbmInject::Tick()
     Hold(kShift, (g_SprintLatch || g_Now < slideShiftUntil) && moving);   // L stick click: sprint (latched)
     // Touch layout -> game actions
     Hold(kSpace, (live & kXRBtnA) != 0);                  // A            : jump
-    Hold(kC,     (live & kXRBtnB) != 0);                  // B            : crouch (the game's C toggles)
+    const bool bKept = VirtualStand(pressed, live);
+    Hold(kC,     (live & kXRBtnB) != 0 && !bKept);        // B            : crouch (the game's C toggles; see VirtualStand)
     const bool quick = g_QuickSlots.load() != 0;
     // Y / X: quick slots 1-4 (short / held). The old Y was the game's LEAN, which only leans together with a sideways
     // stick and stops the stick walking meanwhile -- alone it did nothing; leaning the head already moves the view.
@@ -1590,6 +1631,18 @@ void KbmInject::Tick()
             zone = 0;
         }
         if (zone && g_Carry.zoneAt < 0) g_Carry.zoneAt = g_Now;
+        if (zone && GrabHand::TargetId() != (int)g_Carry.id)
+        {   // In the place, but the sensor has something else (measured: a pouch lying on a folder -- the folder): held
+            // again on the item's middle, once, and said
+            if (!g_Carry.toldZone)
+            {
+                g_Carry.toldZone = true;
+                LOGI("KbmInject: item id {:#x} {}, but the sensor has {}: aiming it at the item again", g_Carry.id,
+                     zone == 1 ? "is behind the back" : "is at the mouth", Collision::PointerDescribe());
+            }
+            float c[3];
+            if (!g_Carry.relocked && g_Now - g_Carry.zoneAt > 0.1 && GrabHand::EntityCenter((int)g_Carry.id, c)) { GrabHand::LockSensor(c); g_Carry.relocked = true; }
+        }
         if (!zone) g_Carry.zoneAt = -1;
         if (zone && GrabHand::TargetId() == (int)g_Carry.id && !g_Held[kF])
         {
@@ -1816,7 +1869,8 @@ void KbmInject::Tick()
 }
 
 bool KbmInject::Possessing() { return g_Possessing.load(); }
-bool KbmInject::PhysicalCrouchOwns() { return g_PcOwnA.load(); }
+bool KbmInject::PhysicalCrouchOwns() { return g_PcOwnA.load() || g_VStandA.load(); }
+unsigned KbmInject::CrouchLiftCancels() { return g_LiftCancels.load(); }
 void KbmInject::SetPhysicalCrouch(bool on, float depth)
 {
     g_PcOn = on; g_PcDepth = std::clamp(depth, 0.1f, 0.8f);

@@ -28,6 +28,8 @@ namespace GrabHand
     bool HandHasTarget();
     //! The picked object's origin (world), while there is one; for the reticle.
     bool TargetPoint(float out[3]);
+    //! The middle of an entity's box (world), by its spawn id; false when it is not in the world.
+    bool EntityCenter(int id, float out[3]);
     int TargetId();                              //!< the sensor's pick (spawn id), 0x3FFF0010 = none
     //! The sensor's CARRY pick (sensor+0x88): what the interact would pick up and hold -- a bottle, a glass, a body --
     //! as opposed to what it only uses (a door, a lever, a note). 0x3FFF0010 = none.

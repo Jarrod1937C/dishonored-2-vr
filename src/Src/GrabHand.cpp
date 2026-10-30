@@ -970,6 +970,15 @@ bool GrabHand::TargetPoint(float out[3])
     else memcpy(out, (uint8_t*)e + kEntityOrigin, 12);
     return true;
 }
+bool GrabHand::EntityCenter(int id, float out[3])
+{
+    void* e = BodyHide::EntityById(id);
+    if (!e) return false;
+    float b[6];
+    if (EntityBounds(e, b)) { for (int i = 0; i < 3; i++) out[i] = 0.5f * (b[i] + b[3 + i]); }
+    else memcpy(out, (uint8_t*)e + kEntityOrigin, 12);
+    return true;
+}
 float GrabHand::PickRange() { return g_GameRange; }
 void GrabHand::LockSensor(const float point[3])
 {

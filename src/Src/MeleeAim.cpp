@@ -834,20 +834,32 @@ namespace
     constexpr int kStateChoke = 41;
     constexpr uint32_t kBuildDamage = 0x780260, kWrapDamage = 0x882E20, kSendDamage = 0x884920, kFreeDamage = 0x882FC0;
     constexpr uint32_t kDamageInfo = 0x39A9D20, kMsgHasChoked = 0x13E;
+    constexpr uint32_t kMsgStartRagdoll = 0xB9, kRagdollCpnt = 0x39E2A00, kRagdollReady = 0x5F8CD0;
+    int g_KoRagdollGate = 0;   // the last knockout: 1 the game's gate passed, 2 it refused, 3 no such component (sent anyway)
     constexpr uint32_t kMsgSystem2 = 0x810240, kMsgPost2 = 0x8112C0, kMsgQueue2 = 0xC8E8;
     std::atomic<bool> g_KoOn{ false };
     std::atomic<uint64_t> g_Kos{ 0 }, g_KoFails{ 0 };
     // Reported from the headset: the blow failed most of the time -- the head is a small target to hit blind, and the
     // takedown offer (and with it the check) went away as the arm swung. So the blow counts within 22 cm of the head's
     // centre (the head and the neck) at 1.4 m/s, and for kKoLatch after the offer was last seen on that target.
-    constexpr float kKoSpeed = 1.4f;        // m/s of the striking point (relative to the player)
+    // m/s of the striking point (relative to the player). Was 1.4: reported, a slow hand scratching the chin next to
+    // a guard knocked him out. A real blow is 4-15 m/s (the logs); 3 is a firm, deliberate strike.
+    constexpr float kKoSpeed = 3.0f;
+    // The guard must not see it coming: the player behind him -- the direction from his head to the player at least
+    // ~100 deg away from where he faces (cos = -0.17). Reported: "I can be literally standing in front of them".
+    // Loosened for VR (asked: "more forgiving than the default"): 90 deg, i.e. anywhere behind his shoulders' line.
+    constexpr float kKoBehindCos = 0.0f;
     // Reported twice as too picky: 0.22, then 0.30 m. The near misses logged after that were 35-58 cm from the centre
     // of the head (its top joints) and up to 27 cm in front of it: the head, the neck and the top of the shoulders.
     // ...and a third time ("very delayed or not registering"): the near misses after 0.42 were still 48-60 cm out --
     // blows to the back of the neck and the shoulders. Those count now.
-    constexpr float kKoRadius = 0.60f;      // m around the head's centre
-    constexpr float kKoFront = 0.30f;       // m the blow may land in front of the head's centre (the sides of the head)
-    constexpr double kKoLatch = 1.5;        // s the knockout stays possible after the offer goes away
+    // With the blue dot showing where to hit, 0.60 m let blows far from it count: back to the head and the neck.
+    constexpr float kKoRadius = 0.40f;      // m around the head's centre
+    constexpr float kKoFront = 0.20f;       // m the blow may land in front of the head's centre (the sides of the head)
+    // s the knockout stays possible after the offer goes away. Was 1.5 s; now the same 0.25 s as the stealth kill's
+    // (KillOffered) -- the game's offer flickers off for a frame or two, that is all this bridges. Reported: the dot
+    // must mean the same for the knockout, the choke and the stealth kill, and the kill only works while offered.
+    constexpr double kKoLatch = 0.25;
     std::atomic<void*> g_KoTarget{ nullptr }; std::atomic<long long> g_KoAt{ 0 };
     uint32_t g_KoTid = 0; uint8_t* g_KoSensor = nullptr;   // game thread: the latched target's id and the sensor
     struct KoPt { bool ok = false; float p[3] = {}; int hand = 0; const char* what = ""; };
@@ -879,6 +891,16 @@ namespace
                 using FnPost = uint32_t* (*)(void*, uint32_t, uint32_t, uint32_t);
                 if (uint32_t* pl = ((FnPost)(base + kMsgPost2))(sys + kMsgQueue2, kMsgHasChoked, 4, *(const uint32_t*)(player + 0xA8)))
                     *pl = *(const uint32_t*)(npc + 0xA8);
+                // ...and drop him NOW, as the choke's own end does (exe+0x82DFE0: if the NPC's component exe+0x39E2A00
+                // passes exe+0x5F8CD0, ARK_MSG_START_RAGDOLL 0xB9 {0, 0} to him). Without it the damage made him
+                // unconscious at once but his body went on with what it was doing: reported, one fell 4 s later, three
+                // not at all.
+                using FnGet = uint8_t* (*)(void*, const void*, int);
+                uint8_t* rc = ((FnGet)(base + kGetComponent))(npc, (const void*)(base + kRagdollCpnt), 2);
+                const bool can = rc && ((bool (*)(void*))(base + kRagdollReady))(rc);
+                if (uint64_t* pl = (uint64_t*)((FnPost)(base + kMsgPost2))(sys + kMsgQueue2, kMsgStartRagdoll, 0x10, *(const uint32_t*)(npc + 0xA8)))
+                { pl[0] = 0; pl[1] = 0; }
+                g_KoRagdollGate = can ? 1 : rc ? 2 : 3;
             }
             return 0;
         }
@@ -936,6 +958,7 @@ namespace
         play((LPCWSTR)g_KoWav.data(), nullptr, kMemory | kAsync | kNoDefault);
     }
     std::mutex g_KoAimM; float g_KoAim[3] = {}; long long g_KoAimAt = 0;   // the knockout's target point (the reticle)
+    struct KoFall { void* target = nullptr; long long at = 0; float dir[3] = {}, pt[3] = {}; bool pushed = false; } g_KoFall;   // game thread
     //! entity+0xD1 (& 0x28: dead or a ragdoll), 0 when unreadable. No C++ objects
     //! here: MSVC refuses __try where temporaries unwind (C2712).
     uint8_t EntFlagsD1(const void* e)
@@ -976,10 +999,30 @@ namespace
         if (!nh) return;
         for (float& v : head) v /= (float)nh;
         float fwd[3]; if (!ReadAxis(target, fwd)) return;
-        {   // where to hit, for the reticle's blue dot: the back of the head (6 cm behind its centre)
+        // can he see the player? (in front of him, or to his side)
+        bool behind = true; float facing = -1.f;
+        if (playerOrg)
+        {
+            float tp[2] = { playerOrg[0] - head[0], playerOrg[1] - head[1] };
+            const float tl = sqrtf(tp[0] * tp[0] + tp[1] * tp[1]), fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]);
+            if (tl > 1e-3f && fl > 1e-3f) { facing = (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl); behind = facing < kKoBehindCos; }
+        }
+        {   // where to hit, for the reticle's blue dot: the back of the head (6 cm behind its centre) -- only when he
+            // cannot see the player
             std::lock_guard lk(g_KoAimM);
             for (int k = 0; k < 3; k++) g_KoAim[k] = head[k] - fwd[k] * 0.06f;
-            g_KoAimAt = now;
+            g_KoAimAt = behind ? now : 0;
+        }
+        if (!behind)
+        {
+            static long long toldAt = 0;
+            if ((double)(now - toldAt) / (double)QpcFreq() > 3.0)
+            {
+                toldAt = now;
+                LOGI("MeleeAim: no knockout: the guard can see you ({:.0f} deg from where he faces; it needs more than 90)", acosf(std::clamp(facing, -1.f, 1.f)) * 57.29578f);
+            }
+            g_KoPrevT = 0;
+            return;
         }
         if (dt <= 1e-4 || dt > 0.1 || (double)(now - g_KoLast) / (double)QpcFreq() < 1.0) return;
         for (int i = 0; i < 4; i++)
@@ -1010,12 +1053,54 @@ namespace
             }
             g_KoLast = now;
             const int why = Knockout(sensor, target, player);
-            if (why == 0) { g_Kos++; PlayKoSound(); VRRuntime::Vibrate(cur[i].hand, 1.f, 0.08f); }
+            if (why == 0)
+            {
+                g_Kos++; PlayKoSound(); VRRuntime::Vibrate(cur[i].hand, 1.f, 0.08f);
+                LOGI("MeleeAim: knocked out: the game's ragdoll sent ({})", g_KoRagdollGate == 1 ? "as the choke's end sends it" : g_KoRagdollGate == 2 ? "though its gate said no" : "no ragdoll component found");
+                // and watch him go down: some only fell seconds later or not at all (reported) -- once his body is
+                // physics-driven a push in the blow's direction drops him at once
+                g_KoFall.target = target; g_KoFall.at = now; g_KoFall.pushed = false;
+                for (int k = 0; k < 3; k++) { g_KoFall.dir[k] = d[k] / len; g_KoFall.pt[k] = head[k]; }
+            }
             else g_KoFails++;
             LOGI("MeleeAim: KNOCKOUT BLOW with the {} at {:.1f} m/s, {:.0f} cm from the back of the head's centre: {}", cur[i].what, speed, miss * 100.f,
                  why == 0 ? "the game's choke knockout sent" : fmt::format("not sent (reason {})", why));
             return;
         }
+    }
+}
+namespace
+{
+    //! He cannot see the player: the player behind him, as the knockout needs it (kKoBehindCos). Stealth kills by the
+    //! blade obey the same rule -- one state, one indicator (the dot): reported, "a knockout and stealth kills can use
+    //! the same indicator".
+    bool Unseen(const uint8_t* target, const float* playerOrg)
+    {
+        if (!target || !playerOrg) return false;
+        float fwd[3], org[3];
+        if (!ReadAxis(target, fwd)) return false;
+        __try { memcpy(org, target + BodyHide::kEntityOrigin, 12); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        const float tp[2] = { playerOrg[0] - org[0], playerOrg[1] - org[1] };
+        const float tl = sqrtf(tp[0] * tp[0] + tp[1] * tp[1]), fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]);
+        if (tl < 1e-3f || fl < 1e-3f) return false;
+        return (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl) < kKoBehindCos;
+    }
+    //! The back of his head (for the dot when only the stealth kill is on: KnockoutBlow off).
+    bool HeadBack(uint8_t* target, float out[3])
+    {
+        if (!NpcSkel::Get(target, g_KoSkel) || g_KoSkel.n < 5) return false;
+        int top = 0; for (int j = 1; j < g_KoSkel.n; j++) if (g_KoSkel.p[j][2] > g_KoSkel.p[top][2]) top = j;
+        float head[3] = {}; int nh = 0;
+        for (int j = 0; j < g_KoSkel.n; j++)
+        {
+            const float d[3] = { g_KoSkel.p[j][0] - g_KoSkel.p[top][0], g_KoSkel.p[j][1] - g_KoSkel.p[top][1], g_KoSkel.p[j][2] - g_KoSkel.p[top][2] };
+            if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 0.18f * 0.18f) { nh++; for (int k = 0; k < 3; k++) head[k] += g_KoSkel.p[j][k]; }
+        }
+        float fwd[3];
+        if (!nh || !ReadAxis(target, fwd)) return false;
+        for (int k = 0; k < 3; k++) out[k] = head[k] / (float)nh - fwd[k] * 0.06f;
+        return true;
     }
 }
 void MeleeAim::SetKnockoutSound(float volume)
@@ -1031,6 +1116,24 @@ void MeleeAim::SetKnockoutBlow(bool on)
 }
 void MeleeAim::TickTakedown()
 {
+    if (g_KoFall.target)
+    {   // after a knockout: his body turns physics-driven (+0xD1 bit 3) when he collapses -- a push then, once
+        const double since = (double)(Qpc() - g_KoFall.at) / (double)QpcFreq();
+        const uint8_t f = EntFlagsD1(g_KoFall.target);
+        if (!g_KoFall.pushed && (f & 0x08))
+        {
+            float imp[3]; for (int k = 0; k < 3; k++) imp[k] = g_KoFall.dir[k] * 120.f;
+            imp[2] -= 40.f;
+            Collision::Push(g_KoFall.target, imp, g_KoFall.pt);
+            g_KoFall.pushed = true;
+            LOGI("MeleeAim: the knocked-out guard went limp {:.2f} s after the blow: pushed down the way he was hit (flags {:#x})", since, f);
+        }
+        if (since > 3.0)
+        {
+            if (!g_KoFall.pushed) LOGI("MeleeAim: the knocked-out guard has not gone limp 3 s after the blow (flags {:#x}, states of the player {})", f, PlayerState::RunningNames());
+            g_KoFall = KoFall{};
+        }
+    }
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
     void* target = nullptr; uint32_t tid = 0; uint8_t* sensor = nullptr;
     void* player = an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr;
@@ -1040,7 +1143,14 @@ void MeleeAim::TickTakedown()
     const int outcome = can ? SensorOutcome(sensor) : -1;
     // (a guard who is down is a FATALITY_GROUND_ON_RAGDOLL to the game: with FinisherAnimations = 0 not a takedown)
     const bool downNow = can && (EntFlagsD1(target) & 0x28) != 0;
-    const bool kill = can && !(g_NoFinishers.load() && (IsFatality(outcome) || downNow));
+    // ...and not while he can see the player: the same rule as the knockout's (Unseen)
+    const bool unseen = can && an[BodyHide::aPlayer].valid && Unseen((const uint8_t*)target, an[BodyHide::aPlayer].org);
+    const bool kill = can && unseen && !downNow && !(g_NoFinishers.load() && IsFatality(outcome));
+    if (kill && !g_KoOn.load())
+    {   // the dot without the knockout: where a swing takes him down
+        float hb[3];
+        if (HeadBack((uint8_t*)target, hb)) { std::lock_guard lk(g_KoAimM); memcpy(g_KoAim, hb, 12); g_KoAimAt = Qpc(); }
+    }
     if (kill) { g_KillTarget = target; g_KillAt = Qpc(); }
     static int outcomeWas = -2;
     if (can != g_KillWas || (can && outcome != outcomeWas))
@@ -1048,7 +1158,8 @@ void MeleeAim::TickTakedown()
         g_KillWas = can; outcomeWas = outcome;
         if (can) { g_KillOffers++; LOGI("MeleeAim: the game offers a takedown ({}) on {} while {}: {}{}", OutcomeName(outcome), Collision::Describe(target),
                                         PlayerState::Running("Sneaking") ? "SNEAKING" : "STANDING (not sneaking)",
-                                        kill ? "a swing now is the game's takedown" : "a kill animation (a fight's, or a guard who is down): refused, swings stay ordinary",
+                                        kill ? "a swing now is the game's takedown" : downNow ? "a guard who is down: refused, swings stay ordinary"
+                                             : !unseen ? "he can see you: refused, swings stay ordinary" : "a fight's kill animation: refused, swings stay ordinary",
                                         g_KoOn.load() ? "; a blow to the back of the head knocks him out" : ""); }
         else LOGI("MeleeAim: the takedown is no longer offered");
     }
@@ -1058,8 +1169,8 @@ void MeleeAim::TickTakedown()
     // blows went to him -- "reason 1" -- while the next one stood there)
     bool down = false;
     if (can) down = (EntFlagsD1(target) & 0x28) != 0;
-    if (can && !down) { g_KoTarget = target; g_KoAt = Qpc(); g_KoTid = tid; g_KoSensor = sensor; }
-    void* koTarget = can && !down ? target : nullptr; uint8_t* koSensor = sensor;
+    if (can && !down && unseen) { g_KoTarget = target; g_KoAt = Qpc(); g_KoTid = tid; g_KoSensor = sensor; }
+    void* koTarget = can && !down && unseen ? target : nullptr; uint8_t* koSensor = sensor;
     if (!can && g_KoTarget.load() && (double)(Qpc() - g_KoAt.load()) / (double)QpcFreq() < kKoLatch && g_KoTid && BodyHide::EntityById((int)g_KoTid) == g_KoTarget.load()
         && !(EntFlagsD1(g_KoTarget.load()) & 0x28))
     { koTarget = g_KoTarget.load(); koSensor = g_KoSensor; }
@@ -1075,7 +1186,7 @@ bool MeleeAim::KnockoutReady()
 }
 bool MeleeAim::KnockoutAim(float out[3])
 {
-    if (!KnockoutReady()) return false;
+    if (!KnockoutReady() && !KillOffered()) return false;
     std::lock_guard lk(g_KoAimM);
     if (!g_KoAimAt || (double)(Qpc() - g_KoAimAt) / (double)QpcFreq() > 0.25) return false;
     memcpy(out, g_KoAim, 12);
@@ -1188,7 +1299,7 @@ namespace
     uint8_t* SlashOutcomeHook(void* sensor)
     {
         uint8_t* rec = g_RealOutcome(sensor);
-        if (!rec || !g_NoFinishers.load()) return rec;
+        if (!rec) return rec;
         const int t = RecordOutcome(rec);
         uint32_t tid = 0; const uint8_t f = SensorTargetFlags((const uint8_t*)sensor, &tid);
         // Measured: the kill animation on a knocked-out guard went through here with the record's +0x20 NOT 2-6 -- so a
@@ -1196,7 +1307,16 @@ namespace
         const bool down = (f & 0x28) != 0;
         static int logged = 0;
         if (logged < 60) { logged++; LOGI("MeleeAim: the swing's takedown query: record +0x20 = {} ({}), target {:#x} flags {:#x}{}", t, OutcomeName(t), tid, f, down ? " (down)" : ""); }
-        if (!IsFatality(t) && !down) return rec;
+        // (the stealth kill needs what the dot shows: offered, he cannot see you, he is up -- MeleeAim's own state,
+        // within 0.6 s: the Slash asks a little after the click)
+        const long long ka = g_KillAt.load();
+        const bool offered = ka && (double)(Qpc() - ka) / (double)QpcFreq() < 0.6;
+        if (!offered && !down)
+        {
+            LOGI("MeleeAim: the swing would have been the game's takedown ({}) but he can see you (no dot): an ordinary swing", OutcomeName(t));
+            return nullptr;
+        }
+        if (!g_NoFinishers.load() || (!IsFatality(t) && !down)) return rec;   // (FinisherAnimations = 1: the game's)
         g_FatalitiesBlocked++;
         LOGI("MeleeAim: the swing would have been the game's kill animation ({}{}): an ordinary swing instead", OutcomeName(t), down ? ", on a guard who is down" : "");
         return nullptr;

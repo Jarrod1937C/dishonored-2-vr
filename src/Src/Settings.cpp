@@ -7,7 +7,7 @@
 
 namespace
 {
-    enum class Kind { Bool, Float, Choice };
+    enum class Kind { Bool, Float, Choice, Text };
     struct Key
     {
         const char* name;          //!< "section.key", lower case
@@ -46,6 +46,7 @@ namespace
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
         { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
+        { "advanced.skipintrovideos",   Kind::Bool,   "0", 0, 0, nullptr },   // BinkVideo: the start-up videos end at once
         { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
@@ -73,6 +74,7 @@ namespace
         { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: no depth of field in VR
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
         { "display.fog",                Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no fog in VR
+        { "display.fogmaps",            Kind::Text,   "void", 0, 0, nullptr },   // VrTweaks: ...except in maps named so
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -117,6 +119,7 @@ namespace
     bool Validate(const Key& k, const std::string& raw, std::string& out)
     {
         if (k.kind == Kind::Bool) { bool b; if (!ParseBool(raw, b)) return false; out = b ? "1" : "0"; return true; }
+        if (k.kind == Kind::Text) { out = Lower(Trim(raw)); return true; }      // free text (may be empty)
         if (k.kind == Kind::Float)
         {
             // Decimals with a point; a comma (how a Spanish or German Windows writes them) is taken as a point too.
@@ -260,6 +263,7 @@ bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
 float Settings::KnockoutSoundVolume() { return F("gameplay.knockoutsoundvolume"); }
+bool Settings::SkipIntroVideos() { return B("advanced.skipintrovideos"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
@@ -285,6 +289,7 @@ float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
+std::string Settings::FogMaps() { return V("display.fogmaps"); }
 StereoSync::ReuseFlags Settings::StereoReuse()
 {
     StereoSync::ReuseFlags f;

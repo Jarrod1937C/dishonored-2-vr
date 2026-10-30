@@ -246,6 +246,7 @@ namespace
         int x = -1, y = -1, z = -1, w = -1;
         int px = -1, py = -1, pz = -1, pw = -1;
         int mx = -1, my = -1, mz = -1;
+        int dh = -1, dhn = 0;                  // cb_modeldepthhack: offset and size in floats (first-person depth)
         int matSlot = -1, prevMatSlot = -1;    // t-slots of ro_matrices / ro_previousframeskinningmatrices (skinned shaders)
     };
     using Reflect_t = HRESULT (WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
@@ -306,6 +307,11 @@ namespace
                 L.px = off("cb_previousmvpmatrixx"); L.py = off("cb_previousmvpmatrixy");
                 L.pz = off("cb_previousmvpmatrixz"); L.pw = off("cb_previousmvpmatrixw");
                 L.mx = off("cb_modelmatrixx"); L.my = off("cb_modelmatrixy"); L.mz = off("cb_modelmatrixz");
+                if (ID3D11ShaderReflectionVariable* v = cb->GetVariableByName("cb_modeldepthhack"))
+                {
+                    D3D11_SHADER_VARIABLE_DESC vd{};
+                    if (SUCCEEDED(v->GetDesc(&vd))) { L.dh = (int)(vd.StartOffset / 4); L.dhn = (int)std::min<UINT>(4, std::max<UINT>(1, vd.Size / 4)); }
+                }
             }
         }
         r->Release();
@@ -319,6 +325,7 @@ namespace
         if (!(fits(L.x) && fits(L.y) && fits(L.z) && fits(L.w))) L.ok = false;
         if (!(fits(L.px) && fits(L.py) && fits(L.pz) && fits(L.pw))) L.prev = false;
         if (!(fits(L.mx) && fits(L.my) && fits(L.mz))) L.model = false;
+        if (!(L.dh >= 0 && (size_t)L.dh + L.dhn <= kInstMaxFloats)) { L.dh = -1; L.dhn = 0; }
         if (!L.ok) g_NoMvp++;
         return L;
     }
@@ -625,6 +632,36 @@ namespace
     std::mutex g_CarryM; CarryState g_Carry;
     constexpr double kCarryBack = 0.35;
     std::atomic<unsigned long long> g_CarryDraws{ 0 };
+    // The first-person depth hack. The arms' cb2 carries cb_modeldepthhack, which the vertex shader applies to the
+    // clip z so the player's own models win against the world. A carried item is a WORLD draw moved into the hand: it
+    // kept the world's value, so the hand (pulled toward the eye in depth) drew over a coin or an apple held in front
+    // of it. The carried draw is given the arms' value instead -- the same depth transform as the hand, so the two
+    // sort by their real distance (and the item, like the hand, no longer sinks into a wall it is pushed against).
+    // Keyed by the projection the arm draw used, so a pass of another view (shadow maps, reflections) keeps its own.
+    struct ArmDepthHack { float p00 = 0, p11 = 0; float v[4] = {}; int n = 0; bool valid = false; };
+    std::mutex g_DhM; ArmDepthHack g_ArmDh[6]; int g_ArmDhNext = 0;
+    std::atomic<unsigned long long> g_CarryDhSet{ 0 }, g_CarryDhNone{ 0 }, g_CarryDhNoVar{ 0 };
+    std::atomic<int> g_CarryDhLog{ 0 };          // log lines left for this carry
+    bool SameProj(float a, float b) { return fabsf(a - b) <= 0.02f * std::fmax(fabsf(a), fabsf(b)); }
+    void NoteArmDepthHack(const float p[4][4], const float* v, int n)
+    {
+        std::lock_guard lk(g_DhM);
+        int slot = -1;
+        for (int i = 0; i < 6; i++) if (g_ArmDh[i].valid && SameProj(g_ArmDh[i].p00, p[0][0]) && SameProj(g_ArmDh[i].p11, p[1][1])) { slot = i; break; }
+        if (slot < 0) { slot = g_ArmDhNext; g_ArmDhNext = (g_ArmDhNext + 1) % 6; }
+        ArmDepthHack& e = g_ArmDh[slot];
+        e.p00 = p[0][0]; e.p11 = p[1][1]; e.n = n; memcpy(e.v, v, sizeof(float) * n); e.valid = true;
+    }
+    bool ArmDepthHackFor(const float p[4][4], float* v, int n)
+    {
+        std::lock_guard lk(g_DhM);
+        for (int i = 0; i < 6; i++)
+        {
+            const ArmDepthHack& e = g_ArmDh[i];
+            if (e.valid && e.n == n && SameProj(e.p00, p[0][0]) && SameProj(e.p11, p[1][1])) { memcpy(v, e.v, sizeof(float) * n); return true; }
+        }
+        return false;
+    }
     double CarryNow() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
     // The projection recovered from a factored MVP, kept so the screen-space overlay (the reticle) can put a world
     // point on the screen. Using the engine's OWN projection instead of rebuilding one from the camera's FOV means
@@ -1596,6 +1633,7 @@ namespace
                 const int side = ArmSideFromSrv(keys);
                 if (side < 0) { partsReject("arm model, side unknown"); g_ArmUnknownLive++; return false; }
                 g_ArmHitsLive[side]++;
+                if (L && L->dh >= 0 && within(L->dh)) NoteArmDepthHack(f.p, in + L->dh, L->dhn);
                 if (side == g_VbDumpSide.load() && g_VbDumpWant.load() && ctx && draw == (UINT)g_VbDumpWant.load()) { CaptureVertexStreams(ctx, draw); g_VbDumpWant = 0; }
                 if (hand < 0) hand = side;
                 // The joint palette this draw binds: the shadow copy is read through it, and it keys the skeleton
@@ -2001,6 +2039,22 @@ namespace
         memset(out, 0, kInstMaxBytes);            // our buffer is the largest supported size; the tail must be defined
         memcpy(out, in, bytes);
         Rebuild(f, Mul(dv, f.pose), out + L->x, out + L->y, out + L->z, out + L->w);
+        if (carryDraw)
+        {   // the carried item takes the hand's depth transform (see g_ArmDh)
+            float dh[4] = {};
+            const bool var = L->dh >= 0 && within(L->dh);
+            const bool got = var && ArmDepthHackFor(f.p, dh, L->dhn);
+            if (got) { memcpy(out + L->dh, dh, sizeof(float) * L->dhn); g_CarryDhSet++; }
+            else if (var) g_CarryDhNone++; else g_CarryDhNoVar++;
+            if (g_CarryDhLog.load() > 0 && g_CarryDhLog.fetch_sub(1) > 0)
+            {
+                const float* o = var ? in + L->dh : dh;
+                if (got) LOGI("carry depth: draw n={} cb{} depth hack ({:.4f},{:.4f},{:.4f},{:.4f}) -> the arms' ({:.4f},{:.4f},{:.4f},{:.4f}) [{} floats]",
+                              draw, bytes, o[0], L->dhn > 1 ? o[1] : 0.f, L->dhn > 2 ? o[2] : 0.f, L->dhn > 3 ? o[3] : 0.f, dh[0], dh[1], dh[2], dh[3], L->dhn);
+                else if (var) LOGI("carry depth: draw n={} cb{} depth hack ({:.4f}) left as it is: no arm draw seen with this projection (p00 {:.3f} p11 {:.3f})", draw, bytes, o[0], f.p[0][0], f.p[1][1]);
+                else LOGI("carry depth: draw n={} cb{} has no cb_modeldepthhack in its shader", draw, bytes);
+            }
+        }
         if (!torso && !(ai && ai->side >= 0) && targetValid[hand] && g_PartsLeft.load() > 0 && g_PartsLeft.fetch_sub(1) > 0)
         {   // where this weapon draw is DRAWN, in the frame of the pose the weapon is drawn at: the body of the weapon sits
             // at its origin, a model bound to one of its joints at that joint's offset -- anything else is drawn wrong
@@ -5352,6 +5406,9 @@ void GpuTrace::SetCarry(int hand)
 {
     std::lock_guard lk(g_CarryM);
     g_Carry = CarryState{}; g_Carry.on = true; g_Carry.hand = hand & 1;
+    g_CarryDhLog = 8;
+    LOGI("carry depth: so far {} carried draws given the arms' depth, {} without an arm match, {} without the variable",
+         g_CarryDhSet.load(), g_CarryDhNone.load(), g_CarryDhNoVar.load());
 }
 void GpuTrace::ReturnCarry()
 {

@@ -2,6 +2,9 @@
 #include "VrTweaks.h"
 #include "VRRuntime.h"
 #include "CVars.h"
+#include "Game.h"
+#include <vector>
+#include <mutex>
 
 namespace
 {
@@ -13,7 +16,46 @@ namespace
     int g_UserSkipFog = -1;     // the game's r_skipFog, to put back (render thread)
     std::atomic<unsigned long long> g_Views{ 0 };
     bool g_WasActive = false;   // render thread only
+    // [Display] FogMaps: the fog is kept in maps whose name holds one of these words (lower case)
+    std::vector<std::string> g_FogMaps;
+    std::mutex g_MapM; std::string g_Map;   // the current map's name, lower case (written on the render thread)
+    std::atomic<bool> g_MapFog{ false };   // the current map is one of FogMaps
+    // The map's name: idGameLocal's vtable +0x88 (exe+0x8A89E0) returns gameLocal+0x337128, the map's file record,
+    // whose idStr at +0x10 is the map file name -- what the game's own crash report prints as "Map:" (exe+0x427BD).
+    constexpr size_t kMapNameStr = 0x337128 + 0x10;
+    bool ReadMapName(const uint8_t* gl, char* out, size_t n)
+    {
+        __try
+        {
+            const char* s = *(const char* const*)(gl + kMapNameStr);
+            if (!s) return false;
+            size_t i = 0;
+            for (; i + 1 < n && s[i]; i++) out[i] = s[i];
+            out[i] = 0;
+            return i > 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
 }
+
+void VrTweaks::SetFogMaps(const std::string& words)
+{
+    g_FogMaps.clear();
+    size_t a = 0;
+    while (a <= words.size())
+    {
+        size_t b = words.find(',', a); if (b == std::string::npos) b = words.size();
+        std::string w = words.substr(a, b - a);
+        while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
+        while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
+        for (char& c : w) c = (char)tolower((unsigned char)c);
+        if (!w.empty()) g_FogMaps.push_back(w);
+        a = b + 1;
+    }
+    LOGI("VrTweaks: FogMaps = '{}' ({} words): with Fog = 0 the fog still stays on in maps named so", words, g_FogMaps.size());
+}
+
+std::string VrTweaks::MapName() { std::lock_guard lk(g_MapM); return g_Map; }
 
 void VrTweaks::SetEnabled(bool on)
 {
@@ -54,10 +96,28 @@ void VrTweaks::OnPresent()
     if (now >= next && CVars::Available())
     {
         next = now + 1000;
-        const bool want = active && !g_Fog.load();
+        {   // which map: logged at each change, and whether it is one where the fog stays (FogMaps)
+            char buf[160];
+            const uint8_t* gl = (const uint8_t*)Game::GameLocal();
+            if (gl && ReadMapName(gl, buf, sizeof buf))
+            {
+                std::string m = buf;
+                for (char& c : m) c = (char)tolower((unsigned char)c);
+                if (m != g_Map)
+                {
+                    { std::lock_guard lk(g_MapM); g_Map = m; }
+                    g_MapFog = false;
+                    const char* hit = nullptr;
+                    for (const std::string& w : g_FogMaps) if (m.find(w) != std::string::npos) { g_MapFog = true; hit = w.c_str(); break; }
+                    if (g_MapFog) LOGI("VrTweaks: map '{}': its name holds '{}' (FogMaps): the game's fog stays on here", buf, hit);
+                    else LOGI("VrTweaks: map '{}'", buf);
+                }
+            }
+        }
+        const bool want = active && !g_Fog.load() && !g_MapFog;
         const int cur = CVars::GetInt("r_skipFog", -1);
         if (want && cur == 0) { g_UserSkipFog = cur; CVars::SetInt("r_skipFog", 1); LOGI("VrTweaks: fog off (r_skipFog 1) while the headset shows the game"); }
-        else if (!want && g_UserSkipFog >= 0) { CVars::SetInt("r_skipFog", g_UserSkipFog); g_UserSkipFog = -1; LOGI("VrTweaks: fog back"); }
+        else if (!want && g_UserSkipFog >= 0) { CVars::SetInt("r_skipFog", g_UserSkipFog); g_UserSkipFog = -1; LOGI("VrTweaks: fog back{}", g_MapFog ? " (FogMaps)" : ""); }
     }
 }
 
@@ -74,7 +134,7 @@ void VrTweaks::OnMainView(void* view)
 
 std::string VrTweaks::Status()
 {
-    return fmt::format("vrtweaks active {} dof {} ao {} fog {} (r_skipFog now {}) views flagged {}", g_Active.load() ? 1 : 0,
+    return fmt::format("vrtweaks active {} dof {} ao {} fog {} (r_skipFog now {}) views flagged {} map '{}'{}", g_Active.load() ? 1 : 0,
                        g_Enabled.load() ? "off" : "game", g_Ao.load() ? "game" : "off", g_Fog.load() ? "game" : "off",
-                       CVars::GetInt("r_skipFog", -1), g_Views.load());
+                       CVars::GetInt("r_skipFog", -1), g_Views.load(), MapName(), g_MapFog ? " (fog kept: FogMaps)" : "");
 }

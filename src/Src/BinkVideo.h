@@ -12,6 +12,8 @@ namespace BinkVideo
     //! Hooks bink2w64.dll if it is loaded; safe to call again (from Present) until it is.
     void Install();
     bool Installed();
+    //! [Advanced] SkipIntroVideos: the start-up videos end on their first frame.
+    void SetSkipIntros(bool on);
     //! A video is on screen now: open, and a frame decoded in the last half second.
     bool Playing();
     //! The video playing (its file name), or empty.

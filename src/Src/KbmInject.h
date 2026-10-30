@@ -67,6 +67,8 @@ namespace KbmInject
     void SetPhysicalCrouch(bool on, float depth);
     //! The game's crouch now is the one the real head made (ViewMatrixHook keeps the view at the head's height then).
     bool PhysicalCrouchOwns();
+    //! Counts the times the view's crouch lift is to go at once (B back down after a kept stand-up).
+    unsigned CrouchLiftCancels();
     //! `vr scenemenus 0|1` (menus over the world: the character choice, a black market; the development notes) and
     //! `vr tapkey <KEY> [ms]` (one key by the game's name, sent the way the controllers send theirs: a test aid --
     //! Focus-Key.ps1's keybd_event ESC is NOT seen the same way, measured). True when `what` was one of them.

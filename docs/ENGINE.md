@@ -289,6 +289,9 @@ the copy.
   with vertices in MODEL space: `cb_mvpmatrix{x,y,z,w}` (each a COLUMN the shader `dp4`s the position against; z is
   multiplied by `cb_modeldepthhack`), optionally `cb_previousmvpmatrix{x,y,z,w}` (motion vectors) and
   `cb_modelmatrix{x,y,z}`.
+- `cb_modeldepthhack` is what keeps the first-person arms in front of the world. A world draw moved into the hand (a
+  carried item) must be given the arms' value, or the hand draws over the parts of it that are nearer the eye. Take
+  the value from an arm draw with the same projection, so shadow and reflection passes keep their own.
 - **There is no fixed layout**: every material compiles its own (~30 different cb2 sizes in one frame, up to at least
   1168 bytes). Read the offsets from the shader's reflection (`D3DReflect` on the bytecode kept from
   `CreateVertexShader`, cached per shader object) by those names. Use `__uuidof(ID3D11ShaderReflection)`, not
@@ -928,6 +931,11 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   at the entity's bounds centre exe+0x878230, above the cvar `ark_windblast_minImpulseForPhysicEntities`) and so does
   the damage knockback (exe+0x7B2D19, impulse = direction x the damage decl's knockback), only to entities with
   entity+0xD1 bit 3. 0xE6 / 0xE7 are the melee block / hit events (exe+0x6357D0, exe+0x62CB80).
+- **entity+0xD1 bit 3 is "being simulated", not "can move"**: set by exe+0x878D70, cleared by exe+0x879B20 once
+  the body settles, so a prop at rest does not have it. Windblast does not test it: it asks the entity's
+  arkCpntPhysicsBase (type exe+0x39E85B0) through its vtable +0x178 (exe+0x76A8F0: a body with motion type 2, dynamic).
+  The 0xFA handler of that component (exe+0x809C90) applies a linear impulse when the point is (0,0,0), else a point
+  impulse at the world point (exe+0x8519D0), which wakes the body.
 - The entity velocity at +0x33C is a plain field (exe+0x87C2A0 only writes it): no use for pushing a body.
 - **Message ids** are the ARK_MSG_* enum (names table at exe+0x2381F98, 0x18-byte entries, value = index - 1:
   ARK_MSG_NONE = -1). 0xE6 ATTACK_BLOCKED, 0xFA IMPULSE, 0x138 DOOR_PUSH, 0x149 VELOCITY_IMPULSE (payload 0x1C,

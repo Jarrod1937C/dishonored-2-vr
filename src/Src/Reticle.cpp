@@ -137,7 +137,8 @@ namespace
         // (KnockoutReady: it outlasts the offer by 1.5 s): the right hand's reticle turns RED (lethal: the sword) inside a
         // thick BLUE border (non-lethal: the choke) -- the game offers the two together. Drawn opaque whatever
         // ReticleOpacity says: at 0.4 the red over the blue blended into pink (reported).
-        const bool takedown = h == 1 && (MeleeAim::KillOffered() || MeleeAim::KnockoutReady());
+        // (no more: the blue dot on the guard's head shows a knockout, and the red / blue reticle was reported redundant)
+        const bool takedown = false;
         const ImU32 kTakedownRed = IM_COL32(255, 0, 0, 255), kTakedownBlue = IM_COL32(0, 90, 255, 255);
         if (minimal)
         {   // MinimalReticle: a white dot ringed in black, a fixed angular size (~0.3 deg across at the headset's density);
@@ -295,16 +296,16 @@ void Reticle::Draw()
         if (mode == 3 || gun != (HandAimHook::PowerHand() & 1)) DrawHand(gun, dl, size, st);
         else DrawHand(gun ^ 1, dl, size, st);
     }
-    {   // [Gameplay] KnockoutBlow: while a knockout is possible, a BLUE dot where to strike (the back of the guard's
-        // head; MeleeAim::KnockoutAim) -- a blow with either hand, open or closed, the sword's pommel or the pistol,
-        // landing near it knocks him out
+    {   // While a takedown is possible (he cannot see you), a dot on the back of the guard's head: blue for the knockout
+        // (a blow with either hand, open or closed, the sword's pommel or the pistol, near it), ringed red for the
+        // stealth kill (a swing of the blade). One state for both (MeleeAim::KnockoutAim).
         float kp[3], ndc[2];
         if (MeleeAim::KnockoutAim(kp) && GpuTrace::ProjectWorld(kp, ndc))
         {
             const ImVec2 c = ToScreen(ndc, size);
             const float r = std::max(4.f, size.y * 0.004f);
-            dl->AddCircleFilled(c, r + std::max(1.5f, size.y * 0.0008f), IM_COL32(0, 0, 0, 255), 20);
-            dl->AddCircleFilled(c, r, IM_COL32(0, 90, 255, 255), 20);
+            dl->AddCircleFilled(c, r + std::max(3.f, size.y * 0.0016f), IM_COL32(118, 40, 40, 255), 24);   // a dark red edge, as dark and as grey as the blue
+            dl->AddCircleFilled(c, r, IM_COL32(40, 64, 118, 255), 20);   // a dark, slightly greyed blue (the game's palette)
             st.drawn++;
         }
     }
