@@ -12,6 +12,8 @@
 #include "StereoTaa.h"
 #include "StereoSync.h"
 #include "VrTweaks.h"
+#include "PassProfile.h"
+#include "Fog.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
 #include "Commands.h"
@@ -43,6 +45,7 @@
 
 static void OnPresent(IDXGISwapChain* sc)
 {
+    PassProfile::BeginSection(0); // [Advanced] ProfileRenderPasses: the mod's own GPU / CPU work at Present
     Watchdog::OnPresent(sc);      // the heartbeat its thread watches (and vr stall's test hitch)
     WristHud::BeginPresent(sc);   // the game's interface for this frame is complete (and the mod's own draws start)
     static bool first = true;
@@ -59,7 +62,9 @@ static void OnPresent(IDXGISwapChain* sc)
     }
     if (!BinkVideo::Installed()) BinkVideo::Install();   // (normally done at init: the exe imports it)
     GpuTrace::OnPresent();
+    PassProfile::BeginSection(1);
     StereoTaa::OnPresent(sc);
+    PassProfile::EndSection(1);
     StereoSync::OnPresent();
     PlayerState::OnPresent();
     MeleeAim::OnPresent();
@@ -69,12 +74,16 @@ static void OnPresent(IDXGISwapChain* sc)
     Commands::OnPresent();
     BodyView::OnPresent();        // vr fov auto: applied as soon as the headset gives its fov
     RenderRes::OnPresent(sc);
+    PassProfile::OnPresent(sc);   // [Advanced] ProfileRenderPasses: GPU ms per render pass
     Reticle::Tick();              // the game's crosshair off while the hand reticles are on
     VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
+    PassProfile::BeginSection(2);
     Overlay::OnPresent(sc);       // draws onto the backbuffer first...
     VRRuntime::OnPresent(sc);     // ...so the flat VR frame includes the overlay (debug aid)
+    PassProfile::EndSection(2);
     KbmInject::Tick();            // controllers -> keyboard/mouse (uses this frame's synced input)
     WristHud::EndPresent();       // cleared for the next frame's interface
+    PassProfile::EndSection(0);
 }
 
 //! The game build is not the one the mod was made for: say so where the player will see it. Its own thread, so the
@@ -122,6 +131,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     VrTweaks::SetFog(Settings::Fog());
     VrTweaks::SetFogMaps(Settings::FogMaps());
+    Fog::SetParams(Settings::CheapFog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
@@ -147,6 +157,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
+    PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects
@@ -177,6 +188,7 @@ static DWORD WINAPI InitThread(LPVOID)
     PlayerViewHook::SetEnabled(false);   // the local player never goes through that builder
     ViewMatrixHook::Install();
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
+    PassProfile::Install();          // [Advanced] ProfileRenderPasses only
     XInputHook::Install();
     XInputHook::SetEnabled(false);       // pad emulation reaches the engine's event queue but not the player yet (see ENGINE.md)
     PadProbe::Install();

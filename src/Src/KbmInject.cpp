@@ -289,7 +289,25 @@ namespace
             }
         }
         static int logged = 0;
-        if (logged++ < 20) LOGI("KbmInject: mouse click NOT sent: no point of the game window is visible under the cursor");
+        if (logged < 20 || logged % 100 == 0)
+        {   // what is in the way: the foreground window, and the window covering the middle of its client area
+            auto describe = [](HWND w) -> std::string
+            {
+                if (!w) return "none";
+                HWND root = GetAncestor(w, GA_ROOT); if (!root) root = w;
+                char title[96] = {}; GetWindowTextA(root, title, sizeof title);
+                DWORD pid = 0; GetWindowThreadProcessId(root, &pid);
+                char exe[MAX_PATH] = {}; DWORD n = MAX_PATH;
+                if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) { QueryFullProcessImageNameA(h, 0, exe, &n); CloseHandle(h); }
+                const char* base = strrchr(exe, '\\'); base = base ? base + 1 : exe;
+                const bool top = (GetWindowLongPtrA(root, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+                return fmt::format("'{}' ({}{}{})", title, base[0] ? base : "?", pid == GetCurrentProcessId() ? ", the game" : "", top ? ", always on top" : "");
+            };
+            POINT mid{ (cl.left + cl.right) / 2, (cl.top + cl.bottom) / 2 };
+            LOGI("KbmInject: mouse click NOT sent ({} so far): no point of the game window is visible under the cursor -- foreground {} (client {}x{} at {},{}), the cursor at ({},{}) over {}, its middle covered by {}",
+                 logged + 1, describe(fg), cl.right - cl.left, cl.bottom - cl.top, cl.left, cl.top, pt.x, pt.y, describe(WindowFromPoint(pt)), describe(WindowFromPoint(mid)));
+        }
+        logged++;
         return false;
     }
 

@@ -3,6 +3,7 @@
 #include "VRRuntime.h"
 #include "CVars.h"
 #include "Game.h"
+#include "Fog.h"
 #include <vector>
 #include <mutex>
 
@@ -115,6 +116,7 @@ void VrTweaks::OnPresent()
             }
         }
         const bool want = active && !g_Fog.load() && !g_MapFog;
+        Fog::SetGameFogOff(want);                 // the mod's own cheap fog stands in while the game's is off
         const int cur = CVars::GetInt("r_skipFog", -1);
         if (want && cur == 0) { g_UserSkipFog = cur; CVars::SetInt("r_skipFog", 1); LOGI("VrTweaks: fog off (r_skipFog 1) while the headset shows the game"); }
         else if (!want && g_UserSkipFog >= 0) { CVars::SetInt("r_skipFog", g_UserSkipFog); g_UserSkipFog = -1; LOGI("VrTweaks: fog back{}", g_MapFog ? " (FogMaps)" : ""); }

@@ -746,6 +746,19 @@ namespace
     // (the grip's pull, the trigger, a hand's push): the state is counted here, from closed. Under g_FrontM.
     std::mutex g_FrontM;
     std::unordered_map<uint32_t, int> g_FrontOpen;
+    // When the player's interact last went to an entity (NoteInteract: the grip's pull, the trigger, a push), under
+    // g_FrontM. A front or drawer the game has just opened swings or slides INTO the hand that opened it, and that read
+    // as the hand pushing it closed again (measured 2026-10-29: the trigger opened 'esc_env_door_left', and 0.18 s later
+    // the right hand, 2 cm "past its surface" at 0.59 m/s, closed it; another one 4 ms after opening). So a push-close
+    // waits kOpenSettle after the last interact, and on a cabinet front it takes the hand moving into it.
+    std::unordered_map<uint32_t, double> g_InteractAt;
+    constexpr double kOpenSettle = 1.0;
+    double SinceInteract(uint32_t id, double now)
+    {
+        std::lock_guard lk(g_FrontM);
+        auto it = g_InteractAt.find(id);
+        return it == g_InteractAt.end() ? 1e9 : now - it->second;
+    }
     int FrontState(uint32_t id) { std::lock_guard lk(g_FrontM); auto it = g_FrontOpen.find(id); return it == g_FrontOpen.end() ? 0 : it->second; }
     int DoorOpen(void* door, const char** how);
     //! What the grip can pull: a drawer / cabinet (its openable) or a door (not a window): 1 open, 0 closed, -1 neither.
@@ -971,6 +984,7 @@ void Collision::Push(void* ent, const float impulse[3], const float at[3]) { if 
 void Collision::NoteInteract(uint32_t id)
 {
     if (!id || id == 0x3FFF0010u) return;
+    { std::lock_guard lk(g_FrontM); if (g_InteractAt.size() > 256) g_InteractAt.clear(); g_InteractAt[id] = Now(); }
     void* e = BodyHide::EntityById((int)id);
     if (!e || !IsUsableFront(e)) return;
     int now = 0;
@@ -1320,10 +1334,23 @@ void Collision::Tick()
                         const float d[3] = { goal[pi][0] - cs[i].p[0], goal[pi][1] - cs[i].p[1], goal[pi][2] - cs[i].p[2] };
                         const float past = cs[i].clear - Dot(d, cs[i].n);
                         auto it = g_DoorAt.find(e);
-                        if ((into >= C.doorSpeed || past >= C.doorPress) && (it == g_DoorAt.end() || now - it->second >= C.doorGap))
+                        const bool front = IsUsableFront(e);
+                        const bool pushing = front ? into >= C.doorSpeed : (into >= C.doorSpeed || past >= C.doorPress);
+                        const double since = SinceInteract(tch.id, now);
+                        if (pushing && since < kOpenSettle)
+                        {
+                            static double toldAt = -10.0;
+                            if (now - toldAt > 1.0)
+                            {
+                                toldAt = now;
+                                LOGI("Collision: {} hand against '{}' (id {:#x}) {:.2f} s after it was opened ({:.2f} m/s, {:.0f} cm past its surface): not a push to close it yet",
+                                     h ? "right" : "left", EntityName(e), tch.id, since, into, past * 100.f);
+                            }
+                        }
+                        else if (pushing && (it == g_DoorAt.end() || now - it->second >= C.doorGap))
                         {   // closed directly (either hand, no pointer needed): closing needs no key
                             g_DoorAt[e] = now;
-                            if (IsUsableFront(e))
+                            if (front)
                             {   // a cabinet front has no openable: the game's interact on it, aimed where the hand pushed
                                 const float at[3] = { cs[i].p[0] - cs[i].n[0] * 0.02f, cs[i].p[1] - cs[i].n[1] * 0.02f, cs[i].p[2] - cs[i].n[2] * 0.02f };
                                 RequestInteract(h, tch.id, at, now);

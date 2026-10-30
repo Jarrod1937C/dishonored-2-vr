@@ -107,6 +107,8 @@ set(MOD_SOURCES
     Src/TestAids.cpp   Src/TestAids.h
     Src/Settings.cpp   Src/Settings.h
     Src/VrTweaks.cpp   Src/VrTweaks.h
+    Src/PassProfile.cpp Src/PassProfile.h
+    Src/Fog.cpp        Src/Fog.h
     Src/KeyBinds.cpp   Src/KeyBinds.h
     Src/SysInfo.cpp    Src/SysInfo.h
     Src/Seeds.cpp      Src/Seeds.h

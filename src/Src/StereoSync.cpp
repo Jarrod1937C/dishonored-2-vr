@@ -616,7 +616,15 @@ bool StereoSync::Command(const std::string& what, std::istringstream& ss)
 bool StereoSync::LastFrameHeld() { return g_LastHeld.load(); }
 void StereoSync::SetReuse(const ReuseFlags& f)
 {
-    g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = f.reflections;
+    // StereoReflectionReuse no longer skips anything. Measured in a headset (2026-10-29, Addermire in the rain): with it
+    // on, the right eye's reflections broke -- glass wrong, heads shining like chrome. INDIRECT_LIGHTING_UPDATE_IBL
+    // (exe+0x3102A0 -> exe+0x2B4D30) is not a relighting of the probes but the frame's bookkeeping for them: it copies
+    // the cube maps the streamer has just brought in into the IBL arrays (the list at +0x407D0, emptied as it goes) and,
+    // when the set of probes changed, uploads the probes' parameter buffers through the FRAME's own context
+    // (exe+0x292220, flag +0x2ED). Skipped for the right eye's frame, its draws read probe indices against buffers that
+    // were not updated for them. Little work either way, so nothing to gain from skipping it.
+    g_ReuseOn[rOcean] = f.ocean; g_ReuseOn[rReflections] = false;
+    if (f.reflections) LOGI("StereoSync: StereoReflectionReuse is ignored: skipping the reflection probes' update for the right eye broke its reflections and saved nothing");
     g_ReuseOn[rDecals] = f.decals; g_ReuseOn[rStreaming] = f.streaming;
     g_LightShadowOn = f.lightShadows;
 }

@@ -249,6 +249,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                AmbientOcclusion = 1 (0 = no ambient occlusion in VR: faster)
                Fog = 1 (0 = no fog in VR: its low-resolution blocks show in front of the sky; faster)
                FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
+               CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
+               CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6
+               CheapFogColor = sky (or R,G,B 0-255)
                DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,
                                  about half the frame rate; 0 = flat, both eyes the same
                                  picture; 2 = the old alternating 3D of version 1.0)
@@ -264,8 +267,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
                                  Link / Air Link only)
                Experimental, 0 by default (1 = the right eye's frame reuses the left eye's work):
-                                 StereoOceanReuse   StereoReflectionReuse   StereoDecalReuse
-                                 StereoStreamOncePerPair   StereoLightShadowReuse (lamps' shadows)
+                                 StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
+                                 StereoLightShadowReuse (lamps' shadows)
+                                 (StereoReflectionReuse is no longer used: it broke reflections)
+               ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s)
 
  TWO CHEATS ARE ON by default, so every power and weapon can be tried in VR right away:
  UnlockEverything (every power, upgrade, bone charm crafting, black market upgrade and weapon, on

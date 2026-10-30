@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include "StereoSync.h"
+#include "Fog.h"
 
 //! The player's settings: <game>\DishonoredVR.ini, read once at startup. Every key has a default, so a missing file,
 //! a missing key or a value that cannot be read all leave the mod working (and the log says which). Settings are
@@ -49,7 +50,9 @@ namespace Settings
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
-    std::string FogMaps();                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply
+    bool ProfileRenderPasses();                   //!< [Advanced] ProfileRenderPasses: GPU time per render pass (PassProfile)
+    std::string FogMaps();
+    Fog::Params CheapFog();                       //!< [Display] CheapFog*: the mod's own fog while the game's is off                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
 }

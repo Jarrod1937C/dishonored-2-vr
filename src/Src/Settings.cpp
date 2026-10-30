@@ -4,6 +4,7 @@
 #include "StereoSync.h"
 #include <map>
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -75,6 +76,11 @@ namespace
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
         { "display.fog",                Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no fog in VR
         { "display.fogmaps",            Kind::Text,   "void", 0, 0, nullptr },   // VrTweaks: ...except in maps named so
+        { "display.cheapfog",           Kind::Bool,   "1", 0, 0, nullptr },      // Fog: the mod's own distance fog while the game's is off
+        { "display.cheapfogstart",      Kind::Float,  "30", 0, 5000, nullptr },  // m where it begins
+        { "display.cheapfogend",        Kind::Float,  "300", 1, 20000, nullptr },// m where it is at full opacity
+        { "display.cheapfogopacity",    Kind::Float,  "0.6", 0, 1, nullptr },    // its strength at the far end
+        { "display.cheapfogcolor",      Kind::Text,   "sky", 0, 0, nullptr },    // "sky" or R,G,B (0-255)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -95,6 +101,7 @@ namespace
         { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr },
         { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr },
         { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr },
+        { "advanced.profilerenderpasses", Kind::Bool, "0", 0, 0, nullptr },   // PassProfile: GPU ms per render pass, to the log
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
@@ -289,7 +296,32 @@ float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
+bool Settings::ProfileRenderPasses() { return B("advanced.profilerenderpasses"); }
 std::string Settings::FogMaps() { return V("display.fogmaps"); }
+Fog::Params Settings::CheapFog()
+{
+    Fog::Params p;
+    p.on = B("display.cheapfog");
+    p.start = F("display.cheapfogstart"); p.end = std::max(p.start + 1.f, F("display.cheapfogend")); p.opacity = F("display.cheapfogopacity");
+    const std::string& c = V("display.cheapfogcolor");
+    int r = 0, g = 0, b = 0;
+    if (c != "sky" && sscanf_s(c.c_str(), "%d , %d , %d", &r, &g, &b) == 3)
+    {   // sRGB 0-255 to linear: the scene is in linear light
+        const int v[3] = { r, g, b };
+        for (int i = 0; i < 3; i++)
+        {
+            const float x = std::min(255, std::max(0, v[i])) / 255.f;
+            p.rgb[i] = x <= 0.04045f ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f);
+        }
+        p.sky = false;
+    }
+    else
+    {
+        if (c != "sky") LOGI("Settings: CheapFogColor = '{}' is neither 'sky' nor R,G,B: the sky's colour", c);
+        p.sky = true;
+    }
+    return p;
+}
 StereoSync::ReuseFlags Settings::StereoReuse()
 {
     StereoSync::ReuseFlags f;

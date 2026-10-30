@@ -423,6 +423,20 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
 - The ocean passes (exe+0x3053B0, exe+0x305370) skip themselves when there is no ocean exactly as the executor skips a
   disabled task (context +0x12AD4 = 1, return 0); UPDATE_OCEAN's work reads the view at task+0x70 (+0x3A34).
   INDIRECT_LIGHTING_UPDATE_IBL reads the world through the view (task+0x70, then +0x39C0 = `m_parentWorld`).
+- **INDIRECT_LIGHTING_UPDATE_IBL is bookkeeping, not relighting** (exe+0x3102A0 -> exe+0x2B4D30, indirect lighting
+  object = world+0x39C0 -> vtable +0x50): the IBL reflections are baked cube maps streamed from disk
+  (`generated/image/cubemaps/`). The pass copies the ones the streamer has just brought in (the list at +0x407D0,
+  0x30-byte entries, count +0x407D8, emptied at the end) into the IBL cube map arrays (exe+0x2BB2A0 per face,
+  exe+0x2922C0), then, when the probe set changed (IBL manager = +0x5A0, dirty flag +0x2ED), uploads the probes'
+  parameter buffers (+0x60: +0x2D4 x 4 bytes, +0x80: +0x2D8 x 64 bytes) through the task's own context (exe+0x292220).
+  Skipping it for one eye's frame leaves that frame's draws reading probe indices against stale buffers: wrong
+  reflections in that eye only (glass, heads shining like chrome; measured 2026-10-29). Other reflections: there is
+  no general screen-space reflection pass, only the ocean's (RENDER_WATER; `r_skipOceanSSR`,
+  `r_water_ScreenSpaceMaxStepsCount` 64); `r_IBL_ParallaxCorrection` (1) box-projects the cube maps.
+- **The task executors** exe+0x2C5D50 (deferred) and exe+0x2C5F60 (task flag 0x20: on the immediate context, called
+  again while it returns true; otherwise it executes the task's command list +0x118): around `call [task+0xD8]` the
+  context wrapper task+0x108 (+0 = the ID3D11DeviceContext; exe+0x2BAE70 before, exe+0x2BBA20 = finish -> +0x118 after).
+  The immediate context is *(exe+0x32D4EF8), its wrapper *(exe+0x32D4EF0). PassProfile times each task there.
   TEXTURE_STREAMER (exe+0x34FD00) is a thunk to the streamer object at exe+0x32F0210 (exe+0x30D1E0).
 
 ### 4.6 Render resolution, the window and the cfg writer

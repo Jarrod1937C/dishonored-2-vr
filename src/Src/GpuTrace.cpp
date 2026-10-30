@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "GpuTrace.h"
+#include "PassProfile.h"
+#include "Fog.h"
 #include "Collision.h"
 #include "PipeTrace.h"
 #include "PlayerState.h"
@@ -4050,12 +4052,14 @@ namespace
 
         static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext* c, UINT x, UINT y, UINT z)
         {
+            PassProfile::NoteDispatch(x, y, z, false);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, x, y, z, false, p);
             realDispatch(c, x, y, z);
             StereoTaa::AfterPass(c, KIND, p);
         }
         static void STDMETHODCALLTYPE DispatchInd(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
+            PassProfile::NoteDispatch(0, 0, 0, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, 0, 0, 0, true, p);
             realDispatchInd(c, b, o);
             StereoTaa::AfterPass(c, KIND, p);
@@ -4115,6 +4119,8 @@ namespace
         static void STDMETHODCALLTYPE DrawIndexed(ID3D11DeviceContext* c, UINT n, UINT s, INT b)
         {
             Record(c, KIND, eDrawIndexed, n);
+            PassProfile::NoteDraw(n, 1, false);
+            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4129,6 +4135,8 @@ namespace
         {   // proximity targeting works off the constants, not the count, so the non-indexed paths qualify too --
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
+            PassProfile::NoteDraw(n, 1, false);
+            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4142,6 +4150,8 @@ namespace
         static void STDMETHODCALLTYPE DrawIdxInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, INT b, UINT si)
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
+            PassProfile::NoteDraw(n, i, false);
+            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4155,6 +4165,8 @@ namespace
         static void STDMETHODCALLTYPE DrawInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, UINT si)
         {
             Record(c, KIND, eDrawInstanced, n);
+            PassProfile::NoteDraw(n, i, false);
+            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4166,9 +4178,9 @@ namespace
             EndTarget(c, t);
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
-        { Record(c, KIND, eDrawIndexedInstancedIndirect, 0); if (SkippedVs(c)) return; realDrawIdxInstIndirect(c, b, o); }
+        { Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(0, 0, true); if (SkippedVs(c)) return; realDrawIdxInstIndirect(c, b, o); }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
-        { Record(c, KIND, eDrawInstancedIndirect, 0); if (SkippedVs(c)) return; realDrawInstIndirect(c, b, o); }
+        { Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(0, 0, true); if (SkippedVs(c)) return; realDrawInstIndirect(c, b, o); }
 
         //! Attach to one vtable. Entries already detoured for the other kind (shared implementation) are skipped.
         static int Attach(void** vt, void** taken, int nTaken)
