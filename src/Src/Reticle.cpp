@@ -12,6 +12,7 @@
 #include "CVars.h"
 #include "Overlay.h"
 #include "Collision.h"
+#include "BodyHide.h"
 #include <imgui.h>
 #include <cmath>
 #include <algorithm>
@@ -44,14 +45,19 @@ namespace
 
     bool Finite3(const float* v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
-    // ---- the flicker log: a hand's ring jumping between two depths (reported: "depth fighting", nothing visible at
-    // the other depth). Each drawn ring is noted with where its distance came from; four or more jumps of the
-    // distance (> 0.3 m and > 25 %) within a second write the last samples, with what each source said, to the log
-    // (at most once in 5 s per hand, 60 in all).
+    // ---- the flicker log: a hand's ring flipping between two depths (reported: "depth fighting", nothing visible at
+    // the other depth). Each drawn ring is noted with where its distance came from (and for a gun what the static sweep
+    // and the aim sensor said). A FLIP is a jump (> 0.15 m and > 15 % between two drawn frames 0.1 s apart at most) that
+    // goes back the way the previous jump came, within 0.25 s, to within 20 % of where it was before it: A -> B -> A.
+    // Two flips within a second write the whole last second to the log, runs of like frames merged, with what the aim
+    // sensor hit (at most once in 3 s per hand, 100 in all). A ring sweeping across edges (A -> B -> C) does not count.
     enum Src { kSrcFixed, kSrcGun, kSrcPointer, kSrcPower };
-    const char* kSrcName[4] = { "fixed range", "gun trace", "grab pointer", "power's landing point" };
-    struct Sample { double t = 0; float len = 0; int src = 0; bool hit = false; int eye = -1; };
-    struct Track { Sample s[16]; int n = 0; double jumpT[8] = {}; int jn = 0; double lastLog = -10; };
+    const char* kSrcName[4] = { "fixed range", "gun", "grab pointer", "power's landing point" };
+    struct Sample { double t = 0; float len = 0; int src = 0; bool hit = false; int eye = -1;
+                    float sweepT = 0, sensorT = 0; bool sweepHit = false, sensorUsed = false, sensorHas = false; int sensorEnt = -1; };
+    constexpr int kHist = 512;
+    struct Track { Sample s[kHist]; int n = 0; double flipT[8] = {}; int fn = 0; double lastLog = -10;
+                   double jumpAt = -1; float jumpFrom = 0; int jumpSign = 0; };
     Track g_Track[2];                 // Present thread
     int g_FlickerLogs = 0;
     double NowS() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
@@ -59,37 +65,64 @@ namespace
     {
         Track& T = g_Track[h];
         const double now = NowS();
-        const Sample* prev = T.n ? &T.s[(T.n - 1) % 16] : nullptr;
-        Sample cur; cur.t = now; cur.len = len; cur.src = src; cur.hit = hit; cur.eye = VRRuntime::PresentedEye();
-        if (prev && now - prev->t < 0.2)
-        {
-            const float d = fabsf(len - prev->len), lo = std::min(len, prev->len);
-            if (d > 0.3f && d > 0.25f * lo) T.jumpT[T.jn++ % 8] = now;
-        }
-        T.s[T.n++ % 16] = cur;
-        int recent = 0;
-        for (int i = 0; i < std::min(T.jn, 8); i++) if (now - T.jumpT[i] <= 1.0) recent++;
-        if (recent < 4 || now - T.lastLog < 5.0 || g_FlickerLogs >= 60) return;
-        T.lastLog = now; g_FlickerLogs++;
-        std::string seq;
-        for (int k = std::max(0, T.n - 12); k < T.n; k++)
-        {
-            const Sample& x = T.s[k % 16];
-            seq += fmt::format(" [{:.0f}ms {:.2f}m {}{} eye {}]", (x.t - now) * 1000.0, x.len, kSrcName[x.src], x.hit ? " HIT" : "", x.eye);
-        }
-        std::string extra;
+        const Sample* prev = T.n ? &T.s[(T.n - 1) % kHist] : nullptr;
+        Sample cur; cur.t = now; cur.len = len; cur.src = src; cur.hit = hit; cur.eye = VRRuntime::CurrentEye();
         if (src == kSrcGun)
         {
             const GunRay::TraceDbg g = GunRay::LastTrace();
-            extra = fmt::format("gun: answered from {}; the static sweep {} at {:.2f} m{}; the aim sensor (props, characters) {} {:.2f} m at ({:.2f},{:.2f},{:.2f}), {} ms old; the trace {} ms old",
-                g.fromTrace ? "the frame's trace" : "the aim sensor alone (trace stale)", g.sweepHit ? "HIT" : "clear", g.sweepT,
-                g.sensorUsed ? ", shortened by the aim sensor's hit" : "", g.sensorHas ? "HIT" : "nothing", g.sensorT,
-                g.sensorPoint[0], g.sensorPoint[1], g.sensorPoint[2], g.sensorAgeMs, g.traceAgeMs);
+            cur.sweepT = g.sweepT; cur.sweepHit = g.sweepHit; cur.sensorUsed = g.sensorUsed; cur.sensorHas = g.sensorHas; cur.sensorT = g.sensorT;
+            cur.sensorEnt = g.sensorEnt;
         }
-        else if (src == kSrcPointer || h == GrabHand::Hand())
-            extra = fmt::format("grab pointer: target id 0x{:X}, {}", (unsigned)GrabHand::TargetId(), Collision::PointerDescribe());
-        LOGI("Reticle: the {} hand's ring jumps between depths ({} jumps in 1 s), now {:.2f} m from {}; the last frames:{}{}{}",
-             h ? "right" : "left", recent, len, kSrcName[src], seq, extra.empty() ? "" : " -- ", extra);
+        if (prev && now - prev->t < 0.1)
+        {
+            const float d = len - prev->len, lo = std::min(len, prev->len);
+            if (fabsf(d) > 0.15f && fabsf(d) > 0.15f * lo)
+            {
+                const int sign = d > 0 ? 1 : -1;
+                // back the way the last jump came, soon, to near where that one started: a flip
+                if (T.jumpAt >= 0 && now - T.jumpAt <= 0.25 && sign == -T.jumpSign && fabsf(len - T.jumpFrom) <= 0.2f * std::max(len, T.jumpFrom))
+                    T.flipT[T.fn++ % 8] = now;
+                T.jumpAt = now; T.jumpFrom = prev->len; T.jumpSign = sign;
+            }
+        }
+        T.s[T.n++ % kHist] = cur;
+        int recent = 0;
+        for (int i = 0; i < std::min(T.fn, 8); i++) if (now - T.flipT[i] <= 1.0) recent++;
+        if (recent < 2 || now - T.lastLog < 3.0 || g_FlickerLogs >= 100) return;
+        T.lastLog = now; g_FlickerLogs++;
+        // the last second, runs of like frames merged
+        int first = T.n - 1;
+        while (first > 0 && first > T.n - kHist && now - T.s[(first - 1) % kHist].t <= 1.0) first--;
+        std::string seq; int ents[3] = { -1, -1, -1 }; int ne = 0;
+        for (int k = first; k < T.n;)
+        {
+            const Sample& a = T.s[k % kHist];
+            int m = k + 1;
+            while (m < T.n)
+            {
+                const Sample& b = T.s[m % kHist];
+                if (b.src != a.src || b.hit != a.hit || b.sensorUsed != a.sensorUsed || fabsf(b.len - a.len) > 0.03f * std::max(a.len, 0.1f)) break;
+                m++;
+            }
+            const Sample& z = T.s[(m - 1) % kHist];
+            seq += fmt::format(" [{:.0f}ms x{} {:.2f}m {}{}", (a.t - now) * 1000.0, m - k, z.len, kSrcName[a.src], a.hit ? " HIT" : "");
+            if (a.src == kSrcGun)
+                seq += fmt::format(" (sweep {} {:.2f}, sensor {} {:.2f}{}{})", a.sweepHit ? "hit" : "clear", a.sweepT, a.sensorHas ? "hit" : "none", a.sensorT,
+                                   a.sensorUsed ? " USED" : "", a.sensorEnt >= 0 ? fmt::format(" ent {}", a.sensorEnt) : std::string());
+            seq += "]";
+            if (a.sensorEnt >= 0 && ne < 3 && (ne == 0 || ents[0] != a.sensorEnt) && (ne < 2 || ents[1] != a.sensorEnt)) ents[ne++] = a.sensorEnt;
+            k = m;
+        }
+        std::string extra;
+        for (int e = 0; e < ne; e++)
+        {
+            void* ent = BodyHide::EntityById(ents[e]);
+            extra += fmt::format(" -- aim sensor's ent {}: {}", ents[e], ent ? Collision::Describe(ent) : std::string("(gone)"));
+        }
+        if (src == kSrcPointer || h == GrabHand::Hand())
+            extra += fmt::format(" -- grab pointer: target id 0x{:X}, {}", (unsigned)GrabHand::TargetId(), Collision::PointerDescribe());
+        LOGI("Reticle: the {} hand's ring FLIPS between depths ({} flips in 1 s), now {:.2f} m from {}; the last second:{}{}",
+             h ? "right" : "left", recent, len, kSrcName[src], seq, extra);
     }
 
     //! NDC -> pixels in the image the headset receives (ImGui's display size is the backbuffer, which is what

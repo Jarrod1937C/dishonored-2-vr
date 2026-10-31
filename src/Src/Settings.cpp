@@ -82,7 +82,7 @@ namespace
         { "display.cheapfogopacity",    Kind::Float,  "0.6", 0, 1, nullptr },    // its strength at the far end
         { "display.cheapfogcolor",      Kind::Text,   "sky", 0, 0, nullptr },    // "sky" or R,G,B (0-255)
         { "display.cheapfogbrightness", Kind::Float,  "1", 0, 100, nullptr },    // the fixed colour's multiplier (HDR)
-        { "display.cheapfogskyheight",  Kind::Float,  "12", 0, 90, nullptr },    // deg above the horizon where the sky's fog ends (0: none)
+        { "display.cheapfogskyheight",  Kind::Text,   "auto", 0, 0, nullptr },   // "auto" (up to the far background, then 10 deg more) or deg above the horizon (0: none)
         { "display.foveatedrendering",  Kind::Bool,   "0", 0, 0, nullptr },      // Foveation: NVIDIA VRS, coarser shading away from the lens centre
         { "display.foveatedinner",      Kind::Float,  "35", 5, 80, nullptr },    // deg from the centre at full shading
         { "display.foveatedouter",      Kind::Float,  "50", 5, 89, nullptr },    // deg to which 2x2 shading reaches (4x4 beyond)
@@ -317,7 +317,14 @@ Fog::Params Settings::CheapFog()
     Fog::Params p;
     p.on = B("display.cheapfog");
     p.start = F("display.cheapfogstart"); p.end = std::max(p.start + 1.f, F("display.cheapfogend")); p.opacity = F("display.cheapfogopacity");
-    p.skyHeight = F("display.cheapfogskyheight"); p.brightness = F("display.cheapfogbrightness");
+    p.brightness = F("display.cheapfogbrightness");
+    {
+        const std::string& h = V("display.cheapfogskyheight");
+        float deg = 0;
+        if (h.empty() || _stricmp(h.c_str(), "auto") == 0) { p.skyAuto = true; p.skyHeight = 10.f; }
+        else if (sscanf_s(h.c_str(), "%f", &deg) == 1) { p.skyAuto = false; p.skyHeight = std::clamp(deg, 0.f, 90.f); }
+        else { p.skyAuto = true; p.skyHeight = 10.f; }
+    }
     const std::string& c = V("display.cheapfogcolor");
     int r = 0, g = 0, b = 0;
     if (c != "sky" && sscanf_s(c.c_str(), "%d , %d , %d", &r, &g, &b) == 3)

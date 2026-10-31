@@ -254,7 +254,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6
                CheapFogColor = sky (one colour per map: the sky round the horizon, averaged; or R,G,B 0-255)
                CheapFogBrightness = 1 (the fixed colour's brightness)
-               CheapFogSkyHeight = 12 (deg above the horizon the sky's own fog reaches; 0 = sky not fogged)
+               CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
                FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)
                FoveatedInner = 35   FoveatedOuter = 50 (deg: full rate, then 2x2, 4x4 beyond)
                DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,

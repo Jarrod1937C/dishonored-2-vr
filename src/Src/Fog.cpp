@@ -23,7 +23,7 @@ cbuffer FogCB : register(b0)
     float4 P[4];
     float4 V[3];   // the view matrix's rows (view+0x7450: -left, up, -forward in world, z up), xyz
     float4 g0;   // start (m), 1 / (end - start), opacity, use the fixed colour (0 / 1)
-    float4 g1;   // the fixed colour (linear, times CheapFogBrightness)
+    float4 g1;   // the fixed colour (linear, times CheapFogBrightness); w 1 = the sky's fog reaches up to the far background
     float4 g2;   // width, height, sample step of the sky's survey, 1 = learning the colours now
     float4 g3;   // 1 = the map's time to settle on a colour is up, the fog's fade-in (0..1), frames each direction is learned over,
                  // sin(CheapFogSkyHeight) (0: sky not fogged)
@@ -31,10 +31,12 @@ cbuffer FogCB : register(b0)
 Texture2D<float4> Color : register(t0);
 Texture2D<float> Depth : register(t1);
 StructuredBuffer<float4> SummaryIn : register(t2);
-RWStructuredBuffer<uint> Acc : register(u0);        // this frame's horizon sky, per direction: r, g, b, weight (x256)
+RWStructuredBuffer<uint> Acc : register(u0);        // this frame's horizon sky, per direction: r, g, b, weight (x256);
+                                                    // [256] the highest far-background pixel's sin(elevation) + 2, as uint
 RWStructuredBuffer<float4> Bins : register(u1);     // learned per direction: rgb, frames averaged (kept once full)
 RWStructuredBuffer<float4> Summary : register(u2);  // [0] the average of the learned directions, how many; [1] darkest /
-                                                    // brightest; [2] THE fog colour for the map, w 1 = settled (then kept)
+                                                    // brightest, the far background's top (sin elevation, the map's
+                                                    // highest); [2] THE fog colour for the map, w 1 = settled (then kept)
 static const uint kBins = 64;
 
 // the distance (m) along the eye's ray to what pixel `pix` (its centre, in pixels) shows; 0 = the sky: the depth
@@ -73,13 +75,21 @@ float BinOf(float3 wd) { return (atan2(wd.y, wd.x) / 6.2831853 + 0.5) * kBins; }
 // The sky near the horizon (-10 to +30 deg, weighted towards it), by the world direction it lies in: 64 directions
 // round the horizon. Summed per group, then once per group into Acc.
 groupshared uint ga[kBins * 4];
+groupshared uint gtop;
 [numthreads(16, 16, 1)]
 void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_GroupIndex)
 {
     ga[gi] = 0;
+    if (gi == 0) gtop = 0;
     GroupMemoryBarrierWithGroupSync();
     uint2 p = (gid.xy * 16 + tid.xy) * (uint)g2.z;
-    if (p.x < (uint)g2.x && p.y < (uint)g2.y && Distance(p + 0.5, Depth[p]) == 0)
+    float dist = (p.x < (uint)g2.x && p.y < (uint)g2.y) ? Distance(p + 0.5, Depth[p]) : -1;
+    if (dist >= g0.x + 1 / g0.y)
+    {   // the far background (beyond the fog's end): how high above the horizon it reaches
+        float3 wd = WorldDir(p + 0.5);
+        InterlockedMax(gtop, asuint(clamp(wd.z, -1, 1) + 2));
+    }
+    if (dist == 0)
     {
         float3 wd = WorldDir(p + 0.5);
         float w = saturate(1 - wd.z / 0.5);
@@ -95,6 +105,7 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
     }
     GroupMemoryBarrierWithGroupSync();
     if (ga[gi] != 0) InterlockedAdd(Acc[gi], ga[gi]);
+    if (gi == 0 && gtop != 0) InterlockedMax(Acc[kBins * 4], gtop);
 }
 
 // Each direction: this frame's sky added to what it has learned (until it has enough: then kept as it is), the
@@ -127,7 +138,11 @@ void skyfinal(uint gi : SV_GroupIndex)
             }
         float3 avg = n > 0 ? sum / n : 0;
         Summary[0] = float4(avg, n);
-        Summary[1] = float4(n > 0 ? lo : 0, hi, 0, 0);
+        float top = Summary[1].z;
+        uint ft = Acc[kBins * 4];
+        Acc[kBins * 4] = 0;
+        if (g2.w > 0 && ft != 0) top = max(top, min(asfloat(ft) - 2, 0.7071));   // at most 45 deg
+        Summary[1] = float4(n > 0 ? lo : 0, hi, top, 0);
         if (Summary[2].w <= 0 && (n >= kBins || (g3.x > 0 && n >= 8))) Summary[2] = float4(avg, 1);
     }
 }
@@ -160,8 +175,10 @@ float4 ps(VO i) : SV_Target
         f = g0.z * t * t * (3 - 2 * t);
     }
     else if (g3.w > 0)
-    {   // the sky: as thick as the far distance at the horizon (and below it), thinning out to none at CheapFogSkyHeight
-        float t = 1 - saturate(wd.z / g3.w);
+    {   // the sky: as thick as the far distance at the horizon (and below it; with `auto`, up to the top of the far
+        // background seen in the map), thinning out to none CheapFogSkyHeight above that
+        float base = g1.w > 0.5 ? max(SummaryIn[1].z, 0) : 0;
+        float t = 1 - saturate((wd.z - base) / g3.w);
         f = g0.z * t * t * (3 - 2 * t);
     }
     return float4(col, f * g3.y);   // blended: scene * (1 - f) + fog colour * f
@@ -254,7 +271,7 @@ float4 ps(VO i) : SV_Target
             return SUCCEEDED(dev->CreateBuffer(&fd, &sd, b)) && SUCCEEDED(dev->CreateUnorderedAccessView(*b, &ud, u))
                 && (!srv || SUCCEEDED(dev->CreateShaderResourceView(*b, &vd, v)));
         };
-        if (!sbuf(kBins * 4, 4, false, &g_Acc, &g_AccUav, nullptr) || !sbuf(kBins, 16, false, &g_Bins, &g_BinsUav, nullptr)
+        if (!sbuf(kBins * 4 + 1, 4, false, &g_Acc, &g_AccUav, nullptr) || !sbuf(kBins, 16, false, &g_Bins, &g_BinsUav, nullptr)
             || !sbuf(kFilled, 16, true, &g_Summary, &g_SummaryUav, &g_SummarySrv)) { g_Why = "fog colour buffers"; return false; }
         D3D11_BUFFER_DESC sb{}; sb.ByteWidth = kFilled * 16; sb.Usage = D3D11_USAGE_STAGING; sb.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         if (FAILED(dev->CreateBuffer(&sb, nullptr, &g_Stage))) g_Stage = nullptr;   // only the log's readback
@@ -352,7 +369,8 @@ float4 ps(VO i) : SV_Target
             for (auto*& p : psSrv) Rel(p); Rel(rs); Rel(bs); Rel(dss); for (auto*& p : rtv) Rel(p); Rel(dsv);
         }
     };
-    double g_SettledAt = 0;                     // when the map's colour was seen settled (render thread; 0 = not yet): the fade-in
+    double g_SettledAt = 0;
+    float g_LoggedTop = -9.f;                   // the far background's top as last logged                     // when the map's colour was seen settled (render thread; 0 = not yet): the fade-in
     double Now() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
 }
 
@@ -364,7 +382,8 @@ void Fog::SetParams(const Params& p)
                    p.start, p.end, p.opacity,
                    p.sky ? std::string("the average of the sky round the horizon (one per map, settled as one looks round, then kept)")
                          : fmt::format("fixed: {:.3f},{:.3f},{:.3f} (linear, x{:.2f})", p.rgb[0], p.rgb[1], p.rgb[2], p.brightness),
-                   p.skyHeight > 0 ? fmt::format("fogged up to {:.0f} deg above the horizon", p.skyHeight) : std::string("not fogged"));
+                   p.skyHeight <= 0 ? std::string("not fogged") : p.skyAuto ? fmt::format("fogged up to the top of the far background, thinning out {:.0f} deg above it", p.skyHeight)
+                                    : fmt::format("fogged up to {:.0f} deg above the horizon", p.skyHeight));
 }
 bool Fog::Wanted() { return g_Want.load(); }
 
@@ -426,6 +445,7 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     const float range = std::max(1.f, P.end - P.start);
     k.g0[0] = P.start; k.g0[1] = 1.f / range; k.g0[2] = std::min(1.f, std::max(0.f, P.opacity)); k.g0[3] = P.sky ? 0.f : 1.f;
     for (int i = 0; i < 3; i++) k.g1[i] = P.rgb[i] * P.brightness;
+    k.g1[3] = P.skyAuto ? 1.f : 0.f;
     k.g2[0] = (float)t.w; k.g2[1] = (float)t.h; k.g2[2] = (float)kSkyStep; k.g2[3] = Now() - g_MapAt.load() > 5.0 ? 1.f : 0.f;
     k.g3[0] = Now() - g_MapAt.load() > 35.0 ? 1.f : 0.f;
     k.g3[1] = P.sky ? (g_SettledAt > 0 ? (float)std::min(1.0, (Now() - g_SettledAt) / 2.0) : 0.f) : 1.f;
@@ -441,7 +461,7 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     {   // a new map: its horizon is learned anew (and its colour settled anew)
         const float z[4] = {}; const UINT zu[4] = {};
         c->ClearUnorderedAccessViewFloat(g_BinsUav, z); c->ClearUnorderedAccessViewFloat(g_SummaryUav, z); c->ClearUnorderedAccessViewUint(g_AccUav, zu);
-        g_SettledAt = 0;
+        g_SettledAt = 0; g_LoggedTop = -9.f;
     }
     {   // 1) the horizon's colours, round it (only what this eye sees of the sky adds to them; with a fixed colour, for the log)
         c->CSSetConstantBuffers(0, 1, &g_Cb);
@@ -521,6 +541,12 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 g_SettledAt = now;
                 if (P.sky) LOGI("Fog: this map's fog colour: {:.3f},{:.3f},{:.3f} (the sky round the horizon, {:.0f} of 64 directions seen; darkest {:.3f}, brightest {:.3f}): kept for the map, the fog fades in. As a fixed colour: {}",
                                 fc[0], fc[1], fc[2], a[3], r[0], r[1], asIni(fc));
+            }
+            if (P.skyAuto && fabsf(r[2] - g_LoggedTop) > 0.02f)
+            {   // the sky's fog follows the far background up (CheapFogSkyHeight = auto)
+                g_LoggedTop = r[2];
+                LOGI("Fog: the far background reaches {:.1f} deg above the horizon: the sky is fogged up to there, thinning out {:.0f} deg above it",
+                     asinf(std::clamp(r[2], -1.f, 1.f)) * 57.29578f, P.skyHeight);
             }
             if (!P.sky) LOGI("Fog: a fixed colour ({:.3f}, {:.3f}, {:.3f} linear); the sky round the horizon here, for comparison: {:.3f},{:.3f},{:.3f} over {:.0f} of 64 directions ({})",
                              P.rgb[0] * P.brightness, P.rgb[1] * P.brightness, P.rgb[2] * P.brightness, a[0], a[1], a[2], a[3], a[3] > 0 ? asIni(a) : std::string("none seen yet"));

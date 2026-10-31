@@ -48,7 +48,8 @@ namespace GunRay
     //! sensor alone, the trace being stale); the trace's static sweep (t, hit) and whether the aim sensor's hit (dynamic
     //! world: props, characters) shortened it; the aim sensor's own last answer and its point; ages in ms.
     struct TraceDbg { bool valid = false, fromTrace = false, hit = false, sweepHit = false, sensorUsed = false, sensorHas = false;
-                      float t = 0, sweepT = 0, sensorT = 0; float sensorPoint[3] = {}; unsigned traceAgeMs = 0, sensorAgeMs = 0; };
+                      float t = 0, sweepT = 0, sensorT = 0; float sensorPoint[3] = {}; unsigned traceAgeMs = 0, sensorAgeMs = 0;
+                      int sensorEnt = -1; };   //!< the entity the aim sensor hit (spawn id), -1 = none
     TraceDbg LastTrace();
 
     //! ComputeAimTarget integration (HandAimHook): what the fire should read while the engine computes the spawn.

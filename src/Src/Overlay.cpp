@@ -7,6 +7,8 @@
 #include "Reticle.h"
 #include "RenderRes.h"
 #include <imgui.h>
+#include <algorithm>
+#include <cmath>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 

@@ -131,7 +131,7 @@ namespace
     struct Probe { int frames = 0; float o[3] = {}, d[3] = {}; float fx = 0, fy = 0; } g_Probe;   // under g_SensM
     struct Target { bool valid = false; float p[3] = {}; } g_Target;                              // under g_SensM
     struct Sub { bool valid = false, probe = false; float o[3] = {}, f[3] = {}; float range = 0; ULONGLONG at = 0; } g_Sub;
-    struct Hit { bool valid = false, has = false; float t = 0; float point[3] = {}; float o[3] = {}, f[3] = {}; ULONGLONG at = 0; } g_Hit;
+    struct Hit { bool valid = false, has = false; float t = 0; float point[3] = {}; float o[3] = {}, f[3] = {}; ULONGLONG at = 0; int ent = -1; } g_Hit;
     using FnThis = void* (*)(void*);
     FnThis g_RealSubmit = nullptr, g_RealResults = nullptr;
 
@@ -184,6 +184,7 @@ namespace
         if (h.has)
         {
             memcpy(h.point, s + kSensorPoint, 12);
+            h.ent = *(const int32_t*)(s + 0x78);   // the hit entity's spawn id (entity+0xA8; exe+0x3C3F89)
             const float d[3] = { h.point[0] - h.o[0], h.point[1] - h.o[1], h.point[2] - h.o[2] };
             h.t = Dot(d, h.f);
             g_Hits++;
@@ -1066,7 +1067,7 @@ GunRay::TraceDbg GunRay::LastTrace()
     d.valid = d.fromTrace || (g_Hit.valid && now - g_Hit.at <= 500);
     d.t = d.fromTrace ? g_Trace.t : g_Hit.t; d.hit = d.fromTrace ? g_Trace.hit : g_Hit.has;
     d.sweepT = g_Trace.sweepT; d.sweepHit = g_Trace.sweepHit; d.sensorUsed = g_Trace.sensor;
-    d.sensorHas = g_Hit.has; d.sensorT = g_Hit.t; memcpy(d.sensorPoint, g_Hit.point, 12);
+    d.sensorHas = g_Hit.has; d.sensorT = g_Hit.t; memcpy(d.sensorPoint, g_Hit.point, 12); d.sensorEnt = g_Hit.has ? g_Hit.ent : -1;
     d.traceAgeMs = g_Trace.valid ? (unsigned)std::min<ULONGLONG>(99999, now - g_Trace.at) : 99999;
     d.sensorAgeMs = g_Hit.valid ? (unsigned)std::min<ULONGLONG>(99999, now - g_Hit.at) : 99999;
     return d;
