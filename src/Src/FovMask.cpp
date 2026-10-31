@@ -21,6 +21,10 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
     constexpr int kMaxVerts = 3 * 4096;
 
     std::atomic<bool> g_On{ true };
+    // 1 = everything outside the native fov; 2 = only the OUTER side of each eye (left of the left eye, right of the
+    // right eye: "like a scope"). Reported 2026-10-31 with 1: vertical slices missing from the screen-space
+    // reflections, hair and glass broken; thought to come from the strips on the nose side, between the eyes' views
+    std::atomic<int> g_Mode{ 1 };
     std::atomic<float> g_Margin{ 2.f };
     std::atomic<bool> g_Lens{ true };       // OutOfViewMaskLens: the lens's hidden area too (XR_KHR_visibility_mask)
 
@@ -156,11 +160,18 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
         masked = 1.f - Area(in) / 4.f;
         const float z = NearDepth(P);
         verts.clear();
+        // the quad's edges: 0 top, 1 right, 2 bottom, 3 left. Mode 2: only the outer side's (the left eye's left edge,
+        // the right eye's right edge)
+        const int sides = g_Mode.load();
+        const int outer = eye == 0 ? 3 : 1;
+        if (sides == 2) masked = 0;
         for (int i = 0; i < 4; i++)
         {   // outside edge i (overlaps with the next edge's region are drawn twice: depth writes, harmless)
+            if (sides == 2 && i != outer) continue;
             const V2 a = quad[i], b = quad[(i + 1) % 4];
             const std::vector<V2> out = Clip(rect, a, b, Side(a, b, cen) >= 0 ? -1.f : 1.f);
             if (out.size() < 3 || Area(out) < 1e-6f) continue;
+            if (sides == 2) masked += Area(out) / 4.f;
             for (size_t k = 1; k + 1 < out.size(); k++)
                 for (const V2& p : { out[0], out[k], out[k + 1] }) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
         }
@@ -168,7 +179,7 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
         // frame and projected the same way
         lensShare = 0; lensTris = 0;
         std::vector<float> lens;
-        if (g_Lens.load() && XRVisMask::Get(eye, lens, nullptr))
+        if (g_Lens.load() && sides != 2 && XRVisMask::Get(eye, lens, nullptr))
         {   // its points must lie within the eye's fov (tangents on z = -1, as the extension defines them): else not used
             const float tl = tanf(pl.fov[0]), tr = tanf(pl.fov[1]), tu = tanf(pl.fov[2]), td = tanf(pl.fov[3]);
             const float sx = 0.05f * (tr - tl), sy = 0.05f * (tu - td);
@@ -211,7 +222,7 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
         const VRRuntime::Placement pl = VRRuntime::GetPlacement(eye);
         float key[26];
         unsigned gen = 0; { std::vector<float> tmp; XRVisMask::Get(eye, tmp, &gen); }
-        memcpy(key, P, 64); memcpy(key + 16, pl.fov, 16); memcpy(key + 20, rot, 16); key[24] = g_Margin.load(); key[25] = g_Lens.load() ? (float)gen + 1.f : 0.f;
+        memcpy(key, P, 64); memcpy(key + 16, pl.fov, 16); memcpy(key + 20, rot, 16); key[24] = g_Margin.load() + 100.f * (float)g_Mode.load(); key[25] = g_Lens.load() ? (float)gen + 1.f : 0.f;
         bool same = E.built;
         for (int i = 0; same && i < 26; i++) same = fabsf(key[i] - E.key[i]) < (i < 16 ? 2e-3f : 1e-5f);   // (a TAA jitter is not a change)
         if (same) return &E;
@@ -261,12 +272,13 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
     };
 }
 
-void FovMask::SetParams(bool on, float marginDeg, bool lens)
+void FovMask::SetParams(int mode, float marginDeg, bool lens)
 {
-    g_On = on; g_Margin = std::clamp(marginDeg, 0.f, 15.f); g_Lens = lens;
-    LOGI("FovMask: {}", on ? fmt::format("on: what each eye's image shows outside its native fov (+ {:.1f} deg){} is not shaded (OutOfViewMask)", g_Margin.load(),
-                                         lens ? " and behind the lens's hidden area" : "")
-                           : std::string("off (OutOfViewMask = 0)"));
+    g_On = mode > 0; g_Mode = mode >= 2 ? 2 : 1; g_Margin = std::clamp(marginDeg, 0.f, 15.f); g_Lens = lens;
+    LOGI("FovMask: {}", mode >= 2 ? fmt::format("on, outer sides only: what each eye's image shows beyond its native fov on its OUTER side (+ {:.1f} deg) is not shaded (OutOfViewMask = 2)", g_Margin.load())
+                      : mode == 1 ? fmt::format("on: what each eye's image shows outside its native fov (+ {:.1f} deg){} is not shaded (OutOfViewMask = 1)", g_Margin.load(),
+                                                lens ? " and behind the lens's hidden area" : "")
+                                  : std::string("off (OutOfViewMask = 0)"));
 }
 bool FovMask::Wanted() { return g_On.load(); }
 

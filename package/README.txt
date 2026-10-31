@@ -160,7 +160,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  see-through they are. When you can take a guard down from behind, the right one turns RED inside a
  thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button). With
  KnockoutBlow = 1, hitting the back of his head hard (fist, the sword's pommel, the pistol) knocks him
- out at once instead.
+ out at once instead. KnockoutSpeed sets how hard (in m/s; 4.5 by default).
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab
@@ -244,6 +244,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                MinimalReticle = 0 (1 = only a dot where each hand points)  ReticleOpacity = 0.5
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)
                HudDistance = 2 (m, how far away that layer floats)
+               HudMarkers = 1 (a guard's alert marker and the objective markers placed over them in the headset)
+               HudMarkerSize = 0.07 (each marker shown at its character's distance; 0 = on the HUD's layer)
+               HudScale = 0.8 (the HUD's share of your view: the edges brought inward)
                CameraPitchFix = 1 (the game's camera does not slide forward / back as you look down / up)
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
@@ -257,8 +260,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CheapFogColorNight / CheapFogColorDusk / CheapFogColorDay = R,G,B[,brightness]
                CheapFogNightBelow = 0.1   CheapFogDayAbove = 0.5 (the upper sky's brightness)
                CheapFogBrightness = 1 (the fixed colour's brightness)
+               CheapFogMinBrightness = 0.35 (never darker than this, in the game's light units)
+               CheapFogFollowExposure = 1 (the fog changes with the eye adaptation as the scene does)
                CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
-               OutOfViewMask = 1 (the part of each eye's picture outside the lens's view is not shaded)
+               OutOfViewMask = 0 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
                OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
                OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime)
                FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)

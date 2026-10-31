@@ -142,6 +142,7 @@ static DWORD WINAPI InitThread(LPVOID)
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
+    MeleeAim::SetKnockoutSpeed(Settings::KnockoutSpeed());
     MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
     BinkVideo::SetSkipIntros(Settings::SkipIntroVideos());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());
@@ -157,7 +158,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetWindows(Settings::SlideWindows());
     Holster::SetEnabled(Settings::HolsterWeapons());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
-    ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance());
+    ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
@@ -207,6 +208,7 @@ static DWORD WINAPI InitThread(LPVOID)
     HandFx::Install();               // effects anchored to an arm joint come out of the hand as it is drawn
     GrabHand::Install();             // a held object's throw leaves with the left hand's velocity
     Holster::Install();              // a hand put away stays empty: the game's pairing of the hands' equips is held back
+    ScreenMode::InstallMarkers(Settings::HudMarkers());   // a guard's awareness marker over his head in the headset
     BinkVideo::Install();            // the pre-rendered videos: A / X held skips them as in a cutscene
     // The probe goes LAST: it only feeds the overlay, and xrCreateInstance can block for seconds (measured 6.1 s with
     // Meta's runtime on a game launched from Air Link). Run first, the game kept booting meanwhile and created its

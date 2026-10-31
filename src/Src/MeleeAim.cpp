@@ -844,7 +844,8 @@ namespace
     // centre (the head and the neck) at 1.4 m/s, and for kKoLatch after the offer was last seen on that target.
     // m/s of the striking point (relative to the player). Was 1.4: reported, a slow hand scratching the chin next to
     // a guard knocked him out. A real blow is 4-15 m/s (the logs); 3 is a firm, deliberate strike.
-    constexpr float kKoSpeed = 3.0f;
+    // [Gameplay] KnockoutSpeed (2026-10-31, reported "too sensitive" at 3: the blows logged were 3.0-5.5 m/s).
+    std::atomic<float> g_KoSpeed{ 4.5f };
     // The guard must not see it coming: the player behind him -- the direction from his head to the player at least
     // ~100 deg away from where he faces (cos = -0.17). Reported: "I can be literally standing in front of them".
     // Loosened for VR (asked: "more forgiving than the default"): 90 deg, i.e. anywhere behind his shoulders' line.
@@ -1031,7 +1032,7 @@ namespace
             float d[3]; for (int k = 0; k < 3; k++) d[k] = cur[i].p[k] - prev[i].p[k] - pd[k];
             const float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
             const float speed = len / (float)dt;
-            if (speed < kKoSpeed || len < 1e-4f) continue;
+            if (speed < g_KoSpeed.load(std::memory_order_relaxed) || len < 1e-4f) continue;
             // the closest the point came to the head's centre this frame
             const float a[3] = { head[0] - prev[i].p[0], head[1] - prev[i].p[1], head[2] - prev[i].p[2] };
             float u = (a[0] * d[0] + a[1] * d[1] + a[2] * d[2]) / (len * len); u = fminf(1.f, fmaxf(0.f, u));
@@ -1108,6 +1109,11 @@ void MeleeAim::SetKnockoutSound(float volume)
     g_KoVolume = std::clamp(volume, 0.f, 1.f);
     g_KoWav.clear();   // made again at that volume
     LOGI("MeleeAim: knockout hit sound {}", g_KoVolume.load() > 0.f ? fmt::format("at {:.0f}% (DVR_knockout.wav in the game's folder replaces it)", g_KoVolume.load() * 100.f) : std::string("off"));
+}
+void MeleeAim::SetKnockoutSpeed(float mps)
+{
+    g_KoSpeed = std::clamp(mps, 1.f, 20.f);
+    LOGI("MeleeAim: a knockout blow needs {:.1f} m/s (the hand, the pistol or the sword's pommel, relative to you)", g_KoSpeed.load());
 }
 void MeleeAim::SetKnockoutBlow(bool on)
 {

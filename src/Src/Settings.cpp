@@ -46,6 +46,7 @@ namespace
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
+        { "gameplay.knockoutspeed",     Kind::Float,  "4.5", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
         { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
         { "advanced.skipintrovideos",   Kind::Bool,   "0", 0, 0, nullptr },   // BinkVideo: the start-up videos end at once
         { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
@@ -62,6 +63,9 @@ namespace
         { "display.reticleopacity",     Kind::Float,  "0.5", 0.05f, 1, nullptr },
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
+        { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
+        { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr },
         { "display.wristhudsize",       Kind::Float,  "8.5", 4, 15, nullptr },
@@ -87,11 +91,13 @@ namespace
         { "display.cheapfognightbelow", Kind::Float,  "0.1", 0, 100, nullptr },  // the upper sky's brightness under which a map is night
         { "display.cheapfogdayabove",   Kind::Float,  "0.5", 0, 100, nullptr },  // ...and over which it is day (dusk between)
         { "display.cheapfogbrightness", Kind::Float,  "1", 0, 100, nullptr },    // the fixed colour's multiplier (HDR)
+        { "display.cheapfogminbrightness", Kind::Float, "0.35", 0, 100, nullptr }, // the fog's least brightness as seen (never dark)
+        { "display.cheapfogfollowexposure", Kind::Bool, "1", 0, 0, nullptr },    // the fog follows the game's exposure (EngineLuminanceFactor)
         { "display.cheapfogskyheight",  Kind::Text,   "auto", 0, 0, nullptr },   // "auto" (up to the far background, then 10 deg more) or deg above the horizon (0: none)
         { "display.foveatedrendering",  Kind::Bool,   "0", 0, 0, nullptr },      // Foveation: NVIDIA VRS, coarser shading away from the lens centre
         { "display.foveatedinner",      Kind::Float,  "35", 5, 80, nullptr },    // deg from the centre at full shading
         { "display.foveatedouter",      Kind::Float,  "50", 5, 89, nullptr },    // deg to which 2x2 shading reaches (4x4 beyond)
-        { "display.outofviewmask",      Kind::Bool,   "1", 0, 0, nullptr },      // FovMask: the image outside each eye's native fov not shaded
+        { "display.outofviewmask",      Kind::Float,  "0", 0, 2, nullptr },      // FovMask: 0 off, 1 all outside each eye's native fov not shaded, 2 only its outer side
         { "display.outofviewmaskmargin", Kind::Float, "2", 0, 15, nullptr },     // ...plus this many degrees round it (the compositor's reprojection)
         { "display.outofviewmasklens",  Kind::Bool,   "1", 0, 0, nullptr },      // ...and the lens's hidden area (XR_KHR_visibility_mask)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
@@ -284,6 +290,7 @@ bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
 float Settings::KnockoutSoundVolume() { return F("gameplay.knockoutsoundvolume"); }
+float Settings::KnockoutSpeed() { return F("gameplay.knockoutspeed"); }
 bool Settings::SkipIntroVideos() { return B("advanced.skipintrovideos"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
@@ -304,6 +311,9 @@ bool Settings::SnapTurnBlank() { return B("controls.snapturnblank"); }
 float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity"); }
 bool Settings::StereoHud() { return B("display.stereohud"); }
 float Settings::HudDistance() { return F("display.huddistance"); }
+bool Settings::HudMarkers() { return B("display.hudmarkers"); }
+float Settings::HudScale() { return F("display.hudscale"); }
+float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
@@ -312,7 +322,7 @@ bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
 bool Settings::ProfileRenderPasses() { return B("advanced.profilerenderpasses"); }
 int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdisabledeffects")); }
-bool Settings::OutOfViewMask() { return B("display.outofviewmask"); }
+int Settings::OutOfViewMask() { return (int)std::lround(F("display.outofviewmask")); }
 float Settings::OutOfViewMaskMargin() { return F("display.outofviewmaskmargin"); }
 bool Settings::OutOfViewMaskLens() { return B("display.outofviewmasklens"); }
 Foveation::Params Settings::Foveated()
@@ -329,6 +339,7 @@ Fog::Params Settings::CheapFog()
     p.on = B("display.cheapfog");
     p.start = F("display.cheapfogstart"); p.end = std::max(p.start + 1.f, F("display.cheapfogend")); p.opacity = F("display.cheapfogopacity");
     p.brightness = F("display.cheapfogbrightness");
+    p.minBrightness = F("display.cheapfogminbrightness"); p.followExposure = B("display.cheapfogfollowexposure");
     {
         const std::string& h = V("display.cheapfogskyheight");
         float deg = 0;

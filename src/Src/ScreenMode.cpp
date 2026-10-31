@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <detours/detours.h>
+#include "GameInfo.h"
+#include "ViewMatrixHook.h"
 
 namespace
 {
@@ -24,6 +27,31 @@ namespace
     // frustum's centre (wider on the nose side), so a HUD element came out at two directions -- double, and diverging.
     std::atomic<bool> g_HudOn{ true };
     std::atomic<float> g_HudDist{ 2.f };
+    // [Display] HudScale (2026-10-31, reported: interface elements too far out towards the edges of the view): the
+    // panel covers this share of the picture's frustum, about its centre; the markers are placed for it (MarkerProjHook)
+    std::atomic<float> g_HudScale{ 0.8f };
+    // [Display] HudMarkers 1 (2026-10-31, reported: the alert markers in the right direction but at the HUD's depth, not
+    // over the guards' heads): the markers the game placed this tick (MarkerProjHook: their HUD pixels and distance),
+    // in batches -- one game tick's calls come together -- tagged with the newest main view then. PlayHud lifts each
+    // one's square of the HUD (HudMarkerSize of its height) out of the HUD's panel onto a panel of its own at the
+    // character's distance, in the same direction from the head: the same picture, at the right depth.
+    struct MarkRec { float px = 0, py = 0, f = 0; int w = 0, h = 0; };
+    struct MarkBatch { unsigned long long serial = 0; double t = 0; int n = 0; MarkRec m[16]; };
+    constexpr int kMarkPanels = 6;
+    std::mutex g_MkM; MarkBatch g_Mk[4]; int g_MkCur = -1; double g_MkLast = 0;
+    std::atomic<float> g_MarkBox{ 0.07f };
+    std::atomic<bool> g_MarkersOn{ true };
+    std::atomic<unsigned long long> g_MarkPanels{ 0 };
+    double NowSecs() { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart / (double)f.QuadPart; }
+    void NoteMarker(unsigned long long serial, float px, float py, float f, int w, int h)
+    {
+        std::lock_guard lk(g_MkM);
+        const double now = NowSecs();
+        if (g_MkCur < 0 || now - g_MkLast > 0.003) { g_MkCur = (g_MkCur + 1) & 3; g_Mk[g_MkCur] = MarkBatch{}; g_Mk[g_MkCur].serial = serial; g_Mk[g_MkCur].t = now; }
+        g_MkLast = now;
+        MarkBatch& b = g_Mk[g_MkCur];
+        if (b.n < 16) b.m[b.n++] = { px, py, f, w, h };
+    }
     std::atomic<unsigned long long> g_HudPanels{ 0 };
     std::mutex g_M;                            // the config and the state below (render thread + the command thread)
 
@@ -352,7 +380,7 @@ bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, b
     return false;
 }
 
-void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4])
+void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4], unsigned long long serial)
 {
     std::lock_guard lk(g_M);
     if (!g_Lift.load() || g_Kind != kPlay) return;
@@ -366,20 +394,152 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
     p.srv = srv; p.srcW = tw; p.srcH = th;
     p.crop[0] = 0.f; p.crop[1] = 0.f; p.crop[2] = (float)tw; p.crop[3] = (float)th;
     p.premultiplied = true; p.gamma = gamma; p.alpha = 1.f; p.corner = 0.f; p.soft = 0.f;
-    // the plane the picture was rendered on, at d: the interface's pixels are where the picture's are
-    p.width = d * (r - l); p.height = d * (u - dn);
+    // the plane the picture was rendered on, at d: the interface's pixels are where the picture's are -- shrunk about
+    // its centre by HudScale, so what the game puts at the screen's edges is not at the edge of the lenses
+    const float hs = g_HudScale.load();
+    p.width = d * (r - l) * hs; p.height = d * (u - dn) * hs;
     const float c[3] = { d * (r + l) * 0.5f, d * (u + dn) * 0.5f, -d };
     float w[3]; VRMath::QRotate(quat, c, w);
     for (int i = 0; i < 3; i++) p.pos[i] = pos[i] + w[i];
     memcpy(p.quat, quat, 16);
     p.outW = std::min(tw, 4096u); p.outH = std::min(th, 4096u);
+    if (g_MarkersOn.load() && g_MarkBox.load() > 0.f)
+    {   // the markers at their characters' distance: the batch of the tick this picture was drawn from (the newest one
+        // made no later than its view), each marker's square of the HUD on a panel of its own, left out of the HUD's
+        MarkRec ms[16]; int n = 0;
+        {
+            std::lock_guard mk(g_MkM);
+            const double now = NowSecs();
+            const MarkBatch* best = nullptr;
+            for (const MarkBatch& b : g_Mk)
+            {
+                if (!b.n || now - b.t > 0.25 || (serial && b.serial > serial)) continue;
+                if (!best || b.serial > best->serial || (b.serial == best->serial && b.t > best->t)) best = &b;
+            }
+            if (best) { n = best->n; memcpy(ms, best->m, sizeof(MarkRec) * n); }
+        }
+        std::sort(ms, ms + n, [](const MarkRec& a, const MarkRec& b) { return a.f < b.f; });
+        const float S = g_MarkBox.load() * (float)th;
+        int used = 0;
+        for (int i = 0; i < n && used < kMarkPanels; i++)
+        {
+            const MarkRec& m = ms[i];
+            if (m.w <= 0 || m.h <= 0 || !(m.f > 0.5f) || m.f > 500.f) continue;
+            const float cx = m.px * (float)tw / (float)m.w, cy = m.py * (float)th / (float)m.h;
+            const float x0 = std::max(0.f, cx - S * 0.5f), y0 = std::max(0.f, cy - S * 0.5f);
+            const float x1 = std::min((float)tw, cx + S * 0.5f), y1 = std::min((float)th, cy + S * 0.5f);
+            if (x1 - x0 < S * 0.5f || y1 - y0 < S * 0.5f) continue;   // at the HUD's edge (clamped there: a direction): left on the HUD
+            p.holes[used][0] = x0; p.holes[used][1] = y0; p.holes[used][2] = x1; p.holes[used][3] = y1;
+            XRPanelLayer mp = p;
+            mp.nHoles = 0;
+            mp.crop[0] = x0; mp.crop[1] = y0; mp.crop[2] = x1 - x0; mp.crop[3] = y1 - y0;
+            // the square's centre as a direction from the head (the HUD's panel: its frustum shrunk by HudScale), out to
+            // the character's distance (the game's metres)
+            const float mx = 0.5f * (x0 + x1), my = 0.5f * (y0 + y1);
+            const float tx = 0.5f * (r + l) + (mx / (float)tw - 0.5f) * (r - l) * hs;
+            const float ty = 0.5f * (u + dn) - (my / (float)th - 0.5f) * (u - dn) * hs;
+            const float v[3] = { tx * m.f, ty * m.f, -m.f };
+            float wv[3]; VRMath::QRotate(quat, v, wv);
+            for (int k = 0; k < 3; k++) mp.pos[k] = pos[k] + wv[k];
+            mp.width = m.f * (x1 - x0) / (float)tw * (r - l) * hs;
+            mp.height = m.f * (y1 - y0) / (float)th * (u - dn) * hs;
+            mp.outW = 256; mp.outH = 256;
+            xr.SetPanelLayer(2 + used, mp);
+            used++;
+        }
+        p.nHoles = used;
+        if (used) g_MarkPanels++;
+    }
     xr.SetPanelLayer(1, p);
     g_HudPanels++;
 }
-void ScreenMode::SetHud(bool on, float dist)
+
+// ---- the markers over characters and objectives ([Display] HudMarkers, 2026-10-31) ----
+// Reported: a guard's awareness marker did not sit over his head. The markers (arkEntityMarkerManager: awareness,
+// objectives, runes...) are placed by the game thread: the marker's world point through exe+0x6DDA50 (the game camera's
+// view-projection at camera+0x3EB0, exe+0x88D970, then to the HUD's pixels with its size at [exe+0x39A5290]+0x340EA8).
+// That is the flat game's camera -- its own fov and aspect -- while the HUD is shown over the headset's picture: on
+// its panel (StereoHud), the plane of the frustum the view was rendered with (its tangents), in the head's frame.
+// So the point is projected again here the way the panel shows it: from the latest main view's origin, in the head's
+// axis (no eye turn), through that view's tangents. The game's own clamping to the screen's edge runs on the result.
+namespace
 {
-    g_HudOn = on; g_HudDist = std::clamp(dist, 0.5f, 10.f);
-    LOGI("ScreenMode: stereo HUD {} ({:.1f} m)", on ? "on one panel for both eyes (StereoHud = 1)" : "in each eye's picture (StereoHud = 0)", g_HudDist.load());
+    using MarkerProj_t = void* (*)(void* cam, const float* world, float* out);
+    constexpr uintptr_t kMarkerProj = 0x6DDA50, kHudGlobal = 0x39A5290, kHudSize = 0x340EA8;
+    MarkerProj_t g_RealMarkerProj = nullptr;
+    std::atomic<unsigned long long> g_MarkersFixed{ 0 }, g_MarkersKept{ 0 };
+    std::atomic<int> g_MarkerLogs{ 0 };
+    std::atomic<double> g_MarkerLogAt{ 0 };
+    bool HudSize(int& w, int& h)
+    {
+        __try
+        {
+            const uint8_t* g = *(const uint8_t* const*)(GameInfo::Base() + kHudGlobal);
+            if (!g) return false;
+            w = *(const int*)(g + kHudSize); h = *(const int*)(g + kHudSize + 4);
+            return w > 0 && h > 0 && w < 32768 && h < 32768;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void* MarkerProjHook(void* cam, const float* world, float* out)
+    {
+        void* r = g_RealMarkerProj(cam, world, out);
+        if (!g_MarkersOn.load(std::memory_order_relaxed) || !world || !out || g_Flat.load() || g_Wheel.load()) return r;
+        float mat[16], org[3], axis[9], head[9]; unsigned long long serial = 0;
+        if (!ViewMatrixHook::RenderView(mat, org, axis, &serial, head)) return r;
+        const ViewMatrixHook::XrPose rp = ViewMatrixHook::RenderPoseXr(serial);
+        if (!rp.valid || !rp.tanValid || rp.flat) return r;
+        const float l = rp.tan[0], rt = rp.tan[1], u = rp.tan[2], dn = rp.tan[3];
+        int w = 0, h = 0;
+        if (!(rt > l) || !(u > dn) || !HudSize(w, h)) return r;
+        const float d[3] = { world[0] - org[0], world[1] - org[1], world[2] - org[2] };
+        // the engine's axis rows: forward, left, up
+        const float f = d[0] * head[0] + d[1] * head[1] + d[2] * head[2];
+        const float lf = d[0] * head[3] + d[1] * head[4] + d[2] * head[5];
+        const float up = d[0] * head[6] + d[1] * head[7] + d[2] * head[8];
+        if (!(f > 0.05f)) { g_MarkersKept++; return r; }      // behind the head: the game's own (it clamps it to an edge)
+        const float tx = -lf / f, ty = up / f;
+        // on the HUD's panel (StereoHud): its frustum shrunk about the centre by HudScale
+        const float hs = g_Lift.load() ? g_HudScale.load() : 1.f;
+        const float nx = 2.f * (tx - 0.5f * (rt + l)) / ((rt - l) * hs), ny = 2.f * (ty - 0.5f * (u + dn)) / ((u - dn) * hs);
+        const float ox = out[0], oy = out[1];
+        out[0] = (nx + 1.f) * (float)w * 0.5f; out[1] = (1.f - ny) * (float)h * 0.5f;
+        g_MarkersFixed++;
+        if (g_Lift.load() && fabsf(nx) <= 1.f && fabsf(ny) <= 1.f) NoteMarker(serial, out[0], out[1], f, w, h);   // for its own panel (PlayHud)
+        const double now = Now();
+        if (g_MarkerLogs.load() < 10 && now - g_MarkerLogAt.load() > 2.0)
+        {
+            g_MarkerLogAt = now; g_MarkerLogs++;
+            LOGI("ScreenMode: a marker over a character / objective placed for the headset's view: at {:.0f},{:.0f} of the HUD's {}x{} "
+                 "(the game's camera had it at {:.0f},{:.0f}); {:.1f} m ahead, {:.1f} deg right, {:.1f} deg up",
+                 out[0], out[1], w, h, ox, oy, f, atanf(tx) * kR2D, atanf(ty) * kR2D);
+        }
+        return r;
+    }
+}
+void ScreenMode::InstallMarkers(bool on)
+{
+    g_MarkersOn = on;
+    if (!g_RealMarkerProj)
+    {
+        g_RealMarkerProj = (MarkerProj_t)(GameInfo::Base() + kMarkerProj);
+        DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)g_RealMarkerProj, MarkerProjHook);
+        const LONG r = DetourTransactionCommit();
+        LOGI("ScreenMode: the markers over characters and objectives (exe+0x{:X}) {}: detour={}", kMarkerProj,
+             on ? "placed for the headset's view (HudMarkers = 1)" : "where the game's flat camera puts them (HudMarkers = 0)", r);
+    }
+}
+std::string ScreenMode::MarkerStats()
+{
+    return fmt::format("markers placed for the headset {}, left to the game (behind the head) {}, HUD frames with markers on panels of their own {}",
+                       g_MarkersFixed.load(), g_MarkersKept.load(), g_MarkPanels.load());
+}
+void ScreenMode::SetHud(bool on, float dist, float scale, float markerSize)
+{
+    g_HudOn = on; g_HudDist = std::clamp(dist, 0.5f, 10.f); g_HudScale = std::clamp(scale, 0.3f, 1.f); g_MarkBox = std::clamp(markerSize, 0.f, 0.25f);
+    LOGI("ScreenMode: stereo HUD {} ({:.1f} m, {:.0f} % of the view's width: HudScale)", on ? "on one panel for both eyes (StereoHud = 1)" : "in each eye's picture (StereoHud = 0)",
+         g_HudDist.load(), g_HudScale.load() * 100.f);
 }
 
 void ScreenMode::SetMode(int m)

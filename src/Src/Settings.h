@@ -28,6 +28,10 @@ namespace Settings
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
     bool FinisherAnimations();
     float KnockoutSoundVolume();
+    float KnockoutSpeed();
+    float HudScale();
+    float HudMarkerSize();                        //!< [Display] HudMarkerSize: the HUD square around a marker put at its character's distance (ScreenMode)                             //!< [Display] HudScale: the stereo HUD panel's share of the view (ScreenMode)
+    bool HudMarkers();                            //!< [Display] HudMarkers: the game's markers over characters placed for the headset (ScreenMode)                        //!< [Gameplay] KnockoutSpeed: m/s a knockout blow needs (MeleeAim)
     bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
@@ -53,7 +57,7 @@ namespace Settings
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
     int SkipDisabledEffects();                    //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF
     Foveation::Params Foveated();                 //!< [Display] FoveatedRendering / FoveatedInner / FoveatedOuter
-    bool OutOfViewMask();                         //!< [Display] OutOfViewMask (FovMask)
+    int OutOfViewMask();                          //!< [Display] OutOfViewMask (FovMask): 0 off, 1 all, 2 outer sides only
     float OutOfViewMaskMargin();                  //!< [Display] OutOfViewMaskMargin, degrees
     bool OutOfViewMaskLens();                     //!< [Display] OutOfViewMaskLens
     bool ProfileRenderPasses();                   //!< [Advanced] ProfileRenderPasses: GPU time per render pass (PassProfile)

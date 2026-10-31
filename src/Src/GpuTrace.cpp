@@ -27,6 +27,7 @@
 #include "VRRuntime.h"
 #include "BodyHide.h"
 #include "XRSession.h"
+#include "Fog.h"
 
 namespace
 {
@@ -693,6 +694,53 @@ namespace
         ProjRec* slot = &g_ProjRing[0];
         for (ProjRec& r : g_ProjRing) { if (r.serial == serial) { slot = &r; break; } if (r.serial < slot->serial) slot = &r; }
         slot->serial = serial; slot->frame = frame; memcpy(slot->P, P, sizeof slot->P); slot->view = view;
+    }
+    // Which arm draws may publish their projection (2026-10-31). The rings were still reported flickering and doubled
+    // "in a specific area", and the log had them jump up to 600 NDC with the ray still and the projection from "the
+    // presented view's own draws". The player's arms are also drawn into other views -- a spot light's shadow map
+    // near the player renders them through the same path -- and such a draw, whose view matrix is no main view's,
+    // was filed under the newest main view with that view's matrix and the LIGHT's projection. Now a draw publishes
+    // only when (1) its own view was found (its PerViewCB matrix is a main view's: t_DrawProjOwn) and (2) its
+    // projection's scale (P00, P11) is the one most arm draws have (the main views': in stereo both eyes share one
+    // symmetric fov). (1) is waived when no draw has had its own view for 2 s, so the reticle never goes away.
+    struct ProjClass { float p00 = 0, p11 = 0; unsigned long long n = 0; };
+    ProjClass g_ProjClass[4];                                       // under g_ProjM
+    unsigned long long g_ProjClassSeen = 0, g_ProjOwnFrame = 0;
+    std::atomic<unsigned long long> g_ProjRejNoView{ 0 }, g_ProjRejScale{ 0 }, g_ProjAccepted{ 0 };
+    int g_ProjRejLogs = 0;
+    bool ProjAcceptable(const float P[4][4], bool ownView, unsigned long long frame)
+    {   // (caller holds g_ProjM)
+        if (ownView) g_ProjOwnFrame = frame;
+        if (!ownView && frame - g_ProjOwnFrame < 180) { g_ProjRejNoView++; return false; }
+        const float a = fabsf(P[0][0]), b = fabsf(P[1][1]);
+        if (!(a > 1e-3f && b > 1e-3f && a < 100.f && b < 100.f)) { g_ProjRejScale++; return false; }
+        auto same = [](float x, float y) { return fabsf(x - y) <= 0.02f * std::max(x, y); };
+        ProjClass* hit = nullptr; ProjClass* low = &g_ProjClass[0];
+        for (ProjClass& c : g_ProjClass)
+        {
+            if (c.n && same(c.p00, a) && same(c.p11, b)) { hit = &c; break; }
+            if (c.n < low->n) low = &c;
+        }
+        if (!hit) { *low = ProjClass{ a, b, 0 }; hit = low; }
+        hit->n++;
+        hit->p00 += (a - hit->p00) * 0.05f; hit->p11 += (b - hit->p11) * 0.05f;   // follows a changed fov
+        if (++g_ProjClassSeen % 1024 == 0) for (ProjClass& c : g_ProjClass) c.n /= 2;   // the past fades
+        const ProjClass* top = &g_ProjClass[0];
+        for (const ProjClass& c : g_ProjClass) if (c.n > top->n) top = &c;
+        if (hit != top)
+        {
+            g_ProjRejScale++;
+            if (g_ProjRejLogs < 20)
+            {
+                g_ProjRejLogs++;
+                LOGI("GpuTrace: an arm draw's projection kept from the reticle: scale {:.3f} x {:.3f}, the main views' {:.3f} x {:.3f} "
+                     "(its own view {}; another view drawing the arms -- a light's shadow map?); {} so far",
+                     a, b, top->p00, top->p11, ownView ? "found" : "NOT found", g_ProjRejScale.load());
+            }
+            return false;
+        }
+        g_ProjAccepted++;
+        return true;
     }
     // Projection census (GpuTrace::RequestProjCensus): does the first-person body use the world's projection? id Tech
     // engines classically draw the view model with its own fov (renderView_t has an inhibitModelFovScale flag here),
@@ -1438,6 +1486,7 @@ namespace
         return h;
     }
     thread_local float t_DrawProj[4][4]; thread_local Rigid t_DrawProjView; thread_local bool t_DrawProjValid = false; thread_local unsigned long long t_DrawProjSerial = 0;
+    thread_local bool t_DrawProjOwn = false;   // the draw's own view was found (its view matrix is a main view's)
     bool TransformInstanceCb(ID3D11DeviceContext* ctx, const InstLayout* L, const float* in, UINT bytes, float* out, bool byIndex, UINT draw, ArmInfo* ai = nullptr)
     {
         t_DrawProjValid = false;
@@ -1479,6 +1528,7 @@ namespace
             }
             entStable[0] = g_EntStable[0]; entStable[1] = g_EntStable[1];
             t_XfUsed = xfSerial;
+            t_DrawProjOwn = own != nullptr;
         }
         Rigid ownDv; bool useOwnDv = false;      // an arm draw whose hand pose comes from the palette, not the equipment entity
         bool carryDraw = false;                  // a draw of the item carried in a hand (PhysicalPickup)
@@ -3824,8 +3874,11 @@ namespace
         if (t_DrawProjValid)
         {   // a draw of the player's own arm / equipment: certainly the main view (see g_Proj)
             std::lock_guard lk(g_ProjM);
-            memcpy(g_Proj, t_DrawProj, sizeof g_Proj); g_ProjView = t_DrawProjView; g_ProjValid = true; g_ProjFrame = g_PresentFrame;
-            ProjRemember(t_DrawProjSerial, t_DrawProj, t_DrawProjView, g_PresentFrame);
+            if (ProjAcceptable(t_DrawProj, t_DrawProjOwn, g_PresentFrame))
+            {
+                memcpy(g_Proj, t_DrawProj, sizeof g_Proj); g_ProjView = t_DrawProjView; g_ProjValid = true; g_ProjFrame = g_PresentFrame;
+                ProjRemember(t_DrawProjSerial, t_DrawProj, t_DrawProjView, g_PresentFrame);
+            }
         }
         if (t_DrawProjValid && g_CensusLeft.load() > 0) CensusAdd(t_DrawProj, 0.f, true);
         if (!moved)
@@ -4052,6 +4105,7 @@ namespace
         static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext* c, UINT x, UINT y, UINT z)
         {
             PassProfile::NoteDispatch(x, y, z, false);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, x, y, z, false, p);
             realDispatch(c, x, y, z);
             StereoTaa::AfterPass(c, KIND, p);
@@ -4059,6 +4113,7 @@ namespace
         static void STDMETHODCALLTYPE DispatchInd(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
             PassProfile::NoteDispatch(0, 0, 0, true);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, 0, 0, 0, true, p);
             realDispatchInd(c, b, o);
             StereoTaa::AfterPass(c, KIND, p);
@@ -4119,6 +4174,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(n, 1, false);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4134,6 +4190,7 @@ namespace
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(n, 1, false);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4148,6 +4205,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(n, i, false);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4162,6 +4220,7 @@ namespace
         {
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(n, i, false);
+            if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4692,13 +4751,13 @@ namespace
     HRESULT STDMETHODCALLTYPE HkCreatePixelShader(ID3D11Device* dev, const void* code, SIZE_T len, ID3D11ClassLinkage* l, ID3D11PixelShader** out)
     {
         HRESULT hr = g_RealCreatePS(dev, code, len, l, out);
-        if (SUCCEEDED(hr) && out && *out && code && len) KeepShader(*out, code, len);
+        if (SUCCEEDED(hr) && out && *out && code && len) { KeepShader(*out, code, len); Fog::OnShader(*out, code, len, false); }
         return hr;
     }
     HRESULT STDMETHODCALLTYPE HkCreateComputeShader(ID3D11Device* dev, const void* code, SIZE_T len, ID3D11ClassLinkage* l, ID3D11ComputeShader** out)
     {
         HRESULT hr = g_RealCreateCS(dev, code, len, l, out);
-        if (SUCCEEDED(hr) && out && *out && code && len) { KeepShader(*out, code, len); StereoTaa::OnComputeShader(*out, code, len); }
+        if (SUCCEEDED(hr) && out && *out && code && len) { KeepShader(*out, code, len); StereoTaa::OnComputeShader(*out, code, len); Fog::OnShader(*out, code, len, true); }
         return hr;
     }
 
@@ -5869,6 +5928,11 @@ void GpuTrace::ProjectForSerial(unsigned long long serial) { t_ProjWant = serial
 int GpuTrace::LastProjSource() { return t_ProjSrc; }
 void GpuTrace::ProjStats(unsigned long long& own, unsigned long long& matrix, unsigned long long& latest)
 { own = g_ProjForHit.load(); matrix = g_ProjForView.load(); latest = g_ProjForMiss.load(); }
+std::string GpuTrace::ProjFilterStats()
+{
+    return fmt::format("arm-draw projections taken {}, kept out: {} without their own view, {} of another scale",
+                       g_ProjAccepted.load(), g_ProjRejNoView.load(), g_ProjRejScale.load());
+}
 bool GpuTrace::ProjectWorld(const float w[3], float ndc[2], float* depth)
 {
     float P[4][4]; Rigid vwLocal;

@@ -55,6 +55,9 @@ namespace MeleeAim
     //! [Gameplay] KnockoutBlow: while the takedown is offered, a hard blow to the back of the target's head knocks him
     //! out (the game's choke knockout, without its animation).
     void SetKnockoutBlow(bool on);
+    //! [Gameplay] KnockoutSpeed: how fast (m/s, relative to the player) the fist, pistol or sword's pommel must move for
+    //! a blow to knock out, 1..20.
+    void SetKnockoutSpeed(float mps);
     //! [Gameplay] KnockoutSoundVolume: the hit sound when a knockout blow lands, 0..1 (0 = none).
     void SetKnockoutSound(float volume);
     //! [Gameplay] FinisherAnimations: false = a finishing blow is an ordinary blow (no synchronised kill animation) and

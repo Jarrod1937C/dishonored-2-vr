@@ -31,7 +31,10 @@ namespace Fog
                     //! CheapFogColor = auto: one of three colours by how bright the upper sky is in the map (night, dusk, day);
                     //! cat[k] = linear rgb + brightness (<= 0: the map's own horizon brightness)
                     bool category = false; float cat[3][4] = { { 0.06f, 0.08f, 0.13f, 0 }, { 0.75f, 0.6f, 0.45f, 0 }, { 0.95f, 1.f, 0.97f, 0 } };
-                    float nightBelow = 0.1f, dayAbove = 0.5f; };
+                    float nightBelow = 0.1f, dayAbove = 0.5f;
+                    float minBrightness = 0.35f;  //!< CheapFogMinBrightness: the fog's least luminance (x the game's EngineLuminanceFactor)
+                    bool followExposure = true;   //!< CheapFogFollowExposure: drawn divided by the frame's EngineLuminanceFactor, as the scene is
+    };
     void SetParams(const Params& p);          //!< from the ini (before PassProfile::Install)
     bool Wanted();                            //!< CheapFog is on in the ini (the executor hook is needed)
     void SetGameFogOff(bool off);             //!< VrTweaks: the game's own fog is off now (r_skipFog set by the mod)
@@ -43,4 +46,9 @@ namespace Fog
     //! Returns true when it drew (the task's context must then be finished even if the pass marks it empty).
     bool BeforeTransparent(ID3D11DeviceContext* c, const void* view);
     std::string Status();
+    //! GpuTrace's shader-creation hook: a pixel / compute shader that binds the game's auto-exposure buffer is noted
+    void OnShader(void* sh, const void* code, size_t len, bool cs);
+    //! GpuTrace's draw / dispatch hooks, only while ExposureSearching(): the exposure buffer bound there is kept
+    bool ExposureSearching();
+    void AtWork(ID3D11DeviceContext* c, bool dispatch);
 }

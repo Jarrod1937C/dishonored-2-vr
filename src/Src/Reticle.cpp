@@ -131,11 +131,11 @@ namespace
     // ---- the ring's screen position jumping while the ray did not move (a projection of the wrong view?): per hand and
     // per eye, the ring's NDC and its ray's direction at the last drawn frame of that eye. A jump of > 0.04 NDC (~2 deg)
     // with the ray turned < 0.5 deg and the distance steady is logged with what the projection came from.
-    struct PosT { bool valid = false; double t = 0; float ndc[2] = {}, dir[3] = {}, len = 0; int src = 0; unsigned long long serial = 0; };
+    struct PosT { bool valid = false; double t = 0; float ndc[2] = {}, dir[3] = {}, org[3] = {}, len = 0; int src = 0; unsigned long long serial = 0; };
     PosT g_Pos[2][2];
     double g_PosLogAt[2] = { -10, -10 }; int g_PosLogs = 0; unsigned long long g_PosJumps = 0;
     const char* kProjSrc[4] = { "?", "the presented view's own draws", "the presented view's matrix", "the LATEST view (maybe the other eye's)" };
-    void NotePos(int h, const float ndc[2], const float dir[3], float len)
+    void NotePos(int h, const float ndc[2], const float dir[3], const float org[3], float len)
     {
         const int e = g_FrameEye;
         if (e < 0 || e > 1) return;
@@ -146,21 +146,22 @@ namespace
         {
             const float dn = hypotf(ndc[0] - P.ndc[0], ndc[1] - P.ndc[1]);
             const float cosd = dir[0] * P.dir[0] + dir[1] * P.dir[1] + dir[2] * P.dir[2];
-            if (dn > 0.04f && cosd > 0.99996f && fabsf(len - P.len) < 0.1f * std::max(len, P.len))
+            const float moved = sqrtf((org[0] - P.org[0]) * (org[0] - P.org[0]) + (org[1] - P.org[1]) * (org[1] - P.org[1]) + (org[2] - P.org[2]) * (org[2] - P.org[2]));
+            if (dn > 0.04f && cosd > 0.99996f && moved < 0.03f && fabsf(len - P.len) < 0.1f * std::max(len, P.len))
             {
                 g_PosJumps++;
                 if (now - g_PosLogAt[h] >= 1.0 && g_PosLogs < 200)
                 {
                     g_PosLogAt[h] = now; g_PosLogs++;
                     unsigned long long a = 0, b = 0, c = 0; GpuTrace::ProjStats(a, b, c);
-                    LOGI("Reticle: the {} hand's ring JUMPED {:.3f} NDC on the eye-{} image with its ray still (turned {:.2f} deg, {:.2f} m): "
-                         "projection from {} (serial {}; before: {}, serial {}); projections so far: own draws {}, matrix {}, latest {}; {} such jumps",
-                         h ? "right" : "left", dn, e, acosf(std::min(1.f, cosd)) * 57.29578f, len, kProjSrc[src & 3], g_FrameSerial,
-                         kProjSrc[P.src & 3], P.serial, a, b, c, g_PosJumps);
+                    LOGI("Reticle: the {} hand's ring JUMPED {:.3f} NDC on the eye-{} image with its ray still (turned {:.2f} deg, moved {:.1f} cm, {:.2f} m): "
+                         "projection from {} (serial {}; before: {}, serial {}); projections so far: own draws {}, matrix {}, latest {}; {}; {} such jumps",
+                         h ? "right" : "left", dn, e, acosf(std::min(1.f, cosd)) * 57.29578f, moved * 100.f, len, kProjSrc[src & 3], g_FrameSerial,
+                         kProjSrc[P.src & 3], P.serial, a, b, c, GpuTrace::ProjFilterStats(), g_PosJumps);
                 }
             }
         }
-        P.valid = true; P.t = now; memcpy(P.ndc, ndc, 8); memcpy(P.dir, dir, 12); P.len = len; P.src = src; P.serial = g_FrameSerial;
+        P.valid = true; P.t = now; memcpy(P.ndc, ndc, 8); memcpy(P.dir, dir, 12); memcpy(P.org, org, 12); P.len = len; P.src = src; P.serial = g_FrameSerial;
     }
 
     // ---- the ring's distance, steadied: a new distance (> 15 % off the one shown) is taken only once it has held for
@@ -281,7 +282,7 @@ namespace
         {
             const float dd[3] = { end[0] - org[0], end[1] - org[1], end[2] - org[2] };
             const float ln = sqrtf(dd[0] * dd[0] + dd[1] * dd[1] + dd[2] * dd[2]);
-            if (ln > 1e-3f) { const float u[3] = { dd[0] / ln, dd[1] / ln, dd[2] / ln }; NotePos(h, ndc, u, ln); }
+            if (ln > 1e-3f) { const float u[3] = { dd[0] / ln, dd[1] / ln, dd[2] / ln }; NotePos(h, ndc, u, org, ln); }
         }
         const ImVec2 c = ToScreen(ndc, size);
         if (!pointer && h == HandAimHook::GunHand()) GunRay::NoteRing(c.x / size.x, c.y / size.y);   // the gun hand's ring, either mode (test scripts aim with it)
@@ -447,8 +448,8 @@ void Reticle::Draw()
         {
             at = now;
             unsigned long long a = 0, b = 0, c = 0; GpuTrace::ProjStats(a, b, c);
-            if (a + b + c) LOGI("Reticle: the rings' projections so far: the presented view's own draws {}, its matrix {}, the latest view {}; screen jumps with the ray still {}",
-                                a, b, c, g_PosJumps);
+            if (a + b + c) LOGI("Reticle: the rings' projections so far: the presented view's own draws {}, its matrix {}, the latest view {}; {}; screen jumps with the ray still {}",
+                                a, b, c, GpuTrace::ProjFilterStats(), g_PosJumps);
         }
     }
     Stats st; st.frames = 1;

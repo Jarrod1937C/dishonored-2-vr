@@ -45,8 +45,15 @@ namespace ScreenMode
     //! eyes -- the plane of the picture it was drawn over at HudDistance, seen from where that picture was rendered:
     //! `quat`/`pos` the head's frame the game camera rendered it as (no eye turn), `tan` its tangent extents (l r u d).
     //! Render thread, in the XR frame, before the frame is submitted.
-    void PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4]);
-    void SetHud(bool on, float dist);        //!< from the ini, before the first frame
+    //! `serial`: the presented view's (the markers lifted out at their characters' distance are those of its tick)
+    void PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4], unsigned long long serial = 0);
+    //! from the ini, before the first frame; `scale` = HudScale (the panel's share of the view), `markerSize` = HudMarkerSize
+    //! (the square of the HUD, a share of its height, lifted out around each marker onto a panel at its character's distance; 0 = none)
+    void SetHud(bool on, float dist, float scale = 1.f, float markerSize = 0.07f);
+    //! [Display] HudMarkers: the game's markers over characters and objectives (a guard's awareness, objectives) placed
+    //! for the headset's view instead of the flat game camera's (exe+0x6DDA50 hooked; installed once, from Main)
+    void InstallMarkers(bool on);
+    std::string MarkerStats();
     //! Bring the screen in front of the eyes (a stick click in a menu).
     void RequestRecenter(const char* why);
     //! The controllers just asked the game for a menu (the pause, the journal): the screen comes up now instead of

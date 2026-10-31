@@ -1105,6 +1105,26 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   buys at once, TAB switches tabs, ESC goes back; the game draws its own mouse cursor there and mouse hover steals the
   selection.
 
+### 9.2b World markers (awareness, objectives)
+- `arkEntityMarkerManager` / `arkEntityMarker` (vtable exe+0x1C39A98; `arkEntityMarkerAwareness` exe+0x1C371E8,
+  `arkHUDElementAwareness` exe+0x1C37538): the 3D markers over characters and places. The position update
+  (exe+0x6763E0 and two other sites) gets the player camera (exe+0x7E7110 on [exe+0x39A5290]+0x1F52B8), its origin and
+  axis (exe+0x88E140), and projects the marker's world point (marker+0x3C) with **exe+0x6DDA50(cam, world, out)**:
+  exe+0x88D970 multiplies by the camera's cached view-projection at cam+0x3EB0 (rows, refreshed by exe+0x890DD0) and
+  divides by w; then out = ((ndc.x + 1) * W / 2, (1 - ndc.y) * H / 2, ndc.z) with W, H the ints at
+  [exe+0x39A5290]+0x340EA8 / +0x340EAC. Only the marker code calls it. Off-screen clamping (ellipse / rectangle)
+  follows on the result. The mod re-projects for the headset (ScreenMode, `HudMarkers`).
+- The auto-exposure: `PostFX/Luminance/buffAutoExposure` (an `arkStructuredBuffer<autoExposure_t>`), `exposureIndex`,
+  `customEVBias`, `white_level`; passes RENDER_POSTFX_DOWNSAMPLE_LUMINANCE / RENDER_POSTFX_AUTOEXPOSURE (Fog finds the
+  buffer by reflecting the shaders that bind it).
+  Shaders bind it as `ro_postfx_luminance_buffautoexposure` (StructuredBuffer, stride 32, 2 elements; element picked
+  by `cb_postfx_luminance_exposureindex`): `postfx_luminance_autoexposure_t` = EngineLuminanceFactor, LuminanceFactor,
+  MinLuminanceLDR, MaxLuminanceLDR, MiddleGreyLuminanceLDR, EV, Fstop, PeakHistogramValue (uint). With
+  `cb_usecompressedhdrbuffers` (PerViewCB+716) the HDR buffers hold the light divided by EngineLuminanceFactor (x
+  `cb_view_white_level`): the sun sprite's colour is divided by both, a debug view multiplies by the factor. Measured:
+  EngineLuminanceFactor = 202 / 2^EV (0.5 - 2.8 in play), LuminanceFactor = 0.546 / EngineLuminanceFactor, and the
+  sky's drawn brightness ~ 1 / EngineLuminanceFactor.
+
 ### 9.3 Videos (Bink 2)
 Mission videos are `base\video\*.bk2` played by `bink2w64.dll` (exports `BinkOpen`, `BinkOpenWithOptions`, `BinkClose`,
 `BinkDoFrame`, `BinkDoFrameAsync`, `BinkNextFrame`; [BinkVideo.cpp](../src/Src/BinkVideo.cpp)). Seen: `legal.bk2`,

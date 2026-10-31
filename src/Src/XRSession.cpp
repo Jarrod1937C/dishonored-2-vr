@@ -66,9 +66,9 @@ struct XRState
     XrSwapchain wristSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageD3D11KHR> wristImages;
     // Panels in the room (XRPanelLayer): 0 the menu screen, 1 the power wheel.
-    XrSwapchain panelSwapchain[2] = {};
-    std::vector<XrSwapchainImageD3D11KHR> panelImages[2];
-    uint32_t panelW[2] = {}, panelH[2] = {};
+    XrSwapchain panelSwapchain[kXrPanels] = {};
+    std::vector<XrSwapchainImageD3D11KHR> panelImages[kXrPanels];
+    uint32_t panelW[kXrPanels] = {}, panelH[kXrPanels] = {};
 } g;
 
 // XR_KHR_visibility_mask (XRSession::ReadVisibilityMasks, XRVisMask::Get): the lens's hidden triangles per eye
@@ -76,6 +76,11 @@ static std::atomic<bool> g_VisMaskDirty{ false };
 static std::mutex g_VisMaskM;
 static std::vector<float> g_VisMask[2];   // x, y of each triangle's three points on the eye's z = -1 plane
 static unsigned g_VisMaskGen = 0;
+// Read again while it comes back empty (2026-10-31: SteamVR / Pimax gave 0 triangles at the first read, made before the
+// views had been located): every 2 s, up to kVisMaskTries times; first waiting for the views' fov to be known.
+static constexpr int kVisMaskTries = 10;
+static int g_VisMaskTries = 0, g_VisMaskWaits = 0;
+static std::atomic<unsigned long long> g_VisMaskRetryAt{ 0 };    // GetTickCount64 ms, 0 = none
 
 double NowSec()
 {
@@ -108,7 +113,7 @@ struct PumpState
     // The last frame's layers, for the keep-alive frames (the wrist watch is left out: it rides the hand).
     XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
     XrCompositionLayerProjectionView views[XRSession::kMaxEyes] = {};
-    XrCompositionLayerQuad quads[4] = {};
+    XrCompositionLayerQuad quads[8] = {};
     int nQuads = 0;
     bool haveLayers = false;
     // the runtime taking the session away (STOPPING -> IDLE without our asking) and not offering it back
@@ -494,13 +499,15 @@ V vs(uint id : SV_VertexID)
     o.uv = t; o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
 }
-cbuffer C : register(b0) { float4 crop; float4 src; float4 shape; };   // crop: x y w h (px); src: w h alpha premultiplied; shape: corner soft aspect gamma
+cbuffer C : register(b0) { float4 crop; float4 src; float4 shape; float4 holes[8]; };   // crop: x y w h (px); src: w h alpha premultiplied; shape: corner soft aspect gamma; holes: x0 y0 x1 y1 (px) left out
 Texture2D tx : register(t0); SamplerState sm : register(s0);
 float3 Linear(float3 s) { return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4); }
 float4 ps(V i) : SV_Target
 {
     float2 px = crop.xy + i.uv * crop.zw;
     float2 dx = ddx(px) * 0.25, dy = ddy(px) * 0.25;
+    [unroll] for (int k = 0; k < 8; k++)
+        if (px.x >= holes[k].x && px.y >= holes[k].y && px.x < holes[k].z && px.y < holes[k].w) return 0;
     float4 c = (tx.Sample(sm, (px + dx + dy) / src.xy) + tx.Sample(sm, (px + dx - dy) / src.xy)
               + tx.Sample(sm, (px - dx + dy) / src.xy) + tx.Sample(sm, (px - dx - dy) / src.xy)) * 0.25;
     if (src.w < 0.5) c.a = 1;
@@ -520,7 +527,7 @@ struct PanelRenderer
     UINT cw = 0, ch = 0; DXGI_FORMAT cf = DXGI_FORMAT_UNKNOWN;
     bool Draw(ID3D11Device* dev, ID3D11DeviceContext* ctx, const XRPanelLayer& l, ID3D11Texture2D* dst, UINT w, UINT h, DXGI_FORMAT swapFmt)
     {
-        if (!pass.Init(dev, kPanelHlsl, "panel", 48)) return false;
+        if (!pass.Init(dev, kPanelHlsl, "panel", 176)) return false;
         ID3D11ShaderResourceView* view = l.srv;
         float crop[4] = { l.crop[0], l.crop[1], l.crop[2], l.crop[3] }, sw = (float)l.srcW, sh = (float)l.srcH;
         if (!view && l.tex)
@@ -549,8 +556,9 @@ struct PanelRenderer
             view = copySrv; crop[0] = 0; crop[1] = 0; crop[2] = (float)nw; crop[3] = (float)nh; sw = (float)nw; sh = (float)nh;
         }
         if (!view) return false;
-        const float k[12] = { crop[0], crop[1], crop[2], crop[3], sw, sh, l.alpha, l.premultiplied ? 1.f : 0.f,
-                              l.corner, std::max(l.soft, 1.5f / (float)h), l.height > 0 ? l.width / l.height : 1.f, l.gamma ? 1.f : 0.f };
+        float k[44] = { crop[0], crop[1], crop[2], crop[3], sw, sh, l.alpha, l.premultiplied ? 1.f : 0.f,
+                        l.corner, std::max(l.soft, 1.5f / (float)h), l.height > 0 ? l.width / l.height : 1.f, l.gamma ? 1.f : 0.f };
+        for (int i = 0; i < std::min(l.nHoles, 8); i++) for (int j = 0; j < 4; j++) k[12 + i * 4 + j] = l.holes[i][j];
         return pass.Run(dev, ctx, dst, w, h, swapFmt, k, view, "panel");
     }
     void Release()
@@ -1487,6 +1495,7 @@ void XRSession::PollEventsNow()
         {
             const auto* vm = reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(&ev);
             LOGI("XRSession: the runtime changed eye {}'s visibility mask: read again", vm->viewIndex);
+            g_VisMaskTries = 0; g_VisMaskWaits = 0;
             g_VisMaskDirty = true;
         }
         else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
@@ -1537,7 +1546,9 @@ void XRSession::PollEventsNow()
         }
         ev = { XR_TYPE_EVENT_DATA_BUFFER };
     }
-    if (g_VisMaskDirty.load() && g.session != XR_NULL_HANDLE && m_SessionRunning) ReadVisibilityMasks();
+    const unsigned long long retryAt = g_VisMaskRetryAt.load();
+    if ((g_VisMaskDirty.load() || (retryAt && GetTickCount64() >= retryAt)) && g.session != XR_NULL_HANDLE && m_SessionRunning)
+        ReadVisibilityMasks();
 }
 
 //! The lens's hidden area per eye (XR_KHR_visibility_mask, HIDDEN_TRIANGLE_MESH): triangles of points on the eye's
@@ -1545,22 +1556,30 @@ void XRSession::PollEventsNow()
 //! the image outside the fov. Read once the session runs and again when the runtime says it changed.
 void XRSession::ReadVisibilityMasks()
 {
-    g_VisMaskDirty = false;
+    g_VisMaskDirty = false; g_VisMaskRetryAt = 0;
+    if (g.visMaskExt)
+    {   // the views not located yet (fov all zero): wait for them, up to 30 s
+        const XrFovf& f0 = g.views[0].fov;
+        if (f0.angleLeft == 0.f && f0.angleRight == 0.f && f0.angleUp == 0.f && f0.angleDown == 0.f && ++g_VisMaskWaits <= 30)
+        { g_VisMaskRetryAt = GetTickCount64() + 1000; return; }
+    }
     if (!g.visMaskExt) { static bool told = false; if (!told) LOGI("XRSession: the runtime offers no XR_KHR_visibility_mask: no lens mask"); told = true; return; }
     PFN_xrGetVisibilityMaskKHR get = nullptr;
     if (XR_FAILED(xrGetInstanceProcAddr(g.instance, "xrGetVisibilityMaskKHR", (PFN_xrVoidFunction*)&get)) || !get)
     { LOGI("XRSession: xrGetVisibilityMaskKHR not found"); return; }
+    const int attempt = ++g_VisMaskTries;
+    bool empty = false;
     for (uint32_t i = 0; i < 2; i++)
     {
         XrVisibilityMaskKHR m = { XR_TYPE_VISIBILITY_MASK_KHR };
         XrResult r = get(g.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, i, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
-        if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask: xrGetVisibilityMaskKHR {}", i, (int)r); continue; }
+        if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask: xrGetVisibilityMaskKHR {}", i, (int)r); empty = true; continue; }
         std::vector<XrVector2f> v(m.vertexCountOutput); std::vector<uint32_t> idx(m.indexCountOutput);
         m.vertexCapacityInput = (uint32_t)v.size(); m.vertices = v.data(); m.indexCapacityInput = (uint32_t)idx.size(); m.indices = idx.data();
         if (!v.empty() && !idx.empty())
         {
             r = get(g.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, i, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
-            if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask (second call): {}", i, (int)r); continue; }
+            if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask (second call): {}", i, (int)r); empty = true; continue; }
         }
         std::vector<float> tris; tris.reserve(idx.size() * 2);
         float lo[2] = { 1e9f, 1e9f }, hi[2] = { -1e9f, -1e9f };
@@ -1581,9 +1600,19 @@ void XRSession::ReadVisibilityMasks()
             g_VisMask[i] = std::move(tris); g_VisMaskGen++;
         }
         const XrFovf& fv = g.views[i].fov;
+        if (idx.size() < 3)
+        {
+            empty = true;
+            if (attempt == 1 || attempt == kVisMaskTries)
+                LOGI("XRSession: eye {}'s lens mask: none from the runtime (read {} of {}; its fov's tangents x {:.3f}..{:.3f}, y {:.3f}..{:.3f})",
+                     i, attempt, kVisMaskTries, tanf(fv.angleLeft), tanf(fv.angleRight), tanf(fv.angleDown), tanf(fv.angleUp));
+            continue;
+        }
         LOGI("XRSession: eye {}'s lens mask: {} hidden triangles, x {:.3f}..{:.3f}, y {:.3f}..{:.3f} (its fov's tangents x {:.3f}..{:.3f}, y {:.3f}..{:.3f})",
              i, idx.size() / 3, lo[0], hi[0], lo[1], hi[1], tanf(fv.angleLeft), tanf(fv.angleRight), tanf(fv.angleDown), tanf(fv.angleUp));
     }
+    if (empty && attempt < kVisMaskTries) g_VisMaskRetryAt = GetTickCount64() + 2000;     // read again in 2 s
+    else if (empty) LOGI("XRSession: the runtime gives no lens mask after {} reads: FovMask masks only what lies outside the fov", attempt);
 }
 
 bool XRVisMask::Get(int eye, std::vector<float>& tris, unsigned* gen)
@@ -2290,14 +2319,15 @@ void XRSession::EndFrameWithLayers(XrCompositionLayerProjection& layer)
         }
     }
 
-    XrCompositionLayerQuad panel[2] = { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
-    const bool havePanel[2] = { AppendPanelLayer(0, panel[0]), AppendPanelLayer(1, panel[1]) };
+    XrCompositionLayerQuad panel[kXrPanels];
+    bool havePanel[kXrPanels];
+    for (int s = 0; s < kXrPanels; s++) { panel[s] = { XR_TYPE_COMPOSITION_LAYER_QUAD }; havePanel[s] = AppendPanelLayer(s, panel[s]); }
     XrCompositionLayerQuad wrist = { XR_TYPE_COMPOSITION_LAYER_QUAD };
     const bool haveWrist = AppendWristLayer(wrist);
-    const XrCompositionLayerBaseHeader* layers[5] = { (XrCompositionLayerBaseHeader*)&layer };
+    const XrCompositionLayerBaseHeader* layers[3 + kXrPanels] = { (XrCompositionLayerBaseHeader*)&layer };
     uint32_t nLayers = 1;
     if (haveQuad) layers[nLayers++] = (XrCompositionLayerBaseHeader*)&quad;
-    for (int s = 0; s < 2; s++) if (havePanel[s]) layers[nLayers++] = (XrCompositionLayerBaseHeader*)&panel[s];
+    for (int s = 0; s < kXrPanels; s++) if (havePanel[s]) layers[nLayers++] = (XrCompositionLayerBaseHeader*)&panel[s];
     if (haveWrist) layers[nLayers++] = (XrCompositionLayerBaseHeader*)&wrist;
     XrFrameEndInfo fei = { XR_TYPE_FRAME_END_INFO };
     fei.displayTime = g.frameState.predictedDisplayTime;
@@ -2530,7 +2560,7 @@ void XRSession::SubmitScreen(const XRBackdrop& b)
     m_RenderPoseValid = false;
     m_FrameFade = 1.f; m_FrameDim = 1.f;
     m_Wrist.alpha = 0;                      // no watch over a menu
-    m_Panel[1].alpha = 0;                   // nor the wheel's panel
+    for (int s = 1; s < kXrPanels; s++) m_Panel[s].alpha = 0;   // nor the wheel's panel, nor the HUD's markers
     m_ScreenFrames++;
     XrCompositionLayerProjection layer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
     layer.space = g.space;
@@ -2662,7 +2692,7 @@ void XRSession::SaveLayers(const void* layersIn, unsigned count)
             pump.proj.views = pump.views;
             pump.haveLayers = true;
         }
-        else if (l->type == XR_TYPE_COMPOSITION_LAYER_QUAD && pump.nQuads < 4)
+        else if (l->type == XR_TYPE_COMPOSITION_LAYER_QUAD && pump.nQuads < 8)
             pump.quads[pump.nQuads++] = *(const XrCompositionLayerQuad*)l;
     }
 }
@@ -2675,7 +2705,7 @@ void XRSession::KeepAliveFrame(const void* fsIn)
 {
     const XrFrameState& fs = *(const XrFrameState*)fsIn;
     XrCompositionLayerProjection proj; XrCompositionLayerProjectionView views[kMaxEyes];
-    XrCompositionLayerQuad quads[4]; int nQuads = 0; bool have = false;
+    XrCompositionLayerQuad quads[8]; int nQuads = 0; bool have = false;
     {
         std::lock_guard<std::mutex> lk(pump.m);
         have = pump.haveLayers;
@@ -2696,7 +2726,7 @@ void XRSession::KeepAliveFrame(const void* fsIn)
         }
         pump.runFrames++;
     }
-    const XrCompositionLayerBaseHeader* layers[5]; uint32_t n = 0;
+    const XrCompositionLayerBaseHeader* layers[1 + 8]; uint32_t n = 0;
     if (have && fs.shouldRender)
     {
         layers[n++] = (const XrCompositionLayerBaseHeader*)&proj;
@@ -2917,7 +2947,7 @@ bool XRSession::Shutdown(bool processExit)
     ReleaseSnaps();
     for (Snap& s : m_Snap) s.valid = false;
     m_Frozen = -1;
-    for (int s = 0; s < 2; s++)
+    for (int s = 0; s < kXrPanels; s++)
     {
         DestroySwapchain(g.panelSwapchain[s]);
         g.panelImages[s].clear(); g.panelW[s] = g.panelH[s] = 0; m_Panel[s].alpha = 0;

@@ -148,6 +148,9 @@ namespace GpuTrace
     //! its eye's projection, 3 = the latest view (none of the presented one known); and how often each was used.
     int LastProjSource();
     void ProjStats(unsigned long long& own, unsigned long long& matrix, unsigned long long& latest);
+    //! How many arm draws' projections were taken for the reticle, and how many kept out (no main view of their own,
+    //! or another view's scale: a light's shadow map drawing the arms).
+    std::string ProjFilterStats();
     //! This frame's controller ray in world space, anchored to the RENDER view exactly as the weapon and the hand
     //! are, so the reticle cannot disagree with where the gun is drawn. Rows/columns as elsewhere: fwd = column 0.
     bool HandRay(int hand, float org[3], float fwd[3]);

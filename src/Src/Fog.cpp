@@ -7,6 +7,10 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <unordered_map>
+#include <d3d11shader.h>
+#include "GpuTrace.h"
+#include "GameInfo.h"
 
 namespace
 {
@@ -17,6 +21,16 @@ namespace
     // way round (64 world directions, each learned as the player looks that way), settled once every direction has been
     // seen (or 30 s into the map with 8 of them) and kept for the map; the fog fades in then. Per-direction colours
     // (tried 2026-10-31) differed between the eyes at a sky's transitions and could not show on the sky itself.
+    // The colour follows the game's EXPOSURE (2026-10-31, reported: the fog changed with a hand over the head or under
+    // a covering -- "depending on the player, not the environment" -- and was too dark in a second map). The game draws
+    // the scene into "compressed" HDR buffers: divided by the auto-exposure's EngineLuminanceFactor (its shaders: the
+    // sun sprite's colour / (EngineLuminanceFactor x white level) when cb_usecompressedhdrbuffers; a debug view
+    // multiplies it back). Measured: the sky's drawn brightness moved as 1 / EngineLuminanceFactor (0.5x at 2x the
+    // factor). So the fog's colours are kept as drawn x EngineLuminanceFactor (the game's own buffer
+    // ro_postfx_luminance_buffautoexposure, bound here as Expo) and divided by the factor of the frame being drawn: the
+    // fog then changes with the exposure exactly as the scene does. 512 sky cells (64 directions x 8 heights) learned
+    // the same way check it: their ratio now (Summary[4].x) stays ~1 when the model holds (logged). And the fog never
+    // goes darker than CheapFogMinBrightness (real fog scatters light: never black or dark grey).
     const char* kHlsl = R"(
 cbuffer FogCB : register(b0)
 {
@@ -27,19 +41,34 @@ cbuffer FogCB : register(b0)
     float4 g2;   // width, height, sample step of the sky's survey, 1 = learning the colours now
     float4 g3;   // 1 = the map's time to settle on a colour is up, the fog's fade-in (0..1), frames each direction is learned over,
                  // sin(CheapFogSkyHeight) (0: sky not fogged)
+    float4 g4;   // the fog's least luminance (x EngineLuminanceFactor), 1 = follow the game's exposure, -,
+                 // elements of the game's exposure buffer bound as Expo (0: not found, the factor taken as 1)
 };
 Texture2D<float4> Color : register(t0);
 Texture2D<float> Depth : register(t1);
 StructuredBuffer<float4> SummaryIn : register(t2);
 RWStructuredBuffer<uint> Acc : register(u0);        // this frame's horizon sky, per direction: r, g, b, weight (x256);
                                                     // [256] the highest far-background pixel's sin(elevation) + 2, as uint;
-                                                    // [257], [258] the upper sky's (25-75 deg) luminance (x256) and pixels
+                                                    // [257], [258] the upper sky's (25-75 deg) luminance (x256) and pixels;
+                                                    // from kCell0: per sky cell luminance (x4096) and pixels
 RWStructuredBuffer<float4> Bins : register(u1);     // learned per direction: rgb, frames averaged (kept once full)
 RWStructuredBuffer<float4> Summary : register(u2);  // [0] the average of the learned directions, how many; [1] darkest /
                                                     // brightest, the far background's top (sin elevation, the map's
                                                     // highest); [2] THE fog colour for the map, w 1 = settled (then kept);
-                                                    // [3] the upper sky's mean luminance, frames averaged
+                                                    // [3] the upper sky's mean luminance, frames averaged; [4] the exposure
+                                                    // now relative to the reference, and when the colour was set
+RWStructuredBuffer<float4> Ref : register(u3);      // per sky cell: its luminance x EngineLuminanceFactor, frames learned
+struct AutoExposure { float4 a; float4 b; };        // postfx_luminance_autoexposure_t: a.x = EngineLuminanceFactor
+StructuredBuffer<AutoExposure> Expo : register(t3); // the game's own (ro_postfx_luminance_buffautoexposure)
+float Elf()
+{   // the game's EngineLuminanceFactor now (the two elements are the last two frames': their mean); 1 = not known
+    if (g4.w < 0.5) return 1;
+    float e = g4.w > 1.5 ? 0.5 * (Expo[0].a.x + Expo[1].a.x) : Expo[0].a.x;
+    return (e > 1e-4 && e < 1e4) ? e : 1;
+}
 static const uint kBins = 64;
+static const uint kCells = 512, kCell0 = kBins * 4 + 4;
+static const float3 kLum = float3(0.2126, 0.7152, 0.0722);
 
 // the distance (m) along the eye's ray to what pixel `pix` (its centre, in pixels) shows; 0 = the sky: the depth
 // buffer's clear value (no geometry), or nothing nearer than 20 km
@@ -73,16 +102,20 @@ float3 WorldDir(float2 pix)
     return normalize(dv.x * V[0].xyz + dv.y * V[1].xyz + dv.z * V[2].xyz);
 }
 float BinOf(float3 wd) { return (atan2(wd.y, wd.x) / 6.2831853 + 0.5) * kBins; }
+// the sky cell of a direction (-10 to +76 deg): 64 directions x 8 heights
+uint CellOf(float3 wd) { return min(7u, (uint)((wd.z + 0.17) / 1.14 * 8)) * kBins + min(kBins - 1, (uint)BinOf(wd)); }
 
 // The sky near the horizon (-10 to +30 deg, weighted towards it), by the world direction it lies in: 64 directions
 // round the horizon. Summed per group, then once per group into Acc.
 groupshared uint ga[kBins * 4];
 groupshared uint gtop;
 groupshared uint gup[2];
+groupshared uint gc[kCells * 2];
 [numthreads(16, 16, 1)]
 void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_GroupIndex)
 {
     ga[gi] = 0;
+    for (uint z = gi; z < kCells * 2; z += 256) gc[z] = 0;
     if (gi == 0) { gtop = 0; gup[0] = 0; gup[1] = 0; }
     GroupMemoryBarrierWithGroupSync();
     uint2 p = (gid.xy * 16 + tid.xy) * (uint)g2.z;
@@ -100,6 +133,11 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
             float y = min(dot(Color[p].rgb, float3(0.2126, 0.7152, 0.0722)), 16.0);
             if (y == y) { InterlockedAdd(gup[0], (uint)(y * 256)); InterlockedAdd(gup[1], 1); }
         }
+        if (wd.z > -0.17 && wd.z < 0.97)
+        {   // the exposure's reference: the sky's luminance by cell
+            float y = min(dot(Color[p].rgb, kLum), 16.0);
+            if (y == y) { uint cell = CellOf(wd); InterlockedAdd(gc[cell * 2], (uint)(y * 4096)); InterlockedAdd(gc[cell * 2 + 1], 1); }
+        }
         float w = saturate(1 - wd.z / 0.5);
         float3 c = min(Color[p].rgb, 16.0);
         if (wd.z > -0.17 && w > 0 && all(c == c))
@@ -115,21 +153,56 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
     if (ga[gi] != 0) InterlockedAdd(Acc[gi], ga[gi]);
     if (gi == 0 && gtop != 0) InterlockedMax(Acc[kBins * 4], gtop);
     if (gi == 0 && gup[1] != 0) { InterlockedAdd(Acc[kBins * 4 + 1], gup[0]); InterlockedAdd(Acc[kBins * 4 + 2], gup[1]); }
+    for (uint k = gi; k < kCells * 2; k += 256) if (gc[k] != 0) InterlockedAdd(Acc[kCell0 + k], gc[k]);
 }
 
 // Each direction: this frame's sky added to what it has learned (until it has enough: then kept as it is), the
 // frame's sums cleared; then the average round the horizon. It becomes the map's one fog colour, kept from then on,
 // once every direction has been seen -- or, after the map's first 30 s, once at least 8 of them have.
 groupshared float4 gb[kBins];
+groupshared float gw[kBins], gl[kBins];
+groupshared float gr;
 [numthreads(64, 1, 1)]
 void skyfinal(uint gi : SV_GroupIndex)
 {
+    // the check of the exposure model: the sky seen this frame x EngineLuminanceFactor against its cells' reference
+    // (a weighted mean of the log ratios; ~1 when the model holds); no cell to compare with: as it was
+    const float e = Elf();
+    const float rPrev = Summary[4].x > 0 ? Summary[4].x : 1;
+    float sw = 0, sl = 0;
+    float cur[8]; uint cn[8];
+    [unroll] for (uint k = 0; k < 8; k++)
+    {
+        uint cell = gi * 8 + k;
+        uint s = Acc[kCell0 + cell * 2], n = Acc[kCell0 + cell * 2 + 1];
+        Acc[kCell0 + cell * 2] = 0; Acc[kCell0 + cell * 2 + 1] = 0;
+        cn[k] = n; cur[k] = n > 0 ? (float)s / 4096.0 / (float)n * e : 0;
+        float4 ref = Ref[cell];
+        if (n >= 4 && ref.y >= 4 && ref.x > 1e-3 && cur[k] > 1e-3) { float w = min((float)n, 64.0); sw += w; sl += w * log(cur[k] / ref.x); }
+    }
+    gw[gi] = sw; gl[gi] = sl;
+    GroupMemoryBarrierWithGroupSync();
+    if (gi == 0)
+    {
+        float W = 0, L = 0;
+        for (uint i = 0; i < kBins; i++) { W += gw[i]; L += gl[i]; }
+        gr = W >= 64 ? clamp(exp(L / W), 1.0 / 64, 64) : rPrev;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    const float r = gr;
+    [unroll] for (uint k2 = 0; k2 < 8; k2++)
+    {   // cells not learned yet
+        uint cell = gi * 8 + k2;
+        float4 ref = Ref[cell];
+        if (g2.w > 0 && cn[k2] >= 4 && cur[k2] > 1e-3 && ref.y < 60) Ref[cell] = float4((ref.x * ref.y + cur[k2]) / (ref.y + 1), ref.y + 1, 0, 0);
+    }
+
     uint4 a = uint4(Acc[gi * 4 + 0], Acc[gi * 4 + 1], Acc[gi * 4 + 2], Acc[gi * 4 + 3]);
     Acc[gi * 4 + 0] = 0; Acc[gi * 4 + 1] = 0; Acc[gi * 4 + 2] = 0; Acc[gi * 4 + 3] = 0;
     float4 bin = Bins[gi];
     if (g2.w > 0 && a.w > 20 * 256 && bin.w < g3.z)   // enough of this direction's sky seen this frame
     {
-        float3 c = float3(a.xyz) / (float)a.w;
+        float3 c = float3(a.xyz) / (float)a.w * e;   // x EngineLuminanceFactor: what the exposure does not change
         bin = float4((bin.rgb * bin.w + c) / (bin.w + 1), bin.w + 1);
         Bins[gi] = bin;
     }
@@ -161,7 +234,9 @@ void skyfinal(uint gi : SV_GroupIndex)
             up = float4((up.x * up.y + y) / (up.y + 1), up.y + 1, 0, 0);
             Summary[3] = up;
         }
-        if (Summary[2].w <= 0 && (n >= kBins || (g3.x > 0 && n >= 8))) Summary[2] = float4(avg, 1);
+        float4 ex = Summary[4];
+        if (Summary[2].w <= 0 && (n >= kBins || (g3.x > 0 && n >= 8))) { Summary[2] = float4(avg, 1); ex.y = e; }
+        Summary[4] = float4(r, ex.y, e, 0);   // the check, the factor when the colour was set, the factor now
     }
 }
 
@@ -186,6 +261,14 @@ float4 ps(VO i) : SV_Target
         if (c.w <= 0) return float4(0, 0, 0, 0);
         col = c.rgb;
     }
+    {   // never dark: real fog scatters the light (no black or dark grey fog)
+        float y = dot(col, kLum);
+        if (y < g4.x) col = y > 1e-4 ? col * (g4.x / y) : g4.x;
+    }
+    // into the scene's compressed buffer: divided by the frame's EngineLuminanceFactor (it then changes with the
+    // exposure as everything else does); not following it: as the scene was when the colour was set
+    float4 ex = SummaryIn[4];
+    col /= g4.y > 0.5 ? Elf() : (ex.y > 0 ? ex.y : 1);
     float f = 0;
     if (d > 0)
     {
@@ -204,6 +287,9 @@ float4 ps(VO i) : SV_Target
 )";
 
     std::atomic<bool> g_Want{ true }, g_GameFogOff{ false };
+    std::atomic<float> g_Expo{ 0.f };           // the game's EngineLuminanceFactor as last read back (the log), 0 = not known
+    std::mutex g_EsM; ID3D11ShaderResourceView* g_ExpoSrv = nullptr; UINT g_ExpoElems = 0;   // the game's exposure buffer, for the shaders
+    unsigned g_Gen = 0, g_StageGen = 0;         // the colour's generation (a new map), and the one a pending read-back was copied in
     std::atomic<bool> g_Menu{ false };          // the main menu's map (its 3D scene): no fog there
     std::atomic<bool> g_ResetColour{ false };   // a new map: the fog's colour is learned again
     std::atomic<double> g_MapAt{ 0 };           // when the map began: the colour is learned from 5 s in (after its fade-in)
@@ -218,8 +304,10 @@ float4 ps(VO i) : SV_Target
     ID3D11Buffer* g_Cb = nullptr;
     ID3D11BlendState* g_Blend = nullptr; ID3D11DepthStencilState* g_NoDepth = nullptr; ID3D11RasterizerState* g_Rs = nullptr;
     // the horizon's colours (see the shaders): the frame's sums, the learned directions, the summary; a copy read back
-    constexpr UINT kBins = 64, kFilled = 4;
+    constexpr UINT kBins = 64, kFilled = 5, kCells = 512, kAcc = kBins * 4 + 4 + kCells * 2;
     ID3D11Buffer* g_Acc = nullptr; ID3D11UnorderedAccessView* g_AccUav = nullptr;
+    ID3D11Buffer* g_Ref = nullptr; ID3D11UnorderedAccessView* g_RefUav = nullptr;
+    float g_LoggedExpo = 1.f;                   // the exposure (relative to when the colour was set) as last logged
     ID3D11Buffer* g_Bins = nullptr; ID3D11UnorderedAccessView* g_BinsUav = nullptr;
     ID3D11Buffer* g_Summary = nullptr; ID3D11UnorderedAccessView* g_SummaryUav = nullptr; ID3D11ShaderResourceView* g_SummarySrv = nullptr;
     ID3D11Buffer* g_Stage = nullptr; bool g_StagePending = false; double g_StageAt = 0, g_LogAt = 0, g_LogAt2 = 0;
@@ -276,7 +364,7 @@ float4 ps(VO i) : SV_Target
         }
         for (ID3DBlob* b : { bs, bf, bv, bp }) if (b) b->Release();
         if (!ok) { g_Why = "shader compile failed"; return false; }
-        D3D11_BUFFER_DESC bd{}; bd.ByteWidth = 176; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        D3D11_BUFFER_DESC bd{}; bd.ByteWidth = 192; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         if (FAILED(dev->CreateBuffer(&bd, nullptr, &g_Cb))) { g_Why = "constant buffer"; return false; }
         auto sbuf = [&](UINT n, UINT stride, bool srv, ID3D11Buffer** b, ID3D11UnorderedAccessView** u, ID3D11ShaderResourceView** v)
         {
@@ -289,7 +377,8 @@ float4 ps(VO i) : SV_Target
             return SUCCEEDED(dev->CreateBuffer(&fd, &sd, b)) && SUCCEEDED(dev->CreateUnorderedAccessView(*b, &ud, u))
                 && (!srv || SUCCEEDED(dev->CreateShaderResourceView(*b, &vd, v)));
         };
-        if (!sbuf(kBins * 4 + 3, 4, false, &g_Acc, &g_AccUav, nullptr) || !sbuf(kBins, 16, false, &g_Bins, &g_BinsUav, nullptr)
+        if (!sbuf(kAcc, 4, false, &g_Acc, &g_AccUav, nullptr) || !sbuf(kBins, 16, false, &g_Bins, &g_BinsUav, nullptr)
+            || !sbuf(kCells, 16, false, &g_Ref, &g_RefUav, nullptr)
             || !sbuf(kFilled, 16, true, &g_Summary, &g_SummaryUav, &g_SummarySrv)) { g_Why = "fog colour buffers"; return false; }
         D3D11_BUFFER_DESC sb{}; sb.ByteWidth = kFilled * 16; sb.Usage = D3D11_USAGE_STAGING; sb.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         if (FAILED(dev->CreateBuffer(&sb, nullptr, &g_Stage))) g_Stage = nullptr;   // only the log's readback
@@ -358,28 +447,28 @@ float4 ps(VO i) : SV_Target
     //! "a fresh context's defaults" instead was reported to break the transparent surfaces: 2026-10-31.)
     struct Saved
     {
-        ID3D11ComputeShader* cs = nullptr; ID3D11Buffer* csCb = nullptr; ID3D11ShaderResourceView* csSrv[2] = {}; ID3D11UnorderedAccessView* csUav[2] = {};
+        ID3D11ComputeShader* cs = nullptr; ID3D11Buffer* csCb = nullptr; ID3D11ShaderResourceView* csSrv[4] = {}; ID3D11UnorderedAccessView* csUav[4] = {};
         D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED; ID3D11InputLayout* il = nullptr;
-        ID3D11VertexShader* vs = nullptr; ID3D11PixelShader* ps = nullptr; ID3D11Buffer* psCb = nullptr; ID3D11ShaderResourceView* psSrv[3] = {};
+        ID3D11VertexShader* vs = nullptr; ID3D11PixelShader* ps = nullptr; ID3D11Buffer* psCb = nullptr; ID3D11ShaderResourceView* psSrv[4] = {};
         ID3D11RasterizerState* rs = nullptr; D3D11_VIEWPORT vp[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {}; UINT nvp = 0;
         ID3D11BlendState* bs = nullptr; float bf[4] = {}; UINT mask = 0xFFFFFFFF;
         ID3D11DepthStencilState* dss = nullptr; UINT ref = 0;
         ID3D11RenderTargetView* rtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {}; ID3D11DepthStencilView* dsv = nullptr;
         void Save(ID3D11DeviceContext* c)
         {
-            c->CSGetShader(&cs, nullptr, nullptr); c->CSGetConstantBuffers(0, 1, &csCb); c->CSGetShaderResources(0, 2, csSrv); c->CSGetUnorderedAccessViews(0, 2, csUav);
+            c->CSGetShader(&cs, nullptr, nullptr); c->CSGetConstantBuffers(0, 1, &csCb); c->CSGetShaderResources(0, 4, csSrv); c->CSGetUnorderedAccessViews(0, 4, csUav);
             c->IAGetPrimitiveTopology(&topo); c->IAGetInputLayout(&il);
-            c->VSGetShader(&vs, nullptr, nullptr); c->PSGetShader(&ps, nullptr, nullptr); c->PSGetConstantBuffers(0, 1, &psCb); c->PSGetShaderResources(0, 3, psSrv);
+            c->VSGetShader(&vs, nullptr, nullptr); c->PSGetShader(&ps, nullptr, nullptr); c->PSGetConstantBuffers(0, 1, &psCb); c->PSGetShaderResources(0, 4, psSrv);
             c->RSGetState(&rs); nvp = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE; c->RSGetViewports(&nvp, vp);
             c->OMGetBlendState(&bs, bf, &mask); c->OMGetDepthStencilState(&dss, &ref);
             c->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, &dsv);
         }
         void Restore(ID3D11DeviceContext* c)
         {
-            const UINT keep[2] = { (UINT)-1, (UINT)-1 };
-            c->CSSetShader(cs, nullptr, 0); c->CSSetConstantBuffers(0, 1, &csCb); c->CSSetUnorderedAccessViews(0, 2, csUav, keep); c->CSSetShaderResources(0, 2, csSrv);
+            const UINT keep[4] = { (UINT)-1, (UINT)-1, (UINT)-1, (UINT)-1 };
+            c->CSSetShader(cs, nullptr, 0); c->CSSetConstantBuffers(0, 1, &csCb); c->CSSetUnorderedAccessViews(0, 4, csUav, keep); c->CSSetShaderResources(0, 4, csSrv);
             c->IASetPrimitiveTopology(topo); c->IASetInputLayout(il);
-            c->VSSetShader(vs, nullptr, 0); c->PSSetShader(ps, nullptr, 0); c->PSSetConstantBuffers(0, 1, &psCb); c->PSSetShaderResources(0, 3, psSrv);
+            c->VSSetShader(vs, nullptr, 0); c->PSSetShader(ps, nullptr, 0); c->PSSetConstantBuffers(0, 1, &psCb); c->PSSetShaderResources(0, 4, psSrv);
             c->RSSetState(rs); c->RSSetViewports(nvp, nvp ? vp : nullptr);
             c->OMSetBlendState(bs, bf, mask); c->OMSetDepthStencilState(dss, ref);
             c->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, dsv);
@@ -406,6 +495,8 @@ void Fog::SetParams(const Params& p)
                          : fmt::format("fixed: {:.3f},{:.3f},{:.3f} (linear, x{:.2f})", p.rgb[0], p.rgb[1], p.rgb[2], p.brightness),
                    p.skyHeight <= 0 ? std::string("not fogged") : p.skyAuto ? fmt::format("fogged up to the top of the far background, thinning out {:.0f} deg above it", p.skyHeight)
                                     : fmt::format("fogged up to {:.0f} deg above the horizon", p.skyHeight));
+    if (p.on) LOGI("Fog: never darker than {:.2f} as seen, after the game's exposure (CheapFogMinBrightness){}", p.minBrightness,
+                   p.followExposure ? "; its colour scaled as the sky's own brightness changes (CheapFogFollowExposure)" : "");
 }
 bool Fog::Wanted() { return g_Want.load(); }
 
@@ -461,7 +552,7 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     Target& t = g_T[n.target];
     if (!t.rtv) return false;
 
-    struct { float P[16]; float V[12]; float g0[4], g1[4], g2[4], g3[4]; } k{};
+    struct { float P[16]; float V[12]; float g0[4], g1[4], g2[4], g3[4], g4[4]; } k{};
     memcpy(k.P, n.proj, 64);
     for (int r = 0; r < 3; r++) for (int col = 0; col < 3; col++) k.V[r * 4 + col] = n.view[r * 4 + col];
     const float range = std::max(1.f, P.end - P.start);
@@ -474,28 +565,32 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     k.g3[1] = P.sky || P.category ? (g_SettledAt > 0 && (!P.category || g_Cat >= 0) ? (float)std::min(1.0, (Now() - g_SettledAt) / 2.0) : 0.f) : 1.f;
     k.g3[2] = kLearnFrames;
     k.g3[3] = P.skyHeight > 0.f ? sinf(std::min(90.f, P.skyHeight) * 0.0174533f) : 0.f;
+    k.g4[0] = std::max(0.f, P.minBrightness); k.g4[1] = P.followExposure ? 1.f : 0.f;
+    ID3D11ShaderResourceView* expo = nullptr;   // the game's exposure buffer (its EngineLuminanceFactor), when found
+    { std::lock_guard ek(g_EsM); expo = g_ExpoSrv; if (expo) { expo->AddRef(); k.g4[3] = (float)g_ExpoElems; } }
     Saved saved; saved.Save(c);
     c->UpdateSubresource(g_Cb, 0, nullptr, &k, 0, 0);
 
-    ID3D11ShaderResourceView* nullSrv[3] = {}; ID3D11UnorderedAccessView* nullUav[3] = {};
+    ID3D11ShaderResourceView* nullSrv[4] = {}; ID3D11UnorderedAccessView* nullUav[4] = {};
     // nothing bound for output while the scene's targets are read (a resource bound both ways is read as nothing)
     c->OMSetRenderTargets(0, nullptr, nullptr);
     if (g_ResetColour.exchange(false))
     {   // a new map: its horizon is learned anew (and its colour settled anew)
         const float z[4] = {}; const UINT zu[4] = {};
         c->ClearUnorderedAccessViewFloat(g_BinsUav, z); c->ClearUnorderedAccessViewFloat(g_SummaryUav, z); c->ClearUnorderedAccessViewUint(g_AccUav, zu);
-        g_SettledAt = 0; g_LoggedTop = -9.f; g_Cat = -1;
+        c->ClearUnorderedAccessViewFloat(g_RefUav, z);
+        g_SettledAt = 0; g_LoggedTop = -9.f; g_Cat = -1; g_LoggedExpo = 1.f; g_Gen++;   // a read-back copied before this is stale
     }
     {   // 1) the horizon's colours, round it (only what this eye sees of the sky adds to them; with a fixed colour, for the log)
         c->CSSetConstantBuffers(0, 1, &g_Cb);
-        { ID3D11ShaderResourceView* srv[2] = { t.colorSrv, t.depthSrv }; c->CSSetShaderResources(0, 2, srv); }
-        { ID3D11UnorderedAccessView* uav[3] = { g_AccUav, g_BinsUav, g_SummaryUav }; c->CSSetUnorderedAccessViews(0, 3, uav, nullptr); }
+        { ID3D11ShaderResourceView* srv[4] = { t.colorSrv, t.depthSrv, nullptr, expo }; c->CSSetShaderResources(0, 4, srv); }
+        { ID3D11UnorderedAccessView* uav[4] = { g_AccUav, g_BinsUav, g_SummaryUav, g_RefUav }; c->CSSetUnorderedAccessViews(0, 4, uav, nullptr); }
         c->CSSetShader(g_CsSky, nullptr, 0);
         c->Dispatch(t.gx, t.gy, 1);
         c->CSSetShader(g_CsFinal, nullptr, 0);
         c->Dispatch(1, 1, 1);
-        c->CSSetUnorderedAccessViews(0, 3, nullUav, nullptr);
-        c->CSSetShaderResources(0, 2, nullSrv);
+        c->CSSetUnorderedAccessViews(0, 4, nullUav, nullptr);
+        c->CSSetShaderResources(0, 4, nullSrv);
     }
     // 2) the fog, blended over the scene
     c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -503,7 +598,7 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     c->VSSetShader(g_Vs, nullptr, 0);
     c->PSSetShader(g_Ps, nullptr, 0);
     c->PSSetConstantBuffers(0, 1, &g_Cb);
-    { ID3D11ShaderResourceView* srv[3] = { nullptr, t.depthSrv, g_SummarySrv }; c->PSSetShaderResources(0, 3, srv); }
+    { ID3D11ShaderResourceView* srv[4] = { nullptr, t.depthSrv, g_SummarySrv, expo }; c->PSSetShaderResources(0, 4, srv); }
     c->RSSetState(g_Rs);
     D3D11_VIEWPORT vp{ 0.f, 0.f, (float)t.w, (float)t.h, 0.f, 1.f };
     c->RSSetViewports(1, &vp);
@@ -512,7 +607,8 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     c->OMSetRenderTargets(1, &t.rtv, nullptr);
     c->Draw(3, 0);
     // the game's state as it was (the PS's inputs first: the colour target goes back to being an output)
-    c->PSSetShaderResources(0, 3, nullSrv);
+    c->PSSetShaderResources(0, 4, nullSrv);
+    if (expo) expo->Release();
     c->OMSetRenderTargets(0, nullptr, nullptr);
     saved.Restore(c);
     g_Drawn++;
@@ -521,10 +617,263 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     return true;
 }
 
+
+// ---- the game's auto-exposure (2026-10-31) ----
+// Reported: the fog was too dark to see, except with a hand over the head -- the game's eye adaptation brightening the
+// whole image then. The scene the fog is drawn into is HDR BEFORE the exposure; the tone mapping applies it later. So
+// what the fog looks like depends on the exposure, and a floor on its brightness only means something after it.
+// The exe names the exposure "PostFX/Luminance/buffAutoExposure" (an arkStructuredBuffer<autoExposure_t>). Every pixel
+// / compute shader the game creates whose bytecode names a resource "...exposure..." is reflected: the binding slot
+// and the struct's members. At the first draw / dispatch with such a shader bound, the buffer bound there is kept;
+// it is read back every few frames at Present, and its "exposure" member is the multiplier the fog's floor is
+// divided by (CheapFogMinBrightness is then the brightness as you see it). The members, their values and the shaders'
+// disassembly (DVR_exposure_shader*.txt) go to the log / the game's folder, to check what the value means.
+namespace
+{
+    struct ExpoMember { std::string name; UINT off = 0; UINT n = 1; bool isFloat = false; };
+    struct ExpoUse { int slot = -1; bool uav = false; std::string res; UINT stride = 0; std::vector<ExpoMember> members; uint64_t hash = 0; bool cs = false; };
+    std::mutex g_EM;                                       // everything below
+    std::unordered_map<void*, ExpoUse> g_ExpoShaders;     // a pixel / compute shader -> where it binds the exposure
+    std::atomic<bool> g_ExpoSearch{ false };              // a shader is known and no buffer yet: look at draws / dispatches
+    std::atomic<unsigned long long> g_ExpoLooks{ 0 };     // draws / dispatches looked at in this search (it gives up after 20 s)
+    std::atomic<double> g_ExpoSearchAt{ 0 };
+    void StartExpoSearch() { g_ExpoLooks = 0; g_ExpoSearchAt = Now(); g_ExpoSearch = true; }
+    ID3D11Buffer* g_ExpoBuf = nullptr; ExpoUse g_ExpoUse; int g_ExpoMember = -1; UINT g_ExpoBytes = 0;
+    ID3D11Buffer* g_ExpoStage = nullptr; bool g_ExpoPending = false; unsigned g_ExpoTick = 0;
+    int g_ExpoNamed = 0, g_ExpoDumps = 0, g_ExpoDumpLogs = 0; float g_ExpoLogged = 0.f; double g_ExpoLogAt = 0;
+    std::string Lower(std::string s) { for (char& ch : s) ch = (char)tolower((unsigned char)ch); return s; }
+    bool HasExposureName(const void* code, size_t len)
+    {
+        static const char k[] = "xposure";
+        const char* p = (const char*)code; const char* e = p + len - (sizeof k - 1);
+        for (; p <= e; p++) if ((p[0] == 'x' || p[0] == 'X') && !memcmp(p + 1, k + 1, sizeof k - 2)) return true;
+        return false;
+    }
+    //! the member that is the exposure multiplier: named "exposure", else holding it without ev / log / target...
+    int PickMember(const ExpoUse& u)
+    {
+        for (size_t i = 0; i < u.members.size(); i++) if (u.members[i].isFloat && Lower(u.members[i].name) == "engineluminancefactor") return (int)i;
+        for (size_t i = 0; i < u.members.size(); i++) if (u.members[i].isFloat && Lower(u.members[i].name) == "exposure") return (int)i;
+        for (size_t i = 0; i < u.members.size(); i++)
+        {
+            const std::string n = Lower(u.members[i].name);
+            if (!u.members[i].isFloat || n.find("exposure") == std::string::npos) continue;
+            bool bad = false;
+            for (const char* w : { "ev", "log", "prev", "target", "min", "max", "bias", "index", "speed", "inv" }) bad |= n.find(w) != std::string::npos;
+            if (!bad) return (int)i;
+        }
+        if (u.members.size() == 1 && u.members[0].isFloat) return 0;
+        return -1;
+    }
+    void DumpDisasm(const void* code, size_t len, uint64_t hash)
+    {
+        using Dis_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, UINT, LPCSTR, ID3DBlob**);
+        static Dis_t dis = nullptr; static bool tried = false;
+        if (!tried) { tried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) dis = (Dis_t)GetProcAddress(d, "D3DDisassemble"); }
+        ID3DBlob* b = nullptr;
+        if (!dis || FAILED(dis(code, len, 0, nullptr, &b)) || !b) return;
+        const std::wstring path = GameInfo::GameDir() + L"\\DVR_exposure_shader" + std::to_wstring(g_ExpoDumps) + L".txt";
+        if (FILE* f = _wfopen(path.c_str(), L"wb")) { fwrite(b->GetBufferPointer(), 1, b->GetBufferSize(), f); fclose(f); }
+        LOGI("Fog: that shader's disassembly -> DVR_exposure_shader{}.txt ({:016x})", g_ExpoDumps, hash);
+        b->Release();
+    }
+}
+
+void Fog::OnShader(void* sh, const void* code, size_t len, bool cs)
+{
+    if (!sh) return;
+    {   // an address reused by another shader
+        std::lock_guard lk(g_EM);
+        if (!g_ExpoShaders.empty()) g_ExpoShaders.erase(sh);
+    }
+    if (!code || len < 32 || !HasExposureName(code, len)) return;
+    using Reflect_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
+    static Reflect_t reflect = nullptr; static bool tried = false;
+    if (!tried) { tried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) reflect = (Reflect_t)GetProcAddress(d, "D3DReflect"); }
+    ID3D11ShaderReflection* r = nullptr;
+    if (!reflect || FAILED(reflect(code, len, __uuidof(ID3D11ShaderReflection), (void**)&r)) || !r) return;
+    D3D11_SHADER_DESC sd{};
+    ExpoUse u; bool found = false;
+    if (SUCCEEDED(r->GetDesc(&sd)))
+        for (UINT i = 0; i < sd.BoundResources && !found; i++)
+        {
+            D3D11_SHADER_INPUT_BIND_DESC b{};
+            if (FAILED(r->GetResourceBindingDesc(i, &b)) || !b.Name || Lower(b.Name).find("exposure") == std::string::npos) continue;
+            const bool structured = b.Type == D3D_SIT_STRUCTURED || b.Type == D3D_SIT_UAV_RWSTRUCTURED || b.Type == D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER;
+            const bool srv = b.Type == D3D_SIT_STRUCTURED || b.Type == D3D_SIT_TEXTURE || b.Type == D3D_SIT_TBUFFER || b.Type == D3D_SIT_BYTEADDRESS;
+            const bool uav = b.Type == D3D_SIT_UAV_RWSTRUCTURED || b.Type == D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER || b.Type == D3D_SIT_UAV_RWTYPED || b.Type == D3D_SIT_UAV_RWBYTEADDRESS;
+            if (!srv && !uav) continue;
+            if (uav && !cs) continue;          // a pixel shader's UAVs are bound with the targets: not looked at
+            u.slot = (int)b.BindPoint; u.uav = uav; u.res = b.Name; u.cs = cs; u.hash = GpuTrace::ShaderHashOf(sh);
+            if (structured)
+                if (ID3D11ShaderReflectionConstantBuffer* cb = r->GetConstantBufferByName(b.Name))
+                {
+                    D3D11_SHADER_BUFFER_DESC bd{};
+                    if (SUCCEEDED(cb->GetDesc(&bd))) u.stride = bd.Size;
+                    if (ID3D11ShaderReflectionVariable* v = cb->GetVariableByIndex(0))
+                        if (ID3D11ShaderReflectionType* t = v->GetType())
+                        {
+                            D3D11_SHADER_TYPE_DESC td{};
+                            if (SUCCEEDED(t->GetDesc(&td)))
+                            {
+                                if (td.Members == 0) u.members.push_back({ "(element)", 0, std::max(1u, td.Columns), td.Type == D3D_SVT_FLOAT });
+                                for (UINT m = 0; m < td.Members; m++)
+                                {
+                                    ID3D11ShaderReflectionType* mt = t->GetMemberTypeByIndex(m);
+                                    D3D11_SHADER_TYPE_DESC md{};
+                                    if (!mt || FAILED(mt->GetDesc(&md))) continue;
+                                    const char* mn = t->GetMemberTypeName(m);
+                                    u.members.push_back({ mn ? mn : "?", md.Offset, std::max(1u, md.Columns) * std::max(1u, md.Rows), md.Type == D3D_SVT_FLOAT });
+                                }
+                            }
+                        }
+                }
+            found = true;
+        }
+    r->Release();
+    if (!found) return;
+    std::lock_guard lk(g_EM);
+    if (g_ExpoNamed < 12)
+    {
+        g_ExpoNamed++;
+        std::string m;
+        for (const ExpoMember& e : u.members) m += fmt::format(" {}@{}{}", e.name, e.off, e.isFloat ? (e.n > 1 ? fmt::format(":float{}", e.n) : std::string(":float")) : std::string(""));
+        LOGI("Fog: {} shader {:016x} {} the game's exposure '{}' ({}{}, {} bytes):{}", cs ? "compute" : "pixel", u.hash, u.uav ? "writes" : "reads",
+             u.res, u.uav ? "u" : "t", u.slot, u.stride, m.empty() ? std::string(" (not a structured buffer)") : m);
+        if (g_ExpoDumps < 3) { DumpDisasm(code, len, u.hash); g_ExpoDumps++; }
+    }
+    g_ExpoShaders[sh] = u;
+    if (!g_ExpoBuf && !g_ExpoSearch.load()) StartExpoSearch();
+}
+
+bool Fog::ExposureSearching() { return g_ExpoSearch.load(std::memory_order_relaxed); }
+
+void Fog::AtWork(ID3D11DeviceContext* c, bool dispatch)
+{
+    if (!c) return;
+    if ((g_ExpoLooks.fetch_add(1, std::memory_order_relaxed) & 4095) == 4095 && Now() - g_ExpoSearchAt.load() > 20.0)
+    {   // not bound by anything drawn for 20 s: given up until the next map (the look costs every draw a lock)
+        if (g_ExpoSearch.exchange(false)) LOGI("Fog: the game's exposure buffer was not seen bound in 20 s ({} draws / dispatches): not used", g_ExpoLooks.load());
+        return;
+    }
+    void* sh = nullptr;
+    if (dispatch) { ID3D11ComputeShader* s = nullptr; c->CSGetShader(&s, nullptr, nullptr); sh = s; if (s) s->Release(); }
+    else { ID3D11PixelShader* s = nullptr; c->PSGetShader(&s, nullptr, nullptr); sh = s; if (s) s->Release(); }
+    if (!sh) return;
+    ExpoUse u;
+    {
+        std::lock_guard lk(g_EM);
+        auto it = g_ExpoShaders.find(sh);
+        if (it == g_ExpoShaders.end() || it->second.cs != dispatch) return;
+        u = it->second;
+    }
+    ID3D11Resource* res = nullptr;
+    if (u.uav) { ID3D11UnorderedAccessView* v = nullptr; c->CSGetUnorderedAccessViews(u.slot, 1, &v); if (v) { v->GetResource(&res); v->Release(); } }
+    else
+    {
+        ID3D11ShaderResourceView* v = nullptr;
+        if (dispatch) c->CSGetShaderResources(u.slot, 1, &v); else c->PSGetShaderResources(u.slot, 1, &v);
+        if (v) { v->GetResource(&res); v->Release(); }
+    }
+    if (!res) return;
+    D3D11_RESOURCE_DIMENSION d{}; res->GetType(&d);
+    std::lock_guard lk(g_EM);
+    if (g_ExpoBuf || d != D3D11_RESOURCE_DIMENSION_BUFFER)
+    {
+        static bool told = false;
+        if (!g_ExpoBuf && !told) { told = true; LOGI("Fog: the game's exposure '{}' is not a buffer (dimension {}): not used", u.res, (int)d); g_ExpoSearch = false; }
+        res->Release(); return;
+    }
+    g_ExpoBuf = static_cast<ID3D11Buffer*>(res);      // the reference GetResource took is kept
+    D3D11_BUFFER_DESC bd{}; g_ExpoBuf->GetDesc(&bd);
+    g_ExpoBytes = std::min<UINT>(bd.ByteWidth, 4096);
+    if (!u.stride) u.stride = bd.StructureByteStride;
+    g_ExpoUse = u; g_ExpoMember = PickMember(u);
+    {   // a view of it for the fog's shaders (the factor at offset 0 of each 32-byte element)
+        ID3D11Device* dev = nullptr; g_ExpoBuf->GetDevice(&dev);
+        ID3D11ShaderResourceView* v = nullptr;
+        const UINT stride = bd.StructureByteStride ? bd.StructureByteStride : u.stride;
+        if (dev && (bd.BindFlags & D3D11_BIND_SHADER_RESOURCE) && (bd.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED) && stride == 32)
+        {
+            D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = DXGI_FORMAT_UNKNOWN; vd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+            vd.Buffer.FirstElement = 0; vd.Buffer.NumElements = std::min(2u, bd.ByteWidth / 32);
+            if (FAILED(dev->CreateShaderResourceView(g_ExpoBuf, &vd, &v))) v = nullptr;
+        }
+        if (dev) dev->Release();
+        std::lock_guard ek(g_EsM);
+        if (g_ExpoSrv) g_ExpoSrv->Release();
+        g_ExpoSrv = v; g_ExpoElems = v ? std::min(2u, bd.ByteWidth / 32) : 0;
+        if (!v) LOGI("Fog: no view of the game's exposure buffer could be made (bind 0x{:X}, misc 0x{:X}, stride {}): the fog does not follow the exposure", bd.BindFlags, bd.MiscFlags, stride);
+    }
+    g_ExpoSearch = false; g_ExpoDumpLogs = 0; g_ExpoLogged = 0.f;
+    if (g_ExpoStage) { g_ExpoStage->Release(); g_ExpoStage = nullptr; } g_ExpoPending = false;
+    LOGI("Fog: the game's exposure buffer found ({} bytes, {} per element), bound to {} shader {:016x} as '{}': {}", bd.ByteWidth, u.stride,
+         dispatch ? "compute" : "pixel", u.hash, u.res,
+         g_ExpoMember >= 0 ? fmt::format("its '{}' is what the scene is drawn divided by: the fog follows it", u.members[g_ExpoMember].name)
+                           : std::string("no member named EngineLuminanceFactor: the values are logged"));
+}
+
+namespace
+{
+    //! Present: the exposure buffer read back every 4th Present (a copy, mapped when ready)
+    void ReadExposure(ID3D11Device* dev, ID3D11DeviceContext* ic, double now)
+    {
+        std::lock_guard lk(g_EM);
+        if (!g_ExpoBuf || ++g_ExpoTick % 4) return;
+        if (!g_ExpoStage)
+        {
+            D3D11_BUFFER_DESC bd{}; g_ExpoBuf->GetDesc(&bd);
+            bd.Usage = D3D11_USAGE_STAGING; bd.BindFlags = 0; bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            if (FAILED(dev->CreateBuffer(&bd, nullptr, &g_ExpoStage))) { LOGI("Fog: no staging copy of the exposure buffer: not used"); g_ExpoBuf->Release(); g_ExpoBuf = nullptr; return; }
+        }
+        if (!g_ExpoPending) { ic->CopyResource(g_ExpoStage, g_ExpoBuf); g_ExpoPending = true; return; }
+        D3D11_MAPPED_SUBRESOURCE m{};
+        const HRESULT hr = ic->Map(g_ExpoStage, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+        if (hr == DXGI_ERROR_WAS_STILL_DRAWING) return;
+        g_ExpoPending = false;
+        if (FAILED(hr)) return;
+        std::vector<uint8_t> v(g_ExpoBytes); memcpy(v.data(), m.pData, v.size()); ic->Unmap(g_ExpoStage, 0);
+        const ExpoUse& u = g_ExpoUse;
+        const UINT stride = u.stride ? u.stride : (UINT)v.size();
+        const UINT count = std::min<UINT>(4, (UINT)v.size() / std::max(1u, stride));
+        auto f = [&](UINT el, UINT off) { float x = 0; if ((size_t)el * stride + off + 4 <= v.size()) memcpy(&x, v.data() + (size_t)el * stride + off, 4); return x; };
+        float e = 0.f;
+        if (g_ExpoMember >= 0) e = f(0, u.members[g_ExpoMember].off);
+        const bool ok = std::isfinite(e) && e > 1e-6f && e < 1e6f;
+        g_Expo = ok ? e : 0.f;
+        const bool changed = ok && (g_ExpoLogged <= 0.f || fabsf(logf(e / g_ExpoLogged)) > 0.15f);
+        if (g_ExpoDumpLogs < 3 || (changed && now - g_ExpoLogAt >= 30.0) || (g_ExpoMember < 0 && now - g_ExpoLogAt >= 10.0 && g_ExpoDumpLogs < 30))
+        {
+            g_ExpoDumpLogs++; g_ExpoLogAt = now; if (ok) g_ExpoLogged = e;
+            std::string s;
+            for (UINT el = 0; el < count; el++)
+            {
+                s += fmt::format(" [{}]", el);
+                if (u.members.empty()) for (UINT o = 0; o + 4 <= std::min(stride, 32u); o += 4) s += fmt::format(" {:.4g}", f(el, o));
+                for (const ExpoMember& mm : u.members)
+                {
+                    if (!mm.isFloat) { s += fmt::format(" {}=?", mm.name); continue; }
+                    s += fmt::format(" {}=", mm.name);
+                    for (UINT k = 0; k < std::min(mm.n, 4u); k++) s += fmt::format("{}{:.4g}", k ? "," : "", f(el, mm.off + 4 * k));
+                }
+            }
+            LOGI("Fog: the game's EngineLuminanceFactor {}; the buffer:{}", ok ? fmt::format("{:.4f}", e) : std::string("(not read)"), s);
+        }
+    }
+}
+
 void Fog::SetMap(const std::string& name)
 {
     const bool menu = name.rfind("campaign/menu", 0) == 0;
     g_ResetColour = true; g_MapAt = Now();
+    {   // the exposure buffer looked for again (the renderer may have made a new one)
+        std::lock_guard lk(g_EM);
+        if (g_ExpoBuf) { g_ExpoBuf->Release(); g_ExpoBuf = nullptr; }
+        if (g_ExpoStage) { g_ExpoStage->Release(); g_ExpoStage = nullptr; }
+        g_ExpoPending = false; g_Expo = 0.f;
+        { std::lock_guard ek(g_EsM); if (g_ExpoSrv) { g_ExpoSrv->Release(); g_ExpoSrv = nullptr; } g_ExpoElems = 0; }
+        if (!g_ExpoShaders.empty()) StartExpoSearch();
+    }
     if (g_Menu.exchange(menu) != menu && g_Want.load()) LOGI("Fog: {}", menu ? "the main menu's scene: no fog of the mod's there" : "a map to play: the mod's fog may draw again");
 }
 
@@ -535,11 +884,12 @@ void Fog::OnPresent(IDXGISwapChain* sc)
     std::lock_guard lk(g_M);
     if (!g_Ready || !g_Stage || !g_Drawn.load()) return;
     const double now = Now();
+    { ID3D11DeviceContext* ec = nullptr; g_Dev->GetImmediateContext(&ec); if (ec) { ReadExposure(g_Dev, ec, now); ec->Release(); } }
     Params P; { std::lock_guard pk(g_PM); P = g_P; }
     if (!g_StagePending && now - g_LogAt < (g_SettledAt > 0 || !P.sky ? 10.0 : 1.0)) return;   // every second until the colour is settled
     ID3D11DeviceContext* ic = nullptr; g_Dev->GetImmediateContext(&ic);
     if (!ic) return;
-    if (!g_StagePending) { ic->CopyResource(g_Stage, g_Summary); g_StagePending = true; g_StageAt = now; }
+    if (!g_StagePending) { ic->CopyResource(g_Stage, g_Summary); g_StagePending = true; g_StageAt = now; g_StageGen = g_Gen; }
     else
     {
         D3D11_MAPPED_SUBRESOURCE m{};
@@ -548,6 +898,9 @@ void Fog::OnPresent(IDXGISwapChain* sc)
         {
             float v[kFilled * 4]; memcpy(v, m.pData, sizeof v); ic->Unmap(g_Stage, 0);
             g_StagePending = false; g_LogAt = now;
+            // copied before a new map's reset (the immediate context's copy can precede the deferred task's clear): the
+            // last map's colour. That one set this map's category once (reported: the second map's fog was the first's)
+            if (g_StageGen != g_Gen) { ic->Release(); return; }
             const float* a = v; const float* r = v + 4; const float* fc = v + 8;
             // the colour as the ini's fixed one would give it: R,G,B (0-255, sRGB) x CheapFogBrightness
             auto asIni = [](const float* c)
@@ -574,11 +927,15 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 g_Cat = y < P.nightBelow ? 0 : y >= P.dayAbove ? 2 : 1;
                 const float* c = P.cat[g_Cat];
                 const float cy = std::max(1e-4f, 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]);
-                const float k = c[3] > 0 ? c[3] : horizonY / cy;   // no brightness given: the map's horizon brightness
+                const float rSet = 1.f;     // the horizon's average is kept x EngineLuminanceFactor already
+                const float k = c[3] > 0 ? c[3] : horizonY * rSet / cy;   // no brightness given: the map's horizon brightness
                 for (int i = 0; i < 3; i++) g_CatRgb[i] = c[i] * k;
                 LOGI("Fog: this map is {} (the {} sky's brightness {:.3f}{}; night below {:.2f}, day from {:.2f}): fog colour {:.3f},{:.3f},{:.3f}{}",
                      kCatName[g_Cat], upSeen ? "upper" : "horizon's", y, upSeen ? fmt::format(", over {:.0f} frames", up[1]) : std::string(" (no upper sky seen)"),
-                     P.nightBelow, P.dayAbove, g_CatRgb[0], g_CatRgb[1], g_CatRgb[2], c[3] > 0 ? fmt::format(" (brightness {:.2f} as set)", c[3]) : fmt::format(" (at the horizon's brightness {:.3f})", horizonY));
+                     P.nightBelow, P.dayAbove, g_CatRgb[0], g_CatRgb[1], g_CatRgb[2], c[3] > 0 ? fmt::format(" (brightness {:.2f} as set)", c[3]) : fmt::format(" (at the horizon's brightness {:.3f})", horizonY * rSet));
+                const float cyl = 0.2126f * g_CatRgb[0] + 0.7152f * g_CatRgb[1] + 0.0722f * g_CatRgb[2];
+                LOGI("Fog: its brightness {:.3f} x EngineLuminanceFactor (the game's factor now {:.3f}){}; CheapFogMinBrightness {:.2f} keeps it from going darker",
+                     cyl, v[18], cyl < P.minBrightness ? std::string(": darker than the floor, drawn brighter") : std::string(""), P.minBrightness);
             }
             if (P.skyAuto && fabsf(r[2] - g_LoggedTop) > 0.02f)
             {   // the sky's fog follows the far background up (CheapFogSkyHeight = auto)
@@ -586,7 +943,18 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 LOGI("Fog: the far background reaches {:.1f} deg above the horizon: the sky is fogged up to there, thinning out {:.0f} deg above it",
                      asinf(std::clamp(r[2], -1.f, 1.f)) * 57.29578f, P.skyHeight);
             }
-            if (!P.sky) LOGI("Fog: a fixed colour ({:.3f}, {:.3f}, {:.3f} linear); the sky round the horizon here, for comparison: {:.3f},{:.3f},{:.3f} over {:.0f} of 64 directions ({})",
+            if (settled)
+            {   // the check of the exposure model: the sky as drawn x EngineLuminanceFactor against how it was learned (~1)
+                const float e = v[16] > 0 ? v[16] : 1.f;
+                if (fabsf(logf(e / g_LoggedExpo)) > 0.15f)
+                {
+                    LOGI("Fog: exposure check: the sky as drawn x EngineLuminanceFactor is x{:.2f} of what it was learned as (1 = the fog "
+                         "follows the exposure as the scene does); the factor {:.3f} now, {:.3f} when this map's colour was set{}", e, v[18], v[17],
+                         P.followExposure ? "" : " (CheapFogFollowExposure = 0: the fog does not follow it)");
+                    g_LoggedExpo = e;
+                }
+            }
+            if (!P.sky && !P.category) LOGI("Fog: a fixed colour ({:.3f}, {:.3f}, {:.3f} linear); the sky round the horizon here, for comparison: {:.3f},{:.3f},{:.3f} over {:.0f} of 64 directions ({})",
                              P.rgb[0] * P.brightness, P.rgb[1] * P.brightness, P.rgb[2] * P.brightness, a[0], a[1], a[2], a[3], a[3] > 0 ? asIni(a) : std::string("none seen yet"));
             else if (!settled && now - g_LogAt2 >= 10.0)
             {

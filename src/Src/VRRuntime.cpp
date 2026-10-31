@@ -398,7 +398,7 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                 float pos[3]; memcpy(pos, rp.pos, 12);
                 VRRuntime::PoseSet vps;
                 if (ViewMatrixHook::ViewPoses(rp.pair ? rp.pair : rp.serial, vps) && vps.valid && vps.head.valid) memcpy(pos, vps.head.pos, 12);
-                ScreenMode::PlayHud(g_Session, q, pos, rp.tan);
+                ScreenMode::PlayHud(g_Session, q, pos, rp.tan, rp.serial);
             };
             // The layer's fov (vr layerfov): a stereo eye's image declares its own (margin included) when asked; a mono
             // image goes into each eye's native fov (warped there on canted displays)
