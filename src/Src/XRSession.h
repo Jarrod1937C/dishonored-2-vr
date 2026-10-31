@@ -368,6 +368,7 @@ private:
     bool m_KickAny = false;
     unsigned m_EndFrameFails = 0;   //!< xrEndFrame calls of the game's frames the runtime refused
     void PollEventsNow();                  //!< the event loop itself (the frame thread)
+    void ReadVisibilityMasks();            //!< XR_KHR_visibility_mask: the lens's hidden triangles per eye (XRVisMask)
     void PumpLoop();
     static unsigned long __stdcall PumpThread(void* self);
     bool StartPump();
@@ -489,3 +490,9 @@ private:
     //! Appends the HUD quad layer (if a source is set) and ends the XR frame.
     void EndFrameWithLayers(XrCompositionLayerProjection& layer);
 };
+
+//! The lens's hidden area per eye, from XR_KHR_visibility_mask (HIDDEN_TRIANGLE_MESH): x, y of each triangle's three
+//! points on the eye's z = -1 plane (its view space: x right, y up, -z forward). False = none known. `gen` changes when
+//! the runtime gives new ones.
+#include <vector>
+namespace XRVisMask { bool Get(int eye, std::vector<float>& tris, unsigned* gen); }

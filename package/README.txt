@@ -252,9 +252,15 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
                CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
                CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6
-               CheapFogColor = sky (one colour per map: the sky round the horizon, averaged; or R,G,B 0-255)
+               CheapFogColor = auto (night / dusk / day colour by the map's upper sky; sky = the horizon's
+                                     average; or R,G,B 0-255)
+               CheapFogColorNight / CheapFogColorDusk / CheapFogColorDay = R,G,B[,brightness]
+               CheapFogNightBelow = 0.1   CheapFogDayAbove = 0.5 (the upper sky's brightness)
                CheapFogBrightness = 1 (the fixed colour's brightness)
                CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
+               OutOfViewMask = 1 (the part of each eye's picture outside the lens's view is not shaded)
+               OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
+               OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime)
                FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)
                FoveatedInner = 35   FoveatedOuter = 50 (deg: full rate, then 2x2, 4x4 beyond)
                DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,

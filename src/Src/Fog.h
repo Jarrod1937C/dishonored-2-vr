@@ -27,7 +27,11 @@ namespace Fog
     struct Params { bool on = true; float start = 30.f, end = 300.f, opacity = 0.6f; bool sky = true; float rgb[3] = { 0.6f, 0.65f, 0.7f };
                     float brightness = 1.f;      //!< the fixed colour's multiplier (the scene is HDR, before the exposure)
                     float skyHeight = 10.f;      //!< deg above the horizon (with skyAuto: above the far background) where the sky's fog has thinned to none (0: sky not fogged)
-                    bool skyAuto = true; };      //!< the sky's fog reaches up to the top of the far background seen in the map (then thins out)
+                    bool skyAuto = true;         //!< the sky's fog reaches up to the top of the far background seen in the map (then thins out)
+                    //! CheapFogColor = auto: one of three colours by how bright the upper sky is in the map (night, dusk, day);
+                    //! cat[k] = linear rgb + brightness (<= 0: the map's own horizon brightness)
+                    bool category = false; float cat[3][4] = { { 0.06f, 0.08f, 0.13f, 0 }, { 0.75f, 0.6f, 0.45f, 0 }, { 0.95f, 1.f, 0.97f, 0 } };
+                    float nightBelow = 0.1f, dayAbove = 0.5f; };
     void SetParams(const Params& p);          //!< from the ini (before PassProfile::Install)
     bool Wanted();                            //!< CheapFog is on in the ini (the executor hook is needed)
     void SetGameFogOff(bool off);             //!< VrTweaks: the game's own fog is off now (r_skipFog set by the mod)

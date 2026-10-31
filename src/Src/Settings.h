@@ -53,6 +53,9 @@ namespace Settings
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
     int SkipDisabledEffects();                    //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF
     Foveation::Params Foveated();                 //!< [Display] FoveatedRendering / FoveatedInner / FoveatedOuter
+    bool OutOfViewMask();                         //!< [Display] OutOfViewMask (FovMask)
+    float OutOfViewMaskMargin();                  //!< [Display] OutOfViewMaskMargin, degrees
+    bool OutOfViewMaskLens();                     //!< [Display] OutOfViewMaskLens
     bool ProfileRenderPasses();                   //!< [Advanced] ProfileRenderPasses: GPU time per render pass (PassProfile)
     std::string FogMaps();
     Fog::Params CheapFog();                       //!< [Display] CheapFog*: the mod's own fog while the game's is off                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply

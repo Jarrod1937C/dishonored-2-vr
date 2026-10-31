@@ -110,6 +110,7 @@ set(MOD_SOURCES
     Src/PassProfile.cpp Src/PassProfile.h
     Src/Fog.cpp        Src/Fog.h
     Src/Foveation.cpp  Src/Foveation.h
+    Src/FovMask.cpp    Src/FovMask.h
     Src/KeyBinds.cpp   Src/KeyBinds.h
     Src/SysInfo.cpp    Src/SysInfo.h
     Src/Seeds.cpp      Src/Seeds.h

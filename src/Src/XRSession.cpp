@@ -57,6 +57,7 @@ struct XRState
     XrAction trigTouchAction[2] = {}, thumbTouchAction[2] = {};   // Index: a finger on the trigger, the thumb on any of its controls
     // XR_EXT_hand_tracking (FingerTracking): enabled when the runtime offers it; the trackers only while an Index is bound
     bool handExt = false, motionRangeExt = false, handSupported = false;
+    bool visMaskExt = false;            // XR_KHR_visibility_mask: the lens's hidden area, per eye (FovMask)
     XrHandTrackerEXT hand[2] = {};
     PFN_xrCreateHandTrackerEXT createHand = nullptr; PFN_xrDestroyHandTrackerEXT destroyHand = nullptr;
     PFN_xrLocateHandJointsEXT locateHand = nullptr;
@@ -69,6 +70,12 @@ struct XRState
     std::vector<XrSwapchainImageD3D11KHR> panelImages[2];
     uint32_t panelW[2] = {}, panelH[2] = {};
 } g;
+
+// XR_KHR_visibility_mask (XRSession::ReadVisibilityMasks, XRVisMask::Get): the lens's hidden triangles per eye
+static std::atomic<bool> g_VisMaskDirty{ false };
+static std::mutex g_VisMaskM;
+static std::vector<float> g_VisMask[2];   // x, y of each triangle's three points on the eye's z = -1 plane
+static unsigned g_VisMaskGen = 0;
 
 double NowSec()
 {
@@ -801,11 +808,13 @@ bool XRSession::Init(ID3D11Device* device)
                     {
                         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) g.handExt = true;
                         if (!strcmp(e.extensionName, XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME)) g.motionRangeExt = true;
+                        if (!strcmp(e.extensionName, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME)) g.visMaskExt = true;
                     }
             }
             if (g.handExt) exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
             if (g.handExt && g.motionRangeExt) exts.push_back(XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME);
             else g.motionRangeExt = false;
+            if (g.visMaskExt) exts.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
         }
         XrInstanceCreateInfo ici = { XR_TYPE_INSTANCE_CREATE_INFO };
         ici.enabledExtensionCount = (uint32_t)exts.size();
@@ -952,6 +961,7 @@ bool XRSession::Init(ID3D11Device* device)
         }
     }
 
+    g_VisMaskDirty = true;   // the lens masks: read once the session runs
     // --- Reference space ---
     XrReferenceSpaceCreateInfo rsci = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
     rsci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
@@ -1473,6 +1483,12 @@ void XRSession::PollEventsNow()
             if (prof != m_Profiles) LOGI("XRSession: controllers bound as: {}", prof);   // runtimes repeat the event
             m_Profiles = prof;
         }
+        else if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR)
+        {
+            const auto* vm = reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(&ev);
+            LOGI("XRSession: the runtime changed eye {}'s visibility mask: read again", vm->viewIndex);
+            g_VisMaskDirty = true;
+        }
         else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
         {
             LOGI("XRSession: the OpenXR runtime is going away (instance loss pending): VR stops and restarts when it is back");
@@ -1521,6 +1537,62 @@ void XRSession::PollEventsNow()
         }
         ev = { XR_TYPE_EVENT_DATA_BUFFER };
     }
+    if (g_VisMaskDirty.load() && g.session != XR_NULL_HANDLE && m_SessionRunning) ReadVisibilityMasks();
+}
+
+//! The lens's hidden area per eye (XR_KHR_visibility_mask, HIDDEN_TRIANGLE_MESH): triangles of points on the eye's
+//! z = -1 plane in its view space (tangents), kept for FovMask, which writes them into the depth buffer with the part of
+//! the image outside the fov. Read once the session runs and again when the runtime says it changed.
+void XRSession::ReadVisibilityMasks()
+{
+    g_VisMaskDirty = false;
+    if (!g.visMaskExt) { static bool told = false; if (!told) LOGI("XRSession: the runtime offers no XR_KHR_visibility_mask: no lens mask"); told = true; return; }
+    PFN_xrGetVisibilityMaskKHR get = nullptr;
+    if (XR_FAILED(xrGetInstanceProcAddr(g.instance, "xrGetVisibilityMaskKHR", (PFN_xrVoidFunction*)&get)) || !get)
+    { LOGI("XRSession: xrGetVisibilityMaskKHR not found"); return; }
+    for (uint32_t i = 0; i < 2; i++)
+    {
+        XrVisibilityMaskKHR m = { XR_TYPE_VISIBILITY_MASK_KHR };
+        XrResult r = get(g.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, i, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
+        if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask: xrGetVisibilityMaskKHR {}", i, (int)r); continue; }
+        std::vector<XrVector2f> v(m.vertexCountOutput); std::vector<uint32_t> idx(m.indexCountOutput);
+        m.vertexCapacityInput = (uint32_t)v.size(); m.vertices = v.data(); m.indexCapacityInput = (uint32_t)idx.size(); m.indices = idx.data();
+        if (!v.empty() && !idx.empty())
+        {
+            r = get(g.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, i, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
+            if (XR_FAILED(r)) { LOGI("XRSession: eye {}'s visibility mask (second call): {}", i, (int)r); continue; }
+        }
+        std::vector<float> tris; tris.reserve(idx.size() * 2);
+        float lo[2] = { 1e9f, 1e9f }, hi[2] = { -1e9f, -1e9f };
+        for (size_t k = 0; k + 2 < idx.size(); k += 3)
+        {
+            bool ok = true;
+            for (int c = 0; c < 3; c++) ok &= idx[k + c] < v.size();
+            if (!ok) continue;
+            for (int c = 0; c < 3; c++)
+            {
+                const XrVector2f& p = v[idx[k + c]];
+                tris.push_back(p.x); tris.push_back(p.y);
+                lo[0] = std::min(lo[0], p.x); lo[1] = std::min(lo[1], p.y); hi[0] = std::max(hi[0], p.x); hi[1] = std::max(hi[1], p.y);
+            }
+        }
+        {
+            std::lock_guard lk(g_VisMaskM);
+            g_VisMask[i] = std::move(tris); g_VisMaskGen++;
+        }
+        const XrFovf& fv = g.views[i].fov;
+        LOGI("XRSession: eye {}'s lens mask: {} hidden triangles, x {:.3f}..{:.3f}, y {:.3f}..{:.3f} (its fov's tangents x {:.3f}..{:.3f}, y {:.3f}..{:.3f})",
+             i, idx.size() / 3, lo[0], hi[0], lo[1], hi[1], tanf(fv.angleLeft), tanf(fv.angleRight), tanf(fv.angleDown), tanf(fv.angleUp));
+    }
+}
+
+bool XRVisMask::Get(int eye, std::vector<float>& tris, unsigned* gen)
+{
+    if (eye < 0 || eye > 1) return false;
+    std::lock_guard lk(g_VisMaskM);
+    tris = g_VisMask[eye];
+    if (gen) *gen = g_VisMaskGen;
+    return !tris.empty();
 }
 
 //! The render thread's frame. The wait is the frame thread's (PumpLoop): this asks it for a frame and waits for it,

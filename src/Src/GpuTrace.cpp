@@ -5816,19 +5816,59 @@ void GpuTrace::SetProjAny(int on) { g_ProjAny = on; LOGI("GpuTrace: reticle proj
 namespace
 {
     //! The projection and view ProjectWorld / UnprojectNdc use on this thread (see GpuTrace::ProjectForSerial).
+    std::atomic<unsigned long long> g_ProjForView{ 0 };
+    thread_local int t_ProjSrc = 0;     // what the last ProjFor answered from: 1 the view's own draws, 2 its matrix, 3 the latest
+    //! The render view `serial`'s basis as BuildXf makes it (x right, y up, z forward), from ViewMatrixHook
+    bool ViewRigidOf(unsigned long long serial, Rigid& vw)
+    {
+        float vm[16], vorg[3], vaxis[9];
+        if (!serial || !ViewMatrixHook::ViewBySerial(serial, vm, vorg, vaxis)) return false;
+        const int mask = g_Basis.load();
+        const float sr = (mask & 1) ? -1.f : 1.f, su = (mask & 2) ? -1.f : 1.f, sf = (mask & 4) ? -1.f : 1.f;
+        for (int k = 0; k < 3; k++) { vw.r[k] = -vaxis[3 + k] * sr; vw.r[3 + k] = vaxis[6 + k] * su; vw.r[6 + k] = vaxis[k] * sf; }
+        for (int i = 0; i < 3; i++) vw.t[i] = -(vw.r[i * 3] * vorg[0] + vw.r[i * 3 + 1] * vorg[1] + vw.r[i * 3 + 2] * vorg[2]);
+        return true;
+    }
     bool ProjFor(float P[4][4], Rigid& view)
     {
-        std::lock_guard lk(g_ProjM);
+        ProjRec ring[4]; float latest[4][4]; Rigid latestView; bool latestOk = false;
+        {
+            std::lock_guard lk(g_ProjM);
+            if (t_ProjWant)
+                for (const ProjRec& r : g_ProjRing)
+                    if (r.serial == t_ProjWant && g_PresentFrame - r.frame <= 4) { memcpy(P, r.P, sizeof r.P); view = r.view; g_ProjForHit++; t_ProjSrc = 1; return true; }
+            memcpy(ring, g_ProjRing, sizeof ring);
+            latestOk = g_ProjValid && g_PresentFrame - g_ProjFrame <= 4;
+            memcpy(latest, g_Proj, sizeof latest); latestView = g_ProjView;
+        }
         if (t_ProjWant)
-            for (const ProjRec& r : g_ProjRing)
-                if (r.serial == t_ProjWant && g_PresentFrame - r.frame <= 4) { memcpy(P, r.P, sizeof r.P); view = r.view; g_ProjForHit++; return true; }
-        if (t_ProjWant) g_ProjForMiss++;
-        if (!g_ProjValid || g_PresentFrame - g_ProjFrame > 4) return false;
-        memcpy(P, g_Proj, sizeof g_Proj); view = g_ProjView;
+        {   // No draw of the player's own arms recorded for the view being presented: its own matrix (ViewMatrixHook), with
+            // the projection of the newest view of the same eye. The latest view instead -- often the OTHER eye's -- put
+            // the rings a third of the picture aside on those frames: "as if there were 3 reticles per hand" (2026-10-31).
+            Rigid vw;
+            if (ViewRigidOf(t_ProjWant, vw))
+            {
+                const int eye = ViewMatrixHook::RenderPoseXr(t_ProjWant).eye;
+                const ProjRec* best = nullptr;
+                for (const ProjRec& r : ring)
+                    if (r.serial && ViewMatrixHook::RenderPoseXr(r.serial).eye == eye && (!best || r.serial > best->serial)) best = &r;
+                if (best || latestOk)
+                {
+                    memcpy(P, best ? best->P : latest, sizeof latest); view = vw; g_ProjForView++; t_ProjSrc = 2;
+                    return true;
+                }
+            }
+            g_ProjForMiss++;
+        }
+        if (!latestOk) return false;
+        memcpy(P, latest, sizeof latest); view = latestView; t_ProjSrc = 3;
         return true;
     }
 }
 void GpuTrace::ProjectForSerial(unsigned long long serial) { t_ProjWant = serial; }
+int GpuTrace::LastProjSource() { return t_ProjSrc; }
+void GpuTrace::ProjStats(unsigned long long& own, unsigned long long& matrix, unsigned long long& latest)
+{ own = g_ProjForHit.load(); matrix = g_ProjForView.load(); latest = g_ProjForMiss.load(); }
 bool GpuTrace::ProjectWorld(const float w[3], float ndc[2], float* depth)
 {
     float P[4][4]; Rigid vwLocal;

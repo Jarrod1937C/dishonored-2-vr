@@ -144,6 +144,10 @@ namespace GpuTrace
     //! about to be presented, which is not the latest view (the pipeline), and in stereo with the per-eye projection
     //! the two eyes' projections differ by a third of the picture.
     void ProjectForSerial(unsigned long long serial);
+    //! What this thread's last ProjectWorld used: 1 = the presented view's own (its arm draws), 2 = its view matrix with
+    //! its eye's projection, 3 = the latest view (none of the presented one known); and how often each was used.
+    int LastProjSource();
+    void ProjStats(unsigned long long& own, unsigned long long& matrix, unsigned long long& latest);
     //! This frame's controller ray in world space, anchored to the RENDER view exactly as the weapon and the hand
     //! are, so the reticle cannot disagree with where the gun is drawn. Rows/columns as elsewhere: fwd = column 0.
     bool HandRay(int hand, float org[3], float fwd[3]);

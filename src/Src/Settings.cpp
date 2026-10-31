@@ -80,12 +80,20 @@ namespace
         { "display.cheapfogstart",      Kind::Float,  "30", 0, 5000, nullptr },  // m where it begins
         { "display.cheapfogend",        Kind::Float,  "300", 1, 20000, nullptr },// m where it is at full opacity
         { "display.cheapfogopacity",    Kind::Float,  "0.6", 0, 1, nullptr },    // its strength at the far end
-        { "display.cheapfogcolor",      Kind::Text,   "sky", 0, 0, nullptr },    // "sky" or R,G,B (0-255)
+        { "display.cheapfogcolor",      Kind::Text,   "auto", 0, 0, nullptr },   // "auto" (night / dusk / day), "sky" or R,G,B (0-255)
+        { "display.cheapfogcolornight", Kind::Text,   "70,80,100", 0, 0, nullptr },   // R,G,B[,brightness]
+        { "display.cheapfogcolordusk",  Kind::Text,   "225,205,180", 0, 0, nullptr },
+        { "display.cheapfogcolorday",   Kind::Text,   "250,255,252", 0, 0, nullptr },
+        { "display.cheapfognightbelow", Kind::Float,  "0.1", 0, 100, nullptr },  // the upper sky's brightness under which a map is night
+        { "display.cheapfogdayabove",   Kind::Float,  "0.5", 0, 100, nullptr },  // ...and over which it is day (dusk between)
         { "display.cheapfogbrightness", Kind::Float,  "1", 0, 100, nullptr },    // the fixed colour's multiplier (HDR)
         { "display.cheapfogskyheight",  Kind::Text,   "auto", 0, 0, nullptr },   // "auto" (up to the far background, then 10 deg more) or deg above the horizon (0: none)
         { "display.foveatedrendering",  Kind::Bool,   "0", 0, 0, nullptr },      // Foveation: NVIDIA VRS, coarser shading away from the lens centre
         { "display.foveatedinner",      Kind::Float,  "35", 5, 80, nullptr },    // deg from the centre at full shading
         { "display.foveatedouter",      Kind::Float,  "50", 5, 89, nullptr },    // deg to which 2x2 shading reaches (4x4 beyond)
+        { "display.outofviewmask",      Kind::Bool,   "1", 0, 0, nullptr },      // FovMask: the image outside each eye's native fov not shaded
+        { "display.outofviewmaskmargin", Kind::Float, "2", 0, 15, nullptr },     // ...plus this many degrees round it (the compositor's reprojection)
+        { "display.outofviewmasklens",  Kind::Bool,   "1", 0, 0, nullptr },      // ...and the lens's hidden area (XR_KHR_visibility_mask)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -304,6 +312,9 @@ bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
 bool Settings::ProfileRenderPasses() { return B("advanced.profilerenderpasses"); }
 int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdisabledeffects")); }
+bool Settings::OutOfViewMask() { return B("display.outofviewmask"); }
+float Settings::OutOfViewMaskMargin() { return F("display.outofviewmaskmargin"); }
+bool Settings::OutOfViewMaskLens() { return B("display.outofviewmasklens"); }
 Foveation::Params Settings::Foveated()
 {
     Foveation::Params p;
@@ -325,22 +336,34 @@ Fog::Params Settings::CheapFog()
         else if (sscanf_s(h.c_str(), "%f", &deg) == 1) { p.skyAuto = false; p.skyHeight = std::clamp(deg, 0.f, 90.f); }
         else { p.skyAuto = true; p.skyHeight = 10.f; }
     }
-    const std::string& c = V("display.cheapfogcolor");
-    int r = 0, g = 0, b = 0;
-    if (c != "sky" && sscanf_s(c.c_str(), "%d , %d , %d", &r, &g, &b) == 3)
-    {   // sRGB 0-255 to linear: the scene is in linear light
+    // "R,G,B[,brightness]": sRGB 0-255 to linear (the scene is in linear light); brightness 0 = not given
+    auto colour = [](const std::string& s, float out[4]) -> bool
+    {
+        int r = 0, g = 0, b = 0; float k = 0;
+        const int n = sscanf_s(s.c_str(), "%d , %d , %d , %f", &r, &g, &b, &k);
+        if (n < 3) return false;
         const int v[3] = { r, g, b };
         for (int i = 0; i < 3; i++)
         {
             const float x = std::min(255, std::max(0, v[i])) / 255.f;
-            p.rgb[i] = x <= 0.04045f ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f);
+            out[i] = x <= 0.04045f ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f);
         }
-        p.sky = false;
-    }
+        out[3] = n >= 4 ? std::max(0.f, k) : 0.f;
+        return true;
+    };
+    const char* catKeys[3] = { "display.cheapfogcolornight", "display.cheapfogcolordusk", "display.cheapfogcolorday" };
+    for (int k = 0; k < 3; k++)
+        if (!colour(V(catKeys[k]), p.cat[k])) LOGI("Settings: {} = '{}' is not R,G,B[,brightness]: its default", catKeys[k], V(catKeys[k]));
+    p.nightBelow = F("display.cheapfognightbelow"); p.dayAbove = std::max(p.nightBelow, F("display.cheapfogdayabove"));
+    const std::string& c = V("display.cheapfogcolor");
+    float fixed[4];
+    p.sky = false; p.category = false;
+    if (_stricmp(c.c_str(), "sky") == 0) p.sky = true;
+    else if (colour(c, fixed)) { memcpy(p.rgb, fixed, 12); if (fixed[3] > 0) p.brightness = fixed[3]; }
     else
     {
-        if (c != "sky") LOGI("Settings: CheapFogColor = '{}' is neither 'sky' nor R,G,B: the sky's colour", c);
-        p.sky = true;
+        if (_stricmp(c.c_str(), "auto") != 0) LOGI("Settings: CheapFogColor = '{}' is not auto, sky or R,G,B: auto", c);
+        p.category = true;
     }
     return p;
 }

@@ -7,6 +7,7 @@
 #include "CVars.h"
 #include "Fog.h"
 #include "Foveation.h"
+#include "FovMask.h"
 #include "VrTweaks.h"
 #include <d3d11.h>
 #include <dxgi1_4.h>
@@ -54,6 +55,11 @@ namespace
     std::atomic<bool> g_FogHook{ false };         // Fog's anchors (FORWARD_DYNAMIC end, ALPHA_LIT start) need the hook too
     int g_RowOpaque = -1, g_RowTransparent = -1;  // FORWARD_DYNAMIC, ALPHA_LIT
     std::atomic<bool> g_FovHook{ false };         // Foveation: the scene passes, at the eye's resolution
+    std::atomic<bool> g_MaskHook{ false };        // FovMask: the depth pass of each eye's main view
+    int g_RowDepth = -1;                          // DEPTHPASS
+    // the DEPTHPASS task running on this thread, until its first draw into the scene's depth buffer (FovMask)
+    struct MaskT { ID3D11DeviceContext* c = nullptr; const void* view = nullptr; int eye = -1, tries = 0; bool on = false; };
+    thread_local MaskT t_Mask;
     bool g_FovRow[64] = {};
     // [Advanced] SkipDisabledEffects (experimental): with the view's own "no SSAO" / "no DOF" flags set (VrTweaks), the
     // game's SSAO pass still fills its targets with a neutral value (two full-screen draws, exe+0x305C06..: 0.1 ms per
@@ -488,6 +494,9 @@ namespace
             }
         }
         const bool learn = (eff == kEffSample || eff == kEffCheck) && c;
+        const MaskT savedMask = t_Mask;
+        if (c && eye >= 0 && row == g_RowDepth && g_MaskHook.load(std::memory_order_relaxed)) { t_Mask = MaskT{}; t_Mask.c = c; t_Mask.view = view; t_Mask.eye = eye; t_Mask.on = true; }
+        else t_Mask.on = false;
         if (learn) { t_Caps = Caps{}; t_Caps.c = c; t_Caps.on = true; }
         const int slot = c && prof ? Open(c, row, kind, view) : -1;
         if (!c) g_NoCtx++;
@@ -503,6 +512,7 @@ namespace
         LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
         const Acc mine = t_Acc;
         t_Acc = saved;
+        t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
         if (fogged) ClearEmpty(task);
@@ -532,13 +542,15 @@ namespace
         const ExecFn real = W ? g_ExecImm : g_Exec;
         const bool prof = g_On.load(std::memory_order_relaxed);
         const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
-        if (!task || (!prof && !fog && !fov && !eff)) return real(task);
+        const bool mask = g_MaskHook.load(std::memory_order_relaxed);
+        if (!task || (!prof && !fog && !fov && !eff && !mask)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
         if (!fn || fn == (uintptr_t)&Thunk) return real(task);
         const int pass = PassOf(fn);
         const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
-                         || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))));
+                         || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))))
+                         || (mask && pass == g_RowDepth);
         if (!wanted) return real(task);
         const TaskFn savedReal = t_Real; const int savedPass = t_Pass;
         t_Real = (TaskFn)fn; t_Pass = pass;
@@ -774,13 +786,15 @@ void PassProfile::Install()
         if (!strcmp(kPasses[i].name, "ALPHA_LIT")) g_RowTransparent = i;
         if (!strcmp(kPasses[i].name, "SSAO")) g_RowSsao = i;
         if (!strcmp(kPasses[i].name, "DOF")) g_RowDof = i;
+        if (!strcmp(kPasses[i].name, "DEPTHPASS")) g_RowDepth = i;
         // Foveation: what shades the scene at the eye's resolution
         static const char* fov[] = { "DEPTHPASS", "DEPTHALPHA_LIT", "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY" };
         for (const char* n : fov) if (!strcmp(kPasses[i].name, n) && i < 64) g_FovRow[i] = true;
     }
     g_FogHook = Fog::Wanted();
     g_FovHook = Foveation::Wanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load()) || g_Exec) return;
+    g_MaskHook = FovMask::Wanted();
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -792,7 +806,7 @@ void PassProfile::Install()
     DetourAttach(&(PVOID&)g_ExecImm, (PVOID)&HkExec<1>);
     const LONG e = DetourTransactionCommit();
     LOGI("PassProfile: task executors exe+0x2C5D50 / exe+0x2C5F60 hooked (detour={})", e);
-    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; }
+    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; g_MaskHook = false; }
 }
 
 void PassProfile::SetSkipEffects(int mode)
@@ -806,6 +820,11 @@ bool PassProfile::On() { return g_On.load(std::memory_order_relaxed); }
 
 void PassProfile::NoteDraw(unsigned elements, unsigned instances, bool indirect)
 {
+    if (t_Mask.on)
+    {   // FovMask: before the depth pass's first draw into the scene's depth (its own draw comes back through here: off first)
+        t_Mask.on = false;
+        if (!FovMask::AtDraw(t_Mask.c, t_Mask.view, t_Mask.eye) && ++t_Mask.tries < 64) t_Mask.on = true;
+    }
     if (t_Caps.on) CaptureTargets();
     if (!t_Acc.on) return;
     t_Acc.draws++; if (indirect) t_Acc.indirect++;

@@ -13,6 +13,7 @@
 #include "Overlay.h"
 #include "Collision.h"
 #include "BodyHide.h"
+#include "ViewMatrixHook.h"
 #include <imgui.h>
 #include <cmath>
 #include <algorithm>
@@ -47,26 +48,26 @@ namespace
 
     // ---- the flicker log: a hand's ring flipping between two depths (reported: "depth fighting", nothing visible at
     // the other depth). Each drawn ring is noted with where its distance came from (and for a gun what the static sweep
-    // and the aim sensor said). A FLIP is a jump (> 0.15 m and > 15 % between two drawn frames 0.1 s apart at most) that
-    // goes back the way the previous jump came, within 0.25 s, to within 20 % of where it was before it: A -> B -> A.
-    // Two flips within a second write the whole last second to the log, runs of like frames merged, with what the aim
-    // sensor hit (at most once in 3 s per hand, 100 in all). A ring sweeping across edges (A -> B -> C) does not count.
+    // and the aim sensor said). A JUMP is a change of the raw distance of > 0.15 m and > 15 % between two drawn frames
+    // 0.1 s apart at most; three within a second write the whole last second to the log, runs of like frames merged,
+    // with what the aim sensor hit (at most once a second per hand, 300 in all). Flips (A -> B -> A) are counted too.
+    int g_FrameEye = -1; unsigned long long g_FrameSerial = 0;   // the image being presented (Present thread)
     enum Src { kSrcFixed, kSrcGun, kSrcPointer, kSrcPower };
     const char* kSrcName[4] = { "fixed range", "gun", "grab pointer", "power's landing point" };
-    struct Sample { double t = 0; float len = 0; int src = 0; bool hit = false; int eye = -1;
+    struct Sample { double t = 0; float len = 0, shown = 0; int src = 0; bool hit = false; int eye = -1;
                     float sweepT = 0, sensorT = 0; bool sweepHit = false, sensorUsed = false, sensorHas = false; int sensorEnt = -1; };
     constexpr int kHist = 512;
-    struct Track { Sample s[kHist]; int n = 0; double flipT[8] = {}; int fn = 0; double lastLog = -10;
+    struct Track { Sample s[kHist]; int n = 0; double flipT[8] = {}; int fn = 0; double jumpT[16] = {}; int jn = 0; double lastLog = -10;
                    double jumpAt = -1; float jumpFrom = 0; int jumpSign = 0; };
     Track g_Track[2];                 // Present thread
     int g_FlickerLogs = 0;
     double NowS() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
-    void NoteRing(int h, float len, int src, bool hit)
+    void NoteRing(int h, float len, float shown, int src, bool hit)
     {
         Track& T = g_Track[h];
         const double now = NowS();
         const Sample* prev = T.n ? &T.s[(T.n - 1) % kHist] : nullptr;
-        Sample cur; cur.t = now; cur.len = len; cur.src = src; cur.hit = hit; cur.eye = VRRuntime::CurrentEye();
+        Sample cur; cur.t = now; cur.len = len; cur.shown = shown; cur.src = src; cur.hit = hit; cur.eye = g_FrameEye;
         if (src == kSrcGun)
         {
             const GunRay::TraceDbg g = GunRay::LastTrace();
@@ -79,6 +80,7 @@ namespace
             if (fabsf(d) > 0.15f && fabsf(d) > 0.15f * lo)
             {
                 const int sign = d > 0 ? 1 : -1;
+                T.jumpT[T.jn++ % 16] = now;
                 // back the way the last jump came, soon, to near where that one started: a flip
                 if (T.jumpAt >= 0 && now - T.jumpAt <= 0.25 && sign == -T.jumpSign && fabsf(len - T.jumpFrom) <= 0.2f * std::max(len, T.jumpFrom))
                     T.flipT[T.fn++ % 8] = now;
@@ -86,9 +88,10 @@ namespace
             }
         }
         T.s[T.n++ % kHist] = cur;
-        int recent = 0;
-        for (int i = 0; i < std::min(T.fn, 8); i++) if (now - T.flipT[i] <= 1.0) recent++;
-        if (recent < 2 || now - T.lastLog < 3.0 || g_FlickerLogs >= 100) return;
+        int recent = 0, flips = 0;
+        for (int i = 0; i < std::min(T.jn, 16); i++) if (now - T.jumpT[i] <= 1.0) recent++;
+        for (int i = 0; i < std::min(T.fn, 8); i++) if (now - T.flipT[i] <= 1.0) flips++;
+        if (recent < 3 || now - T.lastLog < 1.0 || g_FlickerLogs >= 300) return;
         T.lastLog = now; g_FlickerLogs++;
         // the last second, runs of like frames merged
         int first = T.n - 1;
@@ -105,7 +108,7 @@ namespace
                 m++;
             }
             const Sample& z = T.s[(m - 1) % kHist];
-            seq += fmt::format(" [{:.0f}ms x{} {:.2f}m {}{}", (a.t - now) * 1000.0, m - k, z.len, kSrcName[a.src], a.hit ? " HIT" : "");
+            seq += fmt::format(" [{:.0f}ms x{} {:.2f}m (shown {:.2f}) {}{}", (a.t - now) * 1000.0, m - k, z.len, z.shown, kSrcName[a.src], a.hit ? " HIT" : "");
             if (a.src == kSrcGun)
                 seq += fmt::format(" (sweep {} {:.2f}, sensor {} {:.2f}{}{})", a.sweepHit ? "hit" : "clear", a.sweepT, a.sensorHas ? "hit" : "none", a.sensorT,
                                    a.sensorUsed ? " USED" : "", a.sensorEnt >= 0 ? fmt::format(" ent {}", a.sensorEnt) : std::string());
@@ -121,8 +124,62 @@ namespace
         }
         if (src == kSrcPointer || h == GrabHand::Hand())
             extra += fmt::format(" -- grab pointer: target id 0x{:X}, {}", (unsigned)GrabHand::TargetId(), Collision::PointerDescribe());
-        LOGI("Reticle: the {} hand's ring FLIPS between depths ({} flips in 1 s), now {:.2f} m from {}; the last second:{}{}",
-             h ? "right" : "left", recent, len, kSrcName[src], seq, extra);
+        LOGI("Reticle: the {} hand's ring jumps between depths ({} jumps, {} of them flips back, in 1 s), now {:.2f} m (shown {:.2f}) from {}; the last second:{}{}",
+             h ? "right" : "left", recent, flips, len, shown, kSrcName[src], seq, extra);
+    }
+
+    // ---- the ring's screen position jumping while the ray did not move (a projection of the wrong view?): per hand and
+    // per eye, the ring's NDC and its ray's direction at the last drawn frame of that eye. A jump of > 0.04 NDC (~2 deg)
+    // with the ray turned < 0.5 deg and the distance steady is logged with what the projection came from.
+    struct PosT { bool valid = false; double t = 0; float ndc[2] = {}, dir[3] = {}, len = 0; int src = 0; unsigned long long serial = 0; };
+    PosT g_Pos[2][2];
+    double g_PosLogAt[2] = { -10, -10 }; int g_PosLogs = 0; unsigned long long g_PosJumps = 0;
+    const char* kProjSrc[4] = { "?", "the presented view's own draws", "the presented view's matrix", "the LATEST view (maybe the other eye's)" };
+    void NotePos(int h, const float ndc[2], const float dir[3], float len)
+    {
+        const int e = g_FrameEye;
+        if (e < 0 || e > 1) return;
+        PosT& P = g_Pos[h][e];
+        const double now = NowS();
+        const int src = GpuTrace::LastProjSource();
+        if (P.valid && now - P.t < 0.1)
+        {
+            const float dn = hypotf(ndc[0] - P.ndc[0], ndc[1] - P.ndc[1]);
+            const float cosd = dir[0] * P.dir[0] + dir[1] * P.dir[1] + dir[2] * P.dir[2];
+            if (dn > 0.04f && cosd > 0.99996f && fabsf(len - P.len) < 0.1f * std::max(len, P.len))
+            {
+                g_PosJumps++;
+                if (now - g_PosLogAt[h] >= 1.0 && g_PosLogs < 200)
+                {
+                    g_PosLogAt[h] = now; g_PosLogs++;
+                    unsigned long long a = 0, b = 0, c = 0; GpuTrace::ProjStats(a, b, c);
+                    LOGI("Reticle: the {} hand's ring JUMPED {:.3f} NDC on the eye-{} image with its ray still (turned {:.2f} deg, {:.2f} m): "
+                         "projection from {} (serial {}; before: {}, serial {}); projections so far: own draws {}, matrix {}, latest {}; {} such jumps",
+                         h ? "right" : "left", dn, e, acosf(std::min(1.f, cosd)) * 57.29578f, len, kProjSrc[src & 3], g_FrameSerial,
+                         kProjSrc[P.src & 3], P.serial, a, b, c, g_PosJumps);
+                }
+            }
+        }
+        P.valid = true; P.t = now; memcpy(P.ndc, ndc, 8); memcpy(P.dir, dir, 12); P.len = len; P.src = src; P.serial = g_FrameSerial;
+    }
+
+    // ---- the ring's distance, steadied: a new distance (> 15 % off the one shown) is taken only once it has held for
+    // kHoldFrames drawn frames in a row (~3 game frames); closer changes follow at once. A distance that flips back and
+    // forth from frame to frame -- the gun's projectile-shaped sweep grazing an edge or the floor, the aim sensor's hit
+    // on something thin coming and going -- stays where it was instead of the ring jumping between depths (reported
+    // 2026-10-31: "as if there were 3 reticles per hand").
+    constexpr int kHoldFrames = 6;
+    struct Steady { float shown = -1, cand = -1; int count = 0; };
+    Steady g_Steady[2];          // Present thread
+    float SteadyLen(int h, float raw)
+    {
+        Steady& S = g_Steady[h];
+        if (S.shown < 0) { S.shown = raw; return raw; }
+        const auto close = [](float a, float b) { return fabsf(a - b) <= 0.15f * std::max(a, b); };
+        if (close(raw, S.shown)) { S.shown = raw; S.count = 0; S.cand = -1; return raw; }
+        if (S.cand >= 0 && close(raw, S.cand)) S.count++; else { S.cand = raw; S.count = 1; }
+        if (S.count >= kHoldFrames) { S.shown = raw; S.count = 0; S.cand = -1; }
+        return S.shown;
     }
 
     //! NDC -> pixels in the image the headset receives (ImGui's display size is the backbuffer, which is what
@@ -192,10 +249,12 @@ namespace
             for (int i = 0; i < 3; i++) end[i] = org[i] + fwd[i] * r;
         }
 
-        {
+        {   // the distance steadied (SteadyLen), and noted for the flicker log
             const float dl3[3] = { end[0] - org[0], end[1] - org[1], end[2] - org[2] };
-            NoteRing(h, sqrtf(dl3[0] * dl3[0] + dl3[1] * dl3[1] + dl3[2] * dl3[2]), gun ? kSrcGun : pointer ? kSrcPointer : engineTarget ? kSrcPower : kSrcFixed,
-                     engineTarget);
+            const float raw = sqrtf(dl3[0] * dl3[0] + dl3[1] * dl3[1] + dl3[2] * dl3[2]);
+            const float shown = raw > 1e-4f ? SteadyLen(h, raw) : raw;
+            if (raw > 1e-4f && shown != raw) for (int i = 0; i < 3; i++) end[i] = org[i] + dl3[i] * (shown / raw);
+            NoteRing(h, raw, shown, gun ? kSrcGun : pointer ? kSrcPointer : engineTarget ? kSrcPower : kSrcFixed, engineTarget);
         }
         // The ray, as a polyline. A straight world line does project to a straight screen line, but sampling it
         // lets the part that falls behind the eye drop out cleanly instead of taking the whole segment with it.
@@ -219,6 +278,11 @@ namespace
         float ndc[2], depth = 0;
         if (!GpuTrace::ProjectWorld(end, ndc, &depth)) return;
         st.projValid |= 1 << h;
+        {
+            const float dd[3] = { end[0] - org[0], end[1] - org[1], end[2] - org[2] };
+            const float ln = sqrtf(dd[0] * dd[0] + dd[1] * dd[1] + dd[2] * dd[2]);
+            if (ln > 1e-3f) { const float u[3] = { dd[0] / ln, dd[1] / ln, dd[2] / ln }; NotePos(h, ndc, u, ln); }
+        }
         const ImVec2 c = ToScreen(ndc, size);
         if (!pointer && h == HandAimHook::GunHand()) GunRay::NoteRing(c.x / size.x, c.y / size.y);   // the gun hand's ring, either mode (test scripts aim with it)
         // A takedown on offer (the game's assassination sensor, MeleeAim::KillOffered), or a knockout blow still possible
@@ -375,6 +439,18 @@ void Reticle::Draw()
     // projected with the frustum of the image this lands on (the one about to be presented), not the latest view's: in
     // stereo the two eyes' projections differ (CameraHook::ApplyEyeProjection)
     struct ProjScope { ProjScope() { GpuTrace::ProjectForSerial(VRRuntime::PresentingSerial()); } ~ProjScope() { GpuTrace::ProjectForSerial(0); } } projScope;
+    g_FrameSerial = VRRuntime::PresentingSerial();
+    g_FrameEye = g_FrameSerial ? ViewMatrixHook::RenderPoseXr(g_FrameSerial).eye : -1;
+    {   // every 30 s: what the rings' projections came from
+        static double at = 0; const double now = NowS();
+        if (now - at >= 30.0)
+        {
+            at = now;
+            unsigned long long a = 0, b = 0, c = 0; GpuTrace::ProjStats(a, b, c);
+            if (a + b + c) LOGI("Reticle: the rings' projections so far: the presented view's own draws {}, its matrix {}, the latest view {}; screen jumps with the ray still {}",
+                                a, b, c, g_PosJumps);
+        }
+    }
     Stats st; st.frames = 1;
     if (mode == 1 || mode == 2) DrawHand(HandAimHook::PowerHand() & 1, dl, size, st);
     if (mode == 1 || mode == 3)

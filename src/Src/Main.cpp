@@ -15,6 +15,7 @@
 #include "PassProfile.h"
 #include "Fog.h"
 #include "Foveation.h"
+#include "FovMask.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
 #include "Commands.h"
@@ -162,6 +163,7 @@ static DWORD WINAPI InitThread(LPVOID)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
     Foveation::SetParams(Settings::Foveated());
+    FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects
