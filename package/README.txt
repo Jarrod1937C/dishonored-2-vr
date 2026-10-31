@@ -236,7 +236,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                HolsterWeapons = 1 (grip at a holster: left hand to the right hip = pistol, behind the
                                  back = crossbow, chest = last power; right hand to the left hip =
                                  sword. Again with it in the hand = put it away. A light buzz tells
-                                 you the hand is at a holster)
+                                 you the hand is at a holster. An emptied hand stays empty: the
+                                 wheel, a quick slot, blocking or a stun no longer bring the sword back)
                PhysicalPickup = 0 (experimental, with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
@@ -251,7 +252,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
                CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
                CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6
-               CheapFogColor = sky (or R,G,B 0-255)
+               CheapFogColor = sky (one colour per map: the sky round the horizon, averaged; or R,G,B 0-255)
+               CheapFogBrightness = 1 (the fixed colour's brightness)
+               CheapFogSkyHeight = 12 (deg above the horizon the sky's own fog reaches; 0 = sky not fogged)
+               FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)
+               FoveatedInner = 35   FoveatedOuter = 50 (deg: full rate, then 2x2, 4x4 beyond)
                DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,
                                  about half the frame rate; 0 = flat, both eyes the same
                                  picture; 2 = the old alternating 3D of version 1.0)
@@ -271,6 +276,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
                ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s)
+               SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
+                                      DOF's copy, which breaks water / electricity: do not use)
 
  TWO CHEATS ARE ON by default, so every power and weapon can be tried in VR right away:
  UnlockEverything (every power, upgrade, bone charm crafting, black market upgrade and weapon, on

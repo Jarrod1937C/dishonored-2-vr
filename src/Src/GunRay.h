@@ -44,6 +44,12 @@ namespace GunRay
     //! The engine's answer for the gun ray: distance along it to what it hits (`hit`), or the sensor's range when it
     //! hits nothing. False when the sensor has not traced the gun ray recently.
     bool SensorHit(float& dist, bool& hit);
+    //! For the reticle's flicker log: what SensorHit answered from. `fromTrace`: the frame's own trace (else the aim
+    //! sensor alone, the trace being stale); the trace's static sweep (t, hit) and whether the aim sensor's hit (dynamic
+    //! world: props, characters) shortened it; the aim sensor's own last answer and its point; ages in ms.
+    struct TraceDbg { bool valid = false, fromTrace = false, hit = false, sweepHit = false, sensorUsed = false, sensorHas = false;
+                      float t = 0, sweepT = 0, sensorT = 0; float sensorPoint[3] = {}; unsigned traceAgeMs = 0, sensorAgeMs = 0; };
+    TraceDbg LastTrace();
 
     //! ComputeAimTarget integration (HandAimHook): what the fire should read while the engine computes the spawn.
     struct Shot

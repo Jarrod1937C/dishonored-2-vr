@@ -107,6 +107,7 @@ void VrTweaks::OnPresent()
                 if (m != g_Map)
                 {
                     { std::lock_guard lk(g_MapM); g_Map = m; }
+                    Fog::SetMap(m);
                     g_MapFog = false;
                     const char* hit = nullptr;
                     for (const std::string& w : g_FogMaps) if (m.find(w) != std::string::npos) { g_MapFog = true; hit = w.c_str(); break; }

@@ -564,6 +564,20 @@ void StereoSync::Install()
 
 void StereoSync::OnPresent()
 {
+    if (g_ShadowReal && g_LightShadowOn.load())
+    {   // StereoLightShadowReuse: how often the right eye could take the left's lamp shadows, and why not (every 15 s)
+        static ULONGLONG next = 0; const ULONGLONG now = GetTickCount64();
+        if (!next) next = now + 15000;
+        if (now >= next)
+        {
+            next = now + 15000;
+            std::lock_guard lk(g_Sh.m);
+            LOGI("StereoSync: lamp shadows (StereoLightShadowReuse): left frames {}, right frames that reused them {}, drawn because a face was new {} / "
+                 "the jobs differed {} / no left frame to compare {} / unreadable {}; tasks skipped {} run {}; last frame {} jobs {} faces",
+                 g_Sh.lefts, g_Sh.rightsSkipped, g_Sh.rightsDirty, g_Sh.rightsDiffer, g_Sh.rightsNoLeft, g_Sh.unreadable,
+                 g_Sh.tasksSkipped, g_Sh.tasksRun, g_Sh.lastJobs, g_Sh.lastFaces);
+        }
+    }
     UiStackTick();
     ApplyFrameCap();
     ApplyProbeBudget();

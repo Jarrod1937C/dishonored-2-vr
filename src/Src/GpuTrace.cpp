@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "GpuTrace.h"
 #include "PassProfile.h"
-#include "Fog.h"
 #include "Collision.h"
 #include "PipeTrace.h"
 #include "PlayerState.h"
@@ -4120,7 +4119,6 @@ namespace
         {
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(n, 1, false);
-            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4136,7 +4134,6 @@ namespace
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(n, 1, false);
-            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4151,7 +4148,6 @@ namespace
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(n, i, false);
-            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
@@ -4166,7 +4162,6 @@ namespace
         {
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(n, i, false);
-            Fog::OnDraw(c);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar

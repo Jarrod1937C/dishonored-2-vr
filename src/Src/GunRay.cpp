@@ -233,7 +233,8 @@ namespace
     using FnSweep = bool (*)(void*, const float*, const float*, uint32_t, float*);
     std::atomic<uint32_t> g_SweepMask{ 0x20000 };
     std::atomic<float> g_MaxRange{ 100.f };
-    struct Trace { bool valid = false, hit = false, sensor = false; float t = 0; float o[3] = {}, f[3] = {}; ULONGLONG at = 0; } g_Trace;   // under g_SensM
+    struct Trace { bool valid = false, hit = false, sensor = false; float t = 0; float o[3] = {}, f[3] = {}; ULONGLONG at = 0;
+                   float sweepT = 0; bool sweepHit = false; } g_Trace;   // under g_SensM
     std::atomic<unsigned long long> g_Sweeps{ 0 }, g_SweepHits{ 0 }, g_SensorUsed{ 0 };
     float WeaponRange(void* w)
     {
@@ -1009,7 +1010,7 @@ void GunRay::Tick()
     // behind it at 1.41 was). Props and characters live in the dynamic physics world, which is what the aim sensor
     // queries -- along this same ray, one frame late. Its hit counts while it still lies on the current ray (a hand that
     // has moved off the bottle must not keep the ring on it): within 2 cm, or 1% of the distance, of the ray.
-    g_Trace.sensor = false;
+    g_Trace.sensor = false; g_Trace.sweepT = t; g_Trace.sweepHit = hit;
     if (g_Hit.valid && g_Hit.has && GetTickCount64() - g_Hit.at <= 200)
     {
         const float d[3] = { g_Hit.point[0] - m[0], g_Hit.point[1] - m[1], g_Hit.point[2] - m[2] };
@@ -1056,6 +1057,20 @@ void GunRay::Log(int n) { g_LogLeft = n; }
 bool GunRay::IsGun(void* w) { return IsGunImpl(w); }
 bool GunRay::Pose(int hand, float muzzle[3], float axis[9]) { return PoseImpl(hand, muzzle, axis); }
 bool GunRay::SensorHit(float& dist, bool& hit) { return SensorHitImpl(dist, hit); }
+GunRay::TraceDbg GunRay::LastTrace()
+{
+    TraceDbg d;
+    std::lock_guard lk(g_SensM);
+    const ULONGLONG now = GetTickCount64();
+    d.fromTrace = g_Trace.valid && now - g_Trace.at <= 300;
+    d.valid = d.fromTrace || (g_Hit.valid && now - g_Hit.at <= 500);
+    d.t = d.fromTrace ? g_Trace.t : g_Hit.t; d.hit = d.fromTrace ? g_Trace.hit : g_Hit.has;
+    d.sweepT = g_Trace.sweepT; d.sweepHit = g_Trace.sweepHit; d.sensorUsed = g_Trace.sensor;
+    d.sensorHas = g_Hit.has; d.sensorT = g_Hit.t; memcpy(d.sensorPoint, g_Hit.point, 12);
+    d.traceAgeMs = g_Trace.valid ? (unsigned)std::min<ULONGLONG>(99999, now - g_Trace.at) : 99999;
+    d.sensorAgeMs = g_Hit.valid ? (unsigned)std::min<ULONGLONG>(99999, now - g_Hit.at) : 99999;
+    return d;
+}
 
 bool GunRay::DrawnRay(int hand, float muzzle[3], float fwd[3])
 {

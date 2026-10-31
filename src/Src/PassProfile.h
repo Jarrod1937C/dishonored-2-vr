@@ -20,6 +20,7 @@ namespace PassProfile
 {
     constexpr int kSections = 3;    //!< the mod's own work at Present: 0 the whole hook, 1 StereoTaa, 2 overlay + VR submit
     void SetEnabled(bool on);       //!< from the ini, before Install
+    void SetSkipEffects(int mode);  //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF; before Install
     void Install();                 //!< hooks only when enabled
     bool On();
     void OnPresent(IDXGISwapChain* sc);

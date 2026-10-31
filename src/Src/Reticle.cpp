@@ -10,6 +10,8 @@
 #include "MeleeAim.h"
 #include "VRRuntime.h"
 #include "CVars.h"
+#include "Overlay.h"
+#include "Collision.h"
 #include <imgui.h>
 #include <cmath>
 #include <algorithm>
@@ -41,6 +43,54 @@ namespace
     const ImU32 kColHit[2] = { IM_COL32(120, 240, 255, 110), IM_COL32(255, 210, 120, 110) };
 
     bool Finite3(const float* v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
+
+    // ---- the flicker log: a hand's ring jumping between two depths (reported: "depth fighting", nothing visible at
+    // the other depth). Each drawn ring is noted with where its distance came from; four or more jumps of the
+    // distance (> 0.3 m and > 25 %) within a second write the last samples, with what each source said, to the log
+    // (at most once in 5 s per hand, 60 in all).
+    enum Src { kSrcFixed, kSrcGun, kSrcPointer, kSrcPower };
+    const char* kSrcName[4] = { "fixed range", "gun trace", "grab pointer", "power's landing point" };
+    struct Sample { double t = 0; float len = 0; int src = 0; bool hit = false; int eye = -1; };
+    struct Track { Sample s[16]; int n = 0; double jumpT[8] = {}; int jn = 0; double lastLog = -10; };
+    Track g_Track[2];                 // Present thread
+    int g_FlickerLogs = 0;
+    double NowS() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
+    void NoteRing(int h, float len, int src, bool hit)
+    {
+        Track& T = g_Track[h];
+        const double now = NowS();
+        const Sample* prev = T.n ? &T.s[(T.n - 1) % 16] : nullptr;
+        Sample cur; cur.t = now; cur.len = len; cur.src = src; cur.hit = hit; cur.eye = VRRuntime::PresentedEye();
+        if (prev && now - prev->t < 0.2)
+        {
+            const float d = fabsf(len - prev->len), lo = std::min(len, prev->len);
+            if (d > 0.3f && d > 0.25f * lo) T.jumpT[T.jn++ % 8] = now;
+        }
+        T.s[T.n++ % 16] = cur;
+        int recent = 0;
+        for (int i = 0; i < std::min(T.jn, 8); i++) if (now - T.jumpT[i] <= 1.0) recent++;
+        if (recent < 4 || now - T.lastLog < 5.0 || g_FlickerLogs >= 60) return;
+        T.lastLog = now; g_FlickerLogs++;
+        std::string seq;
+        for (int k = std::max(0, T.n - 12); k < T.n; k++)
+        {
+            const Sample& x = T.s[k % 16];
+            seq += fmt::format(" [{:.0f}ms {:.2f}m {}{} eye {}]", (x.t - now) * 1000.0, x.len, kSrcName[x.src], x.hit ? " HIT" : "", x.eye);
+        }
+        std::string extra;
+        if (src == kSrcGun)
+        {
+            const GunRay::TraceDbg g = GunRay::LastTrace();
+            extra = fmt::format("gun: answered from {}; the static sweep {} at {:.2f} m{}; the aim sensor (props, characters) {} {:.2f} m at ({:.2f},{:.2f},{:.2f}), {} ms old; the trace {} ms old",
+                g.fromTrace ? "the frame's trace" : "the aim sensor alone (trace stale)", g.sweepHit ? "HIT" : "clear", g.sweepT,
+                g.sensorUsed ? ", shortened by the aim sensor's hit" : "", g.sensorHas ? "HIT" : "nothing", g.sensorT,
+                g.sensorPoint[0], g.sensorPoint[1], g.sensorPoint[2], g.sensorAgeMs, g.traceAgeMs);
+        }
+        else if (src == kSrcPointer || h == GrabHand::Hand())
+            extra = fmt::format("grab pointer: target id 0x{:X}, {}", (unsigned)GrabHand::TargetId(), Collision::PointerDescribe());
+        LOGI("Reticle: the {} hand's ring jumps between depths ({} jumps in 1 s), now {:.2f} m from {}; the last frames:{}{}{}",
+             h ? "right" : "left", recent, len, kSrcName[src], seq, extra.empty() ? "" : " -- ", extra);
+    }
 
     //! NDC -> pixels in the image the headset receives (ImGui's display size is the backbuffer, which is what
     //! VRRuntime submits). No viewport correction: the projection came from the same image's own draws.
@@ -109,6 +159,11 @@ namespace
             for (int i = 0; i < 3; i++) end[i] = org[i] + fwd[i] * r;
         }
 
+        {
+            const float dl3[3] = { end[0] - org[0], end[1] - org[1], end[2] - org[2] };
+            NoteRing(h, sqrtf(dl3[0] * dl3[0] + dl3[1] * dl3[1] + dl3[2] * dl3[2]), gun ? kSrcGun : pointer ? kSrcPointer : engineTarget ? kSrcPower : kSrcFixed,
+                     engineTarget);
+        }
         // The ray, as a polyline. A straight world line does project to a straight screen line, but sampling it
         // lets the part that falls behind the eye drop out cleanly instead of taking the whole segment with it.
         constexpr int kSteps = 10;
@@ -304,8 +359,10 @@ void Reticle::Draw()
         {
             const ImVec2 c = ToScreen(ndc, size);
             const float r = std::max(4.f, size.y * 0.004f);
-            dl->AddCircleFilled(c, r + std::max(3.f, size.y * 0.0016f), IM_COL32(118, 40, 40, 255), 24);   // a dark red edge, as dark and as grey as the blue
-            dl->AddCircleFilled(c, r, IM_COL32(40, 64, 118, 255), 20);   // a dark, slightly greyed blue (the game's palette)
+            // As SEEN (Overlay::Seen): drawn as plain IM_COL32 through the backbuffer's sRGB view they came out light blue
+            // and pink (reported 2026-10-31)
+            dl->AddCircleFilled(c, r + std::max(3.f, size.y * 0.0016f), Overlay::Seen(118, 40, 40), 24);   // a dark red edge, as dark and as grey as the blue
+            dl->AddCircleFilled(c, r, Overlay::Seen(40, 64, 118), 20);   // a dark, slightly greyed blue (the game's palette)
             st.drawn++;
         }
     }

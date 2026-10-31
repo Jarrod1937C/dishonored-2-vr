@@ -3,8 +3,12 @@
 #include "GameInfo.h"
 #include "Game.h"
 #include "BodyHide.h"
+#include "PlayerState.h"
+#include "GrabHand.h"
 #include <cmath>
 #include <unordered_map>
+#include <intrin.h>
+#include <detours/detours.h>
 
 namespace
 {
@@ -34,6 +38,53 @@ namespace
     constexpr uint32_t kInvQuantity = 0x615310;
     constexpr int kKinds = 4;
     bool LeftHand(int k) { return k != Holster::kSword; }
+
+    // Every equip change of a hand goes through the player's state machine: exe+0x8024D0(machine, state, params) queues
+    // state 0x35 (the right hand's equip change) or 0x40 (the left's) with arkPlayerStateEquipChangeParams (built by
+    // exe+0x835590: +0x08 the inventory entry to put in the hand, or 0 = none / what the hand had; +0x18 the flags,
+    // arkEquipChangeFlags_t: 1 LOCK, 2 UNLOCK, 4 REEQUIP, 8 REEQUIP_BOTH_HANDS, 0x10 INSTANT_EQUIP, 0x20 INSTANT_UNEQUIP,
+    // 0x40 FAST_EQUIP, 0x80 FAST_UNEQUIP, 0x100 THIS_HAND_ONLY). Where the hands are linked (exe+0x8363F0, the state's
+    // handling of its params): a change that puts an item in one hand WITHOUT THIS_HAND_ONLY queues the other hand's
+    // REEQUIP (no entry, flags 4; exe+0x8366C6), and a right-hand REEQUIP with nothing remembered for it draws the
+    // player's default weapon, the sword (player decl+0x88; exe+0x8365EC). So choosing a power on the wheel, a quick
+    // slot, the game's block, an attack with an empty hand, the end of a stun... each brought the sword back into a
+    // right hand the player had put it away from. Here, once a hand has been emptied by its holster, it stays empty
+    // until the player puts something in it: the other hand's REEQUIP is not queued for it, a LOCK / UNLOCK keeps its
+    // counting but loses the re-equip, and the game's own equip into the RIGHT hand (no THIS_HAND_ONLY) is dropped. The
+    // LEFT hand's equips with an item are the player's choice (the wheel, a quick slot): they go ahead.
+    constexpr uint32_t kPushState = 0x8024D0;
+    constexpr int kStateEquipRight = 0x35, kStateEquipLeft = 0x40;
+    constexpr uint32_t kParEntry = 0x08, kParFlags = 0x18, kParSize = 0x40;
+    constexpr uint32_t kFlLockBits = 3, kFlReequipBits = 0xC, kFlThisHand = 0x100;
+    using FnPush = void (*)(void*, int, uint8_t*);
+    FnPush g_RealPush = nullptr;
+    std::atomic<bool> g_WantEmpty[2] = {};      // [0] right, [1] left: put away by its holster, so it stays empty
+    std::atomic<unsigned long long> g_Dropped{ 0 }, g_Stripped{ 0 }, g_Allowed{ 0 };
+    // a holster's own draw into that hand was posted until then (QPC s): its equip change is the player's. (Not told by
+    // THIS_HAND_ONLY: the game may send that too.)
+    std::atomic<double> g_OwnDrawUntil[2] = {};
+    // The player's state machine (the first argument of kPushState for a hand state). Its state table at +0x90
+    // (state i at +0x10 + 8 i), the hand's arkPlayerStateEquipChange (vtable exe+0x1C79CF8) with its lock count at +0x158
+    // (LOCK adds one, UNLOCK takes it back: exe+0x8363F0) -- a hand the game has emptied for a while (a stun, a climb, a
+    // carried body) is locked; one that is just empty is not.
+    std::atomic<void*> g_Machine{ nullptr };
+    constexpr uint32_t kMachineStates = 0x90, kEquipChangeVtable = 0x1C79CF8, kStateLocks = 0x158;
+    bool SafeRead(void* dst, const void* src, size_t n);
+    //! The hand's lock count, -1 = not known
+    int LockCount(int h)
+    {
+        const uint8_t* m = (const uint8_t*)g_Machine.load();
+        const uint8_t* tbl = nullptr; const uint8_t* st = nullptr; uintptr_t vt = 0; int32_t n = -1;
+        if (!m || !SafeRead(&tbl, m + kMachineStates, 8) || !tbl) return -1;
+        if (!SafeRead(&st, tbl + 0x10 + 8 * (h ? kStateEquipLeft : kStateEquipRight), 8) || !st) return -1;
+        if (!SafeRead(&vt, st, 8) || vt != GameInfo::Base() + kEquipChangeVtable || !SafeRead(&n, st + kStateLocks, 4)) return -1;
+        return n;
+    }
+    // A hand found empty while the player plays and the game holds no lock on it (loaded so from a save, say): kept
+    // empty too after kEmptyKeep s, as if its holster had emptied it. The player entity changing (a load) starts over.
+    constexpr double kEmptyKeep = 1.5;
+    double g_EmptySince[2] = { -1, -1 };
+    void* g_LastPlayer = nullptr;
 
     std::atomic<bool> g_On{ true };
     std::atomic<int> g_Req{ -1 };
@@ -174,6 +225,65 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
+
+    //! The hand-change filter (see kPushState). 0 = queue the params as they are, 1 = with `copy` instead, 2 = drop it;
+    //! 3 = as they are, and the hand is no longer kept empty (the player's own choice).
+    int FilterEquip(int state, const uint8_t* par, uint8_t* copy, const uint8_t** entryOut, uint32_t* flagsOut)
+    {
+        if (!g_On.load() || (state != kStateEquipRight && state != kStateEquipLeft) || !par) return 0;
+        const int h = state == kStateEquipLeft ? 1 : 0;
+        const uint8_t* entry = nullptr; uint32_t flags = 0;
+        if (!SafeRead(&entry, par + kParEntry, 8) || !SafeRead(&flags, par + kParFlags, 4)) return 0;
+        *entryOut = entry; *flagsOut = flags;
+        if (!g_WantEmpty[h].load()) return 0;
+        const bool own = Now() < g_OwnDrawUntil[h].load();
+        if (entry && (own || (h == 1 && !(flags & kFlLockBits))))
+        {   // the player's own choice for this hand (a holster's draw; the left's: the wheel, a quick slot): no longer kept empty
+            g_WantEmpty[h] = false; g_Allowed++;
+            return 3;
+        }
+        if (!entry && !(flags & kFlReequipBits)) return 0;     // not a re-equip (an unequip, a lock): as it is
+        if (!(flags & kFlLockBits)) { g_Dropped++; return 2; }   // a re-equip / the game's own equip and nothing else
+        // a LOCK / UNLOCK with a re-equip in it (a stun's, a climb's): the lock count as ever, without the re-equip
+        if (!SafeRead(copy, par, kParSize)) return 0;
+        *(uint64_t*)(copy + kParEntry) = 0; *(uint64_t*)(copy + kParEntry + 8) = 0;
+        *(uint32_t*)(copy + kParFlags) = flags & ~kFlReequipBits;
+        g_Stripped++;
+        return 1;
+    }
+    void PushHook(void* machine, int state, uint8_t* par)
+    {
+        alignas(16) uint8_t copy[kParSize];
+        const uint8_t* entry = nullptr; uint32_t flags = 0;
+        if (state == kStateEquipRight || state == kStateEquipLeft) g_Machine = machine;
+        const int f = FilterEquip(state, par, copy, &entry, &flags);
+        if (g_On.load() && (state == kStateEquipRight || state == kStateEquipLeft))
+        {   // every hand change, for the log (the first 400): which way the game came to put something in a hand
+            static std::atomic<int> logged{ 0 };
+            if (logged++ < 400)
+            {
+                const int h = state == kStateEquipLeft ? 1 : 0;
+                const void* decl = nullptr; if (entry) SafeRead(&decl, entry + kEntryDecl, 8);
+                LOGI("Holster: {} hand change: {} flags 0x{:X} from exe+0x{:X}{}: {}", h ? "left" : "right", entry ? DeclName(decl) : std::string("(no item)"), flags,
+                     (uintptr_t)_ReturnAddress() - GameInfo::Base(), Now() < g_OwnDrawUntil[h].load() ? " (a holster's draw)" : "",
+                     f == 2 ? "DROPPED (the hand is kept empty)" : f == 1 ? "kept for its lock / unlock, WITHOUT the re-equip (the hand is kept empty)"
+                     : f == 3 ? "let through: the player's choice, the hand is no longer kept empty" : g_WantEmpty[h].load() ? "let through" : "let through (the hand is not kept empty)");
+            }
+        }
+        if (f == 2) return;
+        if (f == 1) par = copy;
+        g_RealPush(machine, state, par);
+    }
+}
+
+void Holster::Install()
+{
+    if (g_RealPush) return;
+    g_RealPush = (FnPush)(GameInfo::Base() + kPushState);
+    DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)g_RealPush, PushHook);
+    const LONG r = DetourTransactionCommit();
+    LOGI("Holster: the hands' equip changes (exe+0x{:X}): a hand put away stays empty until something is put in it: detour={}", kPushState, r);
 }
 
 void Holster::SetEnabled(bool on)
@@ -207,6 +317,38 @@ void Holster::Tick()
     if (!owns[kMagic] && g_LastDecl[kMagic] && Quantity(inv, g_LastDecl[kMagic]) > 0) owns[kMagic] = true;
     owns[kSword] = s.sword != nullptr;
     for (int k = 0; k < kKinds; k++) { g_Owns[k] = owns[k]; g_InHand[k] = InHandNow(s, k); }
+    if (player != g_LastPlayer)
+    {   // a new player (a load, a new map): what the hands hold comes from the save; found again below
+        if (g_LastPlayer && (g_WantEmpty[0].load() || g_WantEmpty[1].load())) LOGI("Holster: a new player entity (a load): the hands are no longer kept empty, until found so again");
+        g_LastPlayer = player; g_WantEmpty[0] = false; g_WantEmpty[1] = false; g_EmptySince[0] = g_EmptySince[1] = -1;
+    }
+    // a hand that has been empty a while, outside any lock of the game's, while the player plays: kept empty
+    {
+        const bool playing = PlayerState::Running("Running") && !PlayerState::Running("EquipChange") && !PlayerState::Cinematic()
+                          && !PlayerState::Running("Dead") && g_Pending.kind < 0
+                          && !GrabHand::HeldEntity();   // an object held: the game has put the hand's weapon aside for it
+        for (int h = 0; h < 2; h++)
+        {
+            const bool empty = !(h ? s.left : s.right);
+            const int locks = empty && playing && !g_WantEmpty[h].load() ? LockCount(h) : -1;
+            if (locks != 0) { g_EmptySince[h] = -1; continue; }
+            if (g_EmptySince[h] < 0) g_EmptySince[h] = now;
+            else if (now - g_EmptySince[h] >= kEmptyKeep)
+            {
+                g_WantEmpty[h] = true; g_EmptySince[h] = -1;
+                LOGI("Holster: the {} hand has been empty for {:.1f} s with no lock of the game's on it: kept empty, as if put away (the game's re-equips into it are held back)",
+                     h ? "left" : "right", kEmptyKeep);
+            }
+        }
+    }
+    // a hand kept empty that holds something again (the player's choice, or a way the game found round): no longer kept
+    for (int h = 0; h < 2; h++)
+        if (const uint8_t* e = h ? s.left : s.right; g_WantEmpty[h].load() && e)
+        {
+            g_WantEmpty[h] = false;
+            const void* d = nullptr; SafeRead(&d, e + kEntryDecl, 8);
+            LOGI("Holster: the {} hand holds {} again: no longer kept empty", h ? "left" : "right", DeclName(d));
+        }
     uint32_t pid = 0; SafeRead(&pid, (uint8_t*)player + kEntId, 4);
 
     if (g_Pending.kind >= 0)
@@ -216,6 +358,13 @@ void Holster::Tick()
         if (in == g_Pending.draw)
         {
             g_Done++;
+            const int h = LeftHand(k) ? 1 : 0;
+            if (g_WantEmpty[h].load() != !g_Pending.draw)
+            {
+                g_WantEmpty[h] = !g_Pending.draw;
+                if (!g_Pending.draw) LOGI("Holster: the {} hand stays empty now: the game's re-equips into it are held back until something is put in it",
+                                          h ? "left" : "right");
+            }
             LOGI("Holster: {} {} ({:.2f} s{})", KindName(k), g_Pending.draw ? "drawn" : "put away", now - g_Pending.at,
                  g_Pending.draw ? "" : fmt::format(", m_slot {}", g_Pending.slot));
             g_Pending = Pending{};
@@ -246,6 +395,7 @@ void Holster::Tick()
     {
         if (!s.sword) { g_Missing++; LOGI("Holster: no sword in the inventory: nothing drawn"); return; }
         const void* decl = nullptr; SafeRead(&decl, s.sword + kEntryDecl, 8);
+        g_OwnDrawUntil[0] = now + 1.5;
         if (!decl || !PostEquip(pid, decl, kEquipThisHand)) { LOGI("Holster: the equip message for the sword could not be posted"); return; }
         g_Posts++; g_LastPost = now;
         g_Pending = Pending{ req, true, now, decl, -1 };
@@ -266,6 +416,7 @@ void Holster::Tick()
     if (!pick) for (const Entry& x : s.w) if (x.kind == req && x.count > 0) { pick = x.decl; break; }
     if (!pick && req != kMagic) for (const Entry& x : s.w) if (x.kind == req) { pick = x.decl; break; }
     if (!pick) { g_Missing++; LOGI("Holster: no {} in the inventory: nothing drawn", KindName(req)); return; }
+    g_OwnDrawUntil[1] = now + 1.5;
     if (!PostEquip(pid, pick, kEquipThisHand)) { LOGI("Holster: the equip message for the {} could not be posted", KindName(req)); return; }
     g_Posts++; g_LastPost = now;
     g_Pending = Pending{ req, true, now, pick, -1 };
@@ -275,9 +426,10 @@ void Holster::Tick()
 
 std::string Holster::Stats()
 {
-    return fmt::format("on {} owns pistol {} crossbow {} power {} sword {} left {} right {} requests {} posted {} done {} notdone {} missing {}",
+    return fmt::format("on {} owns pistol {} crossbow {} power {} sword {} left {} right {} requests {} posted {} done {} notdone {} missing {} | kept empty right {} left {} dropped {} stripped {} allowed {}",
                        (int)g_On.load(), (int)g_Owns[0].load(), (int)g_Owns[1].load(), (int)g_Owns[2].load(), (int)g_Owns[3].load(),
                        g_InHand[0].load() ? "pistol" : g_InHand[1].load() ? "crossbow" : g_InHand[2].load() ? "power" : "other",
                        g_InHand[3].load() ? "sword" : "other",
-                       g_Requests.load(), g_Posts.load(), g_Done.load(), g_NotDone.load(), g_Missing.load());
+                       g_Requests.load(), g_Posts.load(), g_Done.load(), g_NotDone.load(), g_Missing.load(),
+                       (int)g_WantEmpty[0].load(), (int)g_WantEmpty[1].load(), g_Dropped.load(), g_Stripped.load(), g_Allowed.load());
 }

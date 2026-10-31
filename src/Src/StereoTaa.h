@@ -28,8 +28,6 @@ namespace StereoTaa
         ID3D11ShaderResourceView* savedSrv = nullptr;  // the engine's history view, restored after the dispatch
         ID3D11Resource* out = nullptr;                 // the engine's history write target (AddRef'd)
         ID3D11Texture2D* keep = nullptr;               // this eye's history, copied from `out` after the dispatch
-        int fogSlot = -1;                              // Fog: the scene colour slot swapped for the fogged copy...
-        ID3D11ShaderResourceView* fogSaved = nullptr;  // ...and the engine's view, put back after the dispatch
     };
     //! From GpuTrace's context hooks, around the real call. `kind` 0 = immediate, 1 = deferred context.
     void OnDraw(ID3D11DeviceContext* c, int kind, int type, unsigned count, Pass& p);

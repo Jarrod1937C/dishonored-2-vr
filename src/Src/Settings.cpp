@@ -81,6 +81,11 @@ namespace
         { "display.cheapfogend",        Kind::Float,  "300", 1, 20000, nullptr },// m where it is at full opacity
         { "display.cheapfogopacity",    Kind::Float,  "0.6", 0, 1, nullptr },    // its strength at the far end
         { "display.cheapfogcolor",      Kind::Text,   "sky", 0, 0, nullptr },    // "sky" or R,G,B (0-255)
+        { "display.cheapfogbrightness", Kind::Float,  "1", 0, 100, nullptr },    // the fixed colour's multiplier (HDR)
+        { "display.cheapfogskyheight",  Kind::Float,  "12", 0, 90, nullptr },    // deg above the horizon where the sky's fog ends (0: none)
+        { "display.foveatedrendering",  Kind::Bool,   "0", 0, 0, nullptr },      // Foveation: NVIDIA VRS, coarser shading away from the lens centre
+        { "display.foveatedinner",      Kind::Float,  "35", 5, 80, nullptr },    // deg from the centre at full shading
+        { "display.foveatedouter",      Kind::Float,  "50", 5, 89, nullptr },    // deg to which 2x2 shading reaches (4x4 beyond)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -102,6 +107,7 @@ namespace
         { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr },
         { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr },
         { "advanced.profilerenderpasses", Kind::Bool, "0", 0, 0, nullptr },   // PassProfile: GPU ms per render pass, to the log
+        { "advanced.skipdisabledeffects", Kind::Float, "0", 0, 2, nullptr },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
@@ -297,12 +303,21 @@ bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
 bool Settings::ProfileRenderPasses() { return B("advanced.profilerenderpasses"); }
+int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdisabledeffects")); }
+Foveation::Params Settings::Foveated()
+{
+    Foveation::Params p;
+    p.on = B("display.foveatedrendering");
+    p.innerDeg = F("display.foveatedinner"); p.outerDeg = std::max(p.innerDeg, F("display.foveatedouter"));
+    return p;
+}
 std::string Settings::FogMaps() { return V("display.fogmaps"); }
 Fog::Params Settings::CheapFog()
 {
     Fog::Params p;
     p.on = B("display.cheapfog");
     p.start = F("display.cheapfogstart"); p.end = std::max(p.start + 1.f, F("display.cheapfogend")); p.opacity = F("display.cheapfogopacity");
+    p.skyHeight = F("display.cheapfogskyheight"); p.brightness = F("display.cheapfogbrightness");
     const std::string& c = V("display.cheapfogcolor");
     int r = 0, g = 0, b = 0;
     if (c != "sky" && sscanf_s(c.c_str(), "%d , %d , %d", &r, &g, &b) == 3)

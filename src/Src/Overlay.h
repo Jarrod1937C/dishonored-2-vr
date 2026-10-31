@@ -10,6 +10,10 @@ namespace Overlay
     void OnResize(IDXGISwapChain* sc);    //!< release RTV before ResizeBuffers
     void Shutdown();
     bool Visible();
+    //! The overlay draws into an sRGB view of the backbuffer (the game's is R8G8B8A8_UNORM_SRGB): ImGui's colours are
+    //! then taken as linear light and come out lighter. A colour meant as seen goes through Seen() first.
+    bool SrgbTarget();
+    unsigned Seen(int r, int g, int b, int a = 255);   //!< an IM_COL32 that shows as (r, g, b) on the overlay's target
     HWND Window();                        //!< the game's window (the swapchain's), null before the first Present
     //! The game window's CLIENT size in physical pixels (= the backbuffer the game renders to). A Quest eye is taller
     //! than it is wide and the render now covers its whole fov (vr fov auto), but Windows caps a window at the desktop,

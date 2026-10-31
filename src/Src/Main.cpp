@@ -14,6 +14,7 @@
 #include "VrTweaks.h"
 #include "PassProfile.h"
 #include "Fog.h"
+#include "Foveation.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
 #include "Commands.h"
@@ -75,6 +76,7 @@ static void OnPresent(IDXGISwapChain* sc)
     BodyView::OnPresent();        // vr fov auto: applied as soon as the headset gives its fov
     RenderRes::OnPresent(sc);
     PassProfile::OnPresent(sc);   // [Advanced] ProfileRenderPasses: GPU ms per render pass
+    Fog::OnPresent(sc);           // [Display] CheapFog: its colour and the frame's distances, to the log every 10 s
     Reticle::Tick();              // the game's crosshair off while the hand reticles are on
     VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
     PassProfile::BeginSection(2);
@@ -158,6 +160,8 @@ static DWORD WINAPI InitThread(LPVOID)
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
+    PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
+    Foveation::SetParams(Settings::Foveated());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects
@@ -200,6 +204,7 @@ static DWORD WINAPI InitThread(LPVOID)
     WeaponPose::Install();
     HandFx::Install();               // effects anchored to an arm joint come out of the hand as it is drawn
     GrabHand::Install();             // a held object's throw leaves with the left hand's velocity
+    Holster::Install();              // a hand put away stays empty: the game's pairing of the hands' equips is held back
     BinkVideo::Install();            // the pre-rendered videos: A / X held skips them as in a cutscene
     // The probe goes LAST: it only feeds the overlay, and xrCreateInstance can block for seconds (measured 6.1 s with
     // Meta's runtime on a game launched from Air Link). Run first, the game kept booting meanwhile and created its

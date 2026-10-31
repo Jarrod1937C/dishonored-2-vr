@@ -22,6 +22,7 @@ namespace
     ID3D11DeviceContext* g_Ctx = nullptr;
     ID3D11RenderTargetView* g_RTV = nullptr;
     UINT g_W = 0, g_H = 0;
+    std::atomic<bool> g_Srgb{ false };
     double g_Fps = 0; LARGE_INTEGER g_LastT{}; int g_FrameCount = 0;
 
     // vr window: the window may be larger than the desktop (see Overlay::SetWindowClient)
@@ -69,6 +70,7 @@ namespace
                     d.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS ? DXGI_FORMAT_B8G8R8A8_UNORM : d.Format;
         rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
         HRESULT hr = g_Device->CreateRenderTargetView(bb, &rd, &g_RTV);
+        g_Srgb = rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         bb->Release();
         if (FAILED(hr)) LOGI("Overlay: CreateRTV failed 0x{:08X} fmt={}", (unsigned)hr, (int)d.Format);
         else LOGI("Overlay: backbuffer {}x{} fmt={}", g_W, g_H, (int)d.Format);
@@ -201,6 +203,18 @@ void Overlay::OnPresent(IDXGISwapChain* sc)
     ImGui::Render();
     g_Ctx->OMSetRenderTargets(1, &g_RTV, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+bool Overlay::SrgbTarget() { return g_Srgb.load(); }
+unsigned Overlay::Seen(int r, int g, int b, int a)
+{
+    if (!g_Srgb.load()) return IM_COL32(r, g, b, a);
+    auto lin = [](int v)
+    {   // sRGB-encoded 0-255 to the linear value the sRGB view encodes back to it
+        const float x = std::clamp(v, 0, 255) / 255.f;
+        return (int)std::lround(255.f * (x <= 0.04045f ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f)));
+    };
+    return IM_COL32(lin(r), lin(g), lin(b), a);
 }
 
 void Overlay::OnResize(IDXGISwapChain*)

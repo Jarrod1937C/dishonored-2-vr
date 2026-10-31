@@ -708,6 +708,16 @@ Player aim component (vtable exe+0x1C52BF8): `m_currentAimLocalDir` +0x20, `m_cu
   its model origin. Upgrades (scope, drum, ...) are separate entities at the weapon's origin, and models bound to a
   weapon joint (the pistol's cartridge) also sit near it. No parent link to the weapon was found within 0x600 bytes.
 - A **power's** equipment entity is NOT a hand socket: it sits on the forearm, ~0.36 m from the shoulder root.
+- **Equip changes** (2026-10-31): every hand change is a player state queued by exe+0x8024D0(machine, state, params):
+  state 0x35 = the right hand's equip change, 0x40 = the left's (arkPlayerStateEquipChange, vtable exe+0x1C79CF8;
+  slot 18 exe+0x836F00 takes the params). Params (exe+0x835590 builds them, type 0x5C): +0x08 the inventory entry (0 =
+  none / what the hand had), +0x18 flags (arkEquipChangeFlags_t: 1 LOCK, 2 UNLOCK, 4 REEQUIP, 8 REEQUIP_BOTH_HANDS,
+  0x10 INSTANT_EQUIP, 0x20 INSTANT_UNEQUIP, 0x40 FAST_EQUIP, 0x80 FAST_UNEQUIP, 0x100 THIS_HAND_ONLY), +0x1C the source
+  (0x5B). The message handlers: 0x9D equip exe+0x7F8D60 (its flags byte: 1 only into an empty hand, 2 instant -> 0x10,
+  4 -> 0x100), 0x9E unequip exe+0x7F9140 (flags 0, no entry). The state's handling, exe+0x8363F0: an item put in a hand
+  WITHOUT 0x100 queues the other hand's REEQUIP (no entry, flags 4, at exe+0x8366C6); a right-hand REEQUIP with no
+  item remembered for it (the player's equip memory at machine+0x2F8, exe+0x7F88B0) equips the player decl's default
+  weapon, +0x88 = the sword (exe+0x8365EC). That is how the game keeps the sword in the right hand.
 
 ### 6.5 Render models
 `arkSkinnedRenderModel` (vtable exe+0x1B0D628): local bounds via vtable +0x80; world AABB +0x1840/+0x1850; **world

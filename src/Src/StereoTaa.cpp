@@ -7,7 +7,6 @@
 #include "CVars.h"
 #include "ScreenMode.h"
 #include "ViewMatrixHook.h"
-#include "Fog.h"
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
 #include <map>
@@ -79,7 +78,7 @@ namespace
     // Found 2026-10-14 by diffing every pass of a frame with r_skipTemporalAA 0 and 1: one 16x16 compute shader reading
     // ro_taahistory_read, ro_motionvectors and ro_viewcolormap and writing rw_taahistory_write and rw_taaresult. The
     // names, not the hash, identify it, so a variant of the shader (another quality setting) is recognised too.
-    struct TaaCs { int histSrv = -1, histUav = -1, mvSrv = -1, viewCb = -1, viewMatOff = -1, colorSrv = -1, projOff = -1; };
+    struct TaaCs { int histSrv = -1, histUav = -1, mvSrv = -1, viewCb = -1, viewMatOff = -1; };
     std::mutex g_CsM;
     std::map<void*, TaaCs> g_TaaCs;
     std::atomic<unsigned> g_TaaShaders{ 0 };
@@ -510,7 +509,6 @@ void StereoTaa::OnComputeShader(ID3D11ComputeShader* cs, const void* code, size_
             else if (!strcmp(b.Name, "rw_taahistory_write")) t.histUav = (int)b.BindPoint;
             else if (!strcmp(b.Name, "ro_motionvectors")) t.mvSrv = (int)b.BindPoint;
             else if (!strcmp(b.Name, "PerViewCB")) t.viewCb = (int)b.BindPoint;
-            else if (!strcmp(b.Name, "ro_viewcolormap")) t.colorSrv = (int)b.BindPoint;   // the lit scene it anti-aliases (Fog)
         }
     if (t.histSrv >= 0 && t.histUav >= 0 && t.viewCb >= 0)
         if (ID3D11ShaderReflectionConstantBuffer* cb = r->GetConstantBufferByName("PerViewCB"))
@@ -531,7 +529,6 @@ void StereoTaa::OnComputeShader(ID3D11ComputeShader* cs, const void* code, size_
                 LOGI("StereoTaa: PerViewCB ({} bytes, {} variables):{}", bd.Size, bd.Variables, s);
             }
             if (ID3D11ShaderReflectionVariable* v = cb->GetVariableByName("cb_viewprojectionmatrix")) if (SUCCEEDED(v->GetDesc(&vd))) g_VPOff = (int)vd.StartOffset;
-            if (ID3D11ShaderReflectionVariable* v = cb->GetVariableByName("cb_projectionmatrix")) if (SUCCEEDED(v->GetDesc(&vd))) t.projOff = (int)vd.StartOffset;
             if (ID3D11ShaderReflectionVariable* v = cb->GetVariableByName("cb_previousviewprojectionmatrix")) if (SUCCEEDED(v->GetDesc(&vd))) g_PrevVPOff = (int)vd.StartOffset;
         }
     r->Release();
@@ -539,8 +536,8 @@ void StereoTaa::OnComputeShader(ID3D11ComputeShader* cs, const void* code, size_
     g_ViewMatOff = t.viewMatOff;
     { std::lock_guard lk(g_CsM); g_TaaCs[cs] = t; }
     g_TaaShaders++;
-    LOGI("StereoTaa: TAA compute shader {} ({:016x}): history t{} -> u{}, motion vectors t{}, PerViewCB b{} (view matrix at +{}), scene colour t{}, projection at +{}",
-         (void*)cs, GpuTrace::ShaderHashOf(cs), t.histSrv, t.histUav, t.mvSrv, t.viewCb, t.viewMatOff, t.colorSrv, t.projOff);
+    LOGI("StereoTaa: TAA compute shader {} ({:016x}): history t{} -> u{}, motion vectors t{}, PerViewCB b{} (view matrix at +{})",
+         (void*)cs, GpuTrace::ShaderHashOf(cs), t.histSrv, t.histUav, t.mvSrv, t.viewCb, t.viewMatOff);
 }
 
 void StereoTaa::OnMainView(void* view, int eye, const float vm[16])
@@ -1031,8 +1028,6 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
     if (cs) cs->Release();
     if (!taa) return;
     g_Dispatches++;
-    if (t.colorSrv >= 0)
-        if (ID3D11ShaderResourceView* saved = Fog::BeforeTaa(c, t.colorSrv, t.viewCb, t.projOff)) { p.fogSlot = t.colorSrv; p.fogSaved = saved; }
     {   // which main view this TAA pass belongs to: the last one recorded before a Present is the image being presented
         // (VRRuntime checks its frame-order rule against it). A still camera repeats a matrix: the newest match is taken.
         ID3D11Buffer* cb = nullptr; c->CSGetConstantBuffers(t.viewCb, 1, &cb);
@@ -1118,12 +1113,6 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
 
 void StereoTaa::AfterPass(ID3D11DeviceContext* c, int kind, Pass& p)
 {
-    if (p.fogSlot >= 0)
-    {   // the engine's scene view back in its slot (Fog handed the TAA the fogged copy for this dispatch)
-        c->CSSetShaderResources(p.fogSlot, 1, &p.fogSaved);
-        if (p.fogSaved) p.fogSaved->Release();
-        p.fogSlot = -1; p.fogSaved = nullptr;
-    }
     if (p.what != 1) return;
     if (p.srvSlot >= 0) { c->CSSetShaderResources(p.srvSlot, 1, &p.savedSrv); if (p.savedSrv) p.savedSrv->Release(); }
     if (p.keep && p.out) c->CopyResource(p.keep, p.out);   // what this eye's TAA wrote is its history next time

@@ -5,6 +5,9 @@
 #include "ViewMatrixHook.h"
 #include "StereoSync.h"
 #include "CVars.h"
+#include "Fog.h"
+#include "Foveation.h"
+#include "VrTweaks.h"
 #include <d3d11.h>
 #include <dxgi1_4.h>
 #include <detours/detours.h>
@@ -47,7 +50,41 @@ namespace
     enum Kind { kLeft, kRight, kOtherView, kNoView, kKinds };
     const char* kKindName[kKinds] = { "L", "R", "other", "noview" };
 
-    std::atomic<bool> g_On{ false };
+    std::atomic<bool> g_On{ false };              // profiling
+    std::atomic<bool> g_FogHook{ false };         // Fog's anchors (FORWARD_DYNAMIC end, ALPHA_LIT start) need the hook too
+    int g_RowOpaque = -1, g_RowTransparent = -1;  // FORWARD_DYNAMIC, ALPHA_LIT
+    std::atomic<bool> g_FovHook{ false };         // Foveation: the scene passes, at the eye's resolution
+    bool g_FovRow[64] = {};
+    // [Advanced] SkipDisabledEffects (experimental): with the view's own "no SSAO" / "no DOF" flags set (VrTweaks), the
+    // game's SSAO pass still fills its targets with a neutral value (two full-screen draws, exe+0x305C06..: 0.1 ms per
+    // eye measured) and the DOF pass still makes its half-resolution copy (exe+0x31562F, before its flag test: 0.07 ms).
+    // DOF (SkipDisabledEffects = 2) is skipped like a disabled task once it has run for a while in the map; that broke the
+    // ocean, electricity and faces (its half-size copy is read elsewhere: 2026-10-31). SSAO (= 1) is not skipped but
+    // REPLACED: skipped outright, its targets kept what they last held and later passes drawing into them (what looked
+    // like a fixed shading mask in the view, 2026-10-31) were never reset. So per eye, near the end of the warm-up, the
+    // targets its draws bind are noted and five pixels of each read back after it twice: when every one holds the same
+    // value both times (a constant fill), from then on the task only clears those targets to that value (a clear costs
+    // next to nothing). Anything else -- not constant, a format not read here -- and the pass keeps running as ever.
+    // Every 2000 runs it runs once more to check it still binds the same targets (else learned again).
+    std::atomic<bool> g_SkipEffects{ false };
+    std::atomic<bool> g_SkipDof{ false };   // SkipDisabledEffects = 2: DOF's too (its half-res copy of the scene may be read elsewhere)
+    int g_RowSsao = -1, g_RowDof = -1;
+    std::mutex g_EffM; std::string g_EffMap; unsigned long long g_EffRuns[2] = {}, g_EffSkipped[2] = {};
+    constexpr int kFillMax = 4, kFillPix = 5;
+    struct FillTarget { ID3D11Texture2D* tex = nullptr; ID3D11RenderTargetView* rtv = nullptr; DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN; UINT w = 0, h = 0;
+                        ID3D11Texture2D* stage[2] = {}; float value[4] = {}; };
+    struct Fill
+    {
+        int state = 0;          // 0 learning, 1 read-backs recorded (waiting), 2 learned: cleared, 3 not a constant fill: run
+        unsigned long long runs = 0, recordedAt = 0, clears = 0; int samples = 0; uintptr_t ret = 1;
+        FillTarget t[kFillMax]; int n = 0;
+    };
+    Fill g_Fill[2];            // per eye; under g_EffM
+    std::atomic<unsigned long long> g_FillPresent{ 0 };
+    // the targets bound by the draws of the SSAO task running on this thread (while one is being learned)
+    struct Caps { ID3D11DeviceContext* c = nullptr; bool on = false; ID3D11Texture2D* tex[kFillMax] = {}; DXGI_FORMAT fmt[kFillMax] = {}; int n = 0; bool over = false, odd = false; };
+    thread_local Caps t_Caps;
+    constexpr unsigned long long kEffWarmup = 240;
     uintptr_t g_Base = 0;
     using ExecFn = uintptr_t (*)(void* task);
     ExecFn g_Exec = nullptr, g_ExecImm = nullptr;          // exe+0x2C5D50, exe+0x2C5F60
@@ -194,21 +231,282 @@ namespace
         if (uav) { ID3D11Resource* res = nullptr; uav->GetResource(&res); r.uavW = TexSize(res, &r.uavH, nullptr, nullptr, nullptr); if (res) res->Release(); uav->Release(); }
         r.rtSampled = true;
     }
+    void ClearEmpty(void* task)
+    {   // the pass marked its context empty (nothing of its own to draw): the fog drawn in it must still be executed
+        __try { uint8_t* w = *(uint8_t**)((uint8_t*)task + 0x108); if (w) w[0x12AD4] = 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    //! one byte, SEH-guarded (out of functions with destructors: C2712); returned + 1 as a pointer-sized value, 0 = unreadable
+    const void* ReadByteAt(const uint8_t* p)
+    {
+        __try { return (const void*)(uintptr_t)(p[0] + 1u); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    //! SkipDisabledEffects, what to do with this SSAO / DOF task (see g_SkipEffects)
+    enum { kEffRun, kEffSkip, kEffSample, kEffCheck, kEffClear };
+    void FillReset(Fill& F)
+    {
+        for (FillTarget& t : F.t) { if (t.rtv) t.rtv->Release(); if (t.tex) t.tex->Release(); for (auto*& st : t.stage) if (st) { st->Release(); st = nullptr; } t = FillTarget{}; }
+        const unsigned long long runs = F.runs; F = Fill{}; F.runs = runs;
+    }
+    int SkipEffect(void* task, int row, int eye)
+    {
+        if (!g_SkipEffects.load(std::memory_order_relaxed) || (row != g_RowSsao && (row != g_RowDof || !g_SkipDof.load(std::memory_order_relaxed)))) return kEffRun;
+        const uint8_t* view = (const uint8_t*)ReadPtr((uint8_t*)task + 0x70);
+        if ((uintptr_t)view < 0x10000 || !CameraHook::IsMainViewObject(view)) return kEffRun;
+        const uint8_t* fp = (const uint8_t*)ReadByteAt(view + 0x3A37);
+        if (!fp) return kEffRun;
+        const uint8_t flags = (uint8_t)(uintptr_t)fp - 1;
+        const int k = row == g_RowSsao ? 0 : 1;
+        const bool off = (flags & (k == 0 ? 0x02 : 0x01)) != 0;
+        std::lock_guard lk(g_EffM);
+        const std::string map = VrTweaks::MapName();
+        if (map != g_EffMap) { g_EffMap = map; g_EffRuns[0] = g_EffRuns[1] = 0; for (Fill& F : g_Fill) { FillReset(F); F.runs = 0; } }
+        if (!off) { g_EffRuns[k] = 0; if (k == 0 && eye >= 0 && eye < 2 && g_Fill[eye].runs) { FillReset(g_Fill[eye]); g_Fill[eye].runs = 0; } return kEffRun; }
+        if (k == 1)
+        {
+            if (++g_EffRuns[k] <= kEffWarmup) return kEffRun;
+            if (g_EffSkipped[k]++ == 0) LOGI("PassProfile: SkipDisabledEffects: the DOF pass's neutral work (its effect is off) is skipped from now on");
+            return kEffSkip;
+        }
+        if (eye < 0 || eye > 1) return kEffRun;
+        Fill& F = g_Fill[eye];
+        const unsigned long long r = ++F.runs;
+        switch (F.state)
+        {
+        case 0: return r == kEffWarmup - 30 || r == kEffWarmup - 10 ? kEffSample : kEffRun;
+        case 2: if (r % 2000 == 0) return kEffCheck; F.clears++; return kEffClear;
+        default: return kEffRun;
+        }
+    }
+    void CaptureTargets()
+    {   // GpuTrace's draw hook, in a task being learned: what its draws bind
+        Caps& C = t_Caps;
+        ID3D11RenderTargetView* rtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+        C.c->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, nullptr);
+        for (ID3D11RenderTargetView* v : rtv)
+        {
+            if (!v) continue;
+            D3D11_RENDER_TARGET_VIEW_DESC d{}; v->GetDesc(&d);
+            ID3D11Resource* res = nullptr; v->GetResource(&res);
+            D3D11_RESOURCE_DIMENSION dim{}; if (res) res->GetType(&dim);
+            if (d.ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2D || d.Texture2D.MipSlice != 0 || dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) C.odd = true;
+            else
+            {
+                ID3D11Texture2D* tex = static_cast<ID3D11Texture2D*>(res);
+                bool have = false; for (int i = 0; i < C.n; i++) have |= C.tex[i] == tex;
+                if (!have) { if (C.n < kFillMax) { C.tex[C.n] = tex; C.fmt[C.n] = d.Format; C.n++; } else C.over = true; }
+            }
+            if (res) res->Release();
+            v->Release();
+        }
+    }
+    //! The values a constant fill left, as clear colours; false for a format not read here
+    float Half(uint16_t h)
+    {
+        const uint32_t sgn = (h >> 15) & 1, e = (h >> 10) & 31, m = h & 1023;
+        float v = e == 0 ? ldexpf((float)m, -24) : e == 31 ? (m ? NAN : INFINITY) : ldexpf((float)(m | 1024), (int)e - 25);
+        return sgn ? -v : v;
+    }
+    float Small(uint32_t bits, int mbits)
+    {   // the unsigned 11 / 10-bit floats of R11G11B10 (5-bit exponent)
+        const uint32_t e = bits >> mbits, m = bits & ((1u << mbits) - 1);
+        return e == 0 ? ldexpf((float)m, -14 - mbits) : e == 31 ? INFINITY : ldexpf((float)(m | (1u << mbits)), (int)e - 15 - mbits);
+    }
+    int PixelBytes(DXGI_FORMAT f)
+    {
+        switch (f)
+        {
+        case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_R10G10B10A2_UNORM:
+        case DXGI_FORMAT_R11G11B10_FLOAT: case DXGI_FORMAT_R16G16_FLOAT: case DXGI_FORMAT_R32_FLOAT: return 4;
+        case DXGI_FORMAT_R8_UNORM: return 1;
+        case DXGI_FORMAT_R8G8_UNORM: case DXGI_FORMAT_R16_FLOAT: return 2;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT: case DXGI_FORMAT_R32G32_FLOAT: return 8;
+        case DXGI_FORMAT_R32G32B32A32_FLOAT: return 16;
+        default: return 0;
+        }
+    }
+    void Decode(DXGI_FORMAT f, const uint8_t* p, float o[4])
+    {
+        o[0] = o[1] = o[2] = 0; o[3] = 1;
+        auto lin = [](float x) { return x <= 0.04045f ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f); };
+        uint32_t u = 0; memcpy(&u, p, std::min(4, PixelBytes(f)));
+        switch (f)
+        {
+        case DXGI_FORMAT_R8G8B8A8_UNORM: for (int i = 0; i < 4; i++) o[i] = p[i] / 255.f; break;
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: for (int i = 0; i < 3; i++) o[i] = lin(p[i] / 255.f); o[3] = p[3] / 255.f; break;
+        case DXGI_FORMAT_B8G8R8A8_UNORM: o[0] = p[2] / 255.f; o[1] = p[1] / 255.f; o[2] = p[0] / 255.f; o[3] = p[3] / 255.f; break;
+        case DXGI_FORMAT_R10G10B10A2_UNORM: o[0] = (u & 1023) / 1023.f; o[1] = ((u >> 10) & 1023) / 1023.f; o[2] = ((u >> 20) & 1023) / 1023.f; o[3] = (u >> 30) / 3.f; break;
+        case DXGI_FORMAT_R11G11B10_FLOAT: o[0] = Small(u & 2047, 6); o[1] = Small((u >> 11) & 2047, 6); o[2] = Small(u >> 22, 5); break;
+        case DXGI_FORMAT_R16G16_FLOAT: o[0] = Half((uint16_t)u); o[1] = Half((uint16_t)(u >> 16)); break;
+        case DXGI_FORMAT_R32_FLOAT: memcpy(o, p, 4); break;
+        case DXGI_FORMAT_R8_UNORM: o[0] = p[0] / 255.f; break;
+        case DXGI_FORMAT_R8G8_UNORM: o[0] = p[0] / 255.f; o[1] = p[1] / 255.f; break;
+        case DXGI_FORMAT_R16_FLOAT: o[0] = Half((uint16_t)u); break;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT: for (int i = 0; i < 4; i++) { uint16_t h; memcpy(&h, p + 2 * i, 2); o[i] = Half(h); } break;
+        case DXGI_FORMAT_R32G32_FLOAT: memcpy(o, p, 8); break;
+        case DXGI_FORMAT_R32G32B32A32_FLOAT: memcpy(o, p, 16); break;
+        default: break;
+        }
+    }
+    //! After a learned SSAO task: the targets its draws bound, and (kEffSample) five pixels of each copied for the
+    //! read-back -- recorded into the task's own command list, so right after its fill
+    void AfterLearn(ID3D11DeviceContext* c, int eye, int what, uintptr_t ret)
+    {
+        Caps C = t_Caps; t_Caps = Caps{};
+        std::lock_guard lk(g_EffM);
+        Fill& F = g_Fill[eye];
+        auto fail = [&](const std::string& why)
+        {
+            LOGI("PassProfile: SkipDisabledEffects: the {} eye's SSAO pass is not a fill that can be replaced ({}): it keeps running", eye ? "right" : "left", why);
+            FillReset(F); F.state = 3;
+        };
+        if (what == kEffCheck)
+        {
+            bool same = C.n == F.n && !C.odd && !C.over;
+            for (int i = 0; same && i < C.n; i++) same = C.tex[i] == F.t[i].tex;
+            if (!same)
+            {
+                LOGI("PassProfile: SkipDisabledEffects: the {} eye's SSAO pass now draws into other targets: learned again", eye ? "right" : "left");
+                FillReset(F); F.runs = kEffWarmup - 40;
+            }
+            return;
+        }
+        if (F.state != 0) return;
+        if (C.odd || C.over) { fail(C.odd ? "a target that is not a whole 2D texture" : "more than four targets"); return; }
+        if (!C.n) { fail("it drew nothing"); return; }
+        if (F.samples == 0)
+        {
+            ID3D11Device* dev = nullptr; c->GetDevice(&dev);
+            if (!dev) return;
+            F.n = C.n; F.ret = ret;
+            for (int i = 0; i < C.n; i++)
+            {
+                FillTarget& t = F.t[i];
+                t.tex = C.tex[i]; t.tex->AddRef(); t.fmt = C.fmt[i];
+                D3D11_TEXTURE2D_DESC td{}; t.tex->GetDesc(&td); t.w = td.Width; t.h = td.Height;
+                if (!PixelBytes(t.fmt)) { dev->Release(); fail(fmt::format("target {} format {} not read here", i, (int)t.fmt)); return; }
+                D3D11_TEXTURE2D_DESC sd{}; sd.Width = kFillPix; sd.Height = 1; sd.MipLevels = 1; sd.ArraySize = 1; sd.Format = t.fmt; sd.SampleDesc.Count = 1;
+                sd.Usage = D3D11_USAGE_STAGING; sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                if (td.SampleDesc.Count > 1 || FAILED(dev->CreateTexture2D(&sd, nullptr, &t.stage[0])) || FAILED(dev->CreateTexture2D(&sd, nullptr, &t.stage[1])))
+                { dev->Release(); fail("staging copy"); return; }
+            }
+            dev->Release();
+        }
+        else
+        {
+            bool same = C.n == F.n;
+            for (int i = 0; same && i < C.n; i++) same = C.tex[i] == F.t[i].tex;
+            if (!same) { fail("its targets changed between two frames"); return; }
+        }
+        const int si = F.samples;
+        for (int i = 0; i < F.n; i++)
+        {
+            const FillTarget& t = F.t[i];
+            const UINT px[kFillPix][2] = { { t.w / 2, t.h / 2 }, { t.w / 4, t.h / 4 }, { 3 * t.w / 4, t.h / 4 }, { t.w / 4, 3 * t.h / 4 }, { 3 * t.w / 4, 3 * t.h / 4 } };
+            for (int p = 0; p < kFillPix; p++)
+            {
+                const D3D11_BOX b{ px[p][0], px[p][1], 0, px[p][0] + 1, px[p][1] + 1, 1 };
+                c->CopySubresourceRegion(t.stage[si], 0, p, 0, 0, t.tex, 0, &b);
+            }
+        }
+        if (++F.samples == 2) { F.state = 1; F.recordedAt = g_FillPresent.load(); }
+    }
+    //! At Present (immediate context): the read-backs recorded a few frames ago
+    void ResolveFill(IDXGISwapChain* sc)
+    {
+        const unsigned long long now = ++g_FillPresent;
+        std::lock_guard lk(g_EffM);
+        for (int eye = 0; eye < 2; eye++)
+        {
+            Fill& F = g_Fill[eye];
+            if (F.state != 1 || now < F.recordedAt + 12) continue;
+            ID3D11Device* dev = nullptr;
+            if (FAILED(sc->GetDevice(__uuidof(ID3D11Device), (void**)&dev)) || !dev) return;
+            ID3D11DeviceContext* imm = nullptr; dev->GetImmediateContext(&imm);
+            bool ok = imm != nullptr, wait = false; std::string vals, why;
+            for (int i = 0; ok && i < F.n; i++)
+            {
+                FillTarget& t = F.t[i];
+                float v[2][kFillPix][4] = {};
+                for (int si = 0; ok && si < 2; si++)
+                {
+                    D3D11_MAPPED_SUBRESOURCE m{};
+                    const HRESULT hr = imm->Map(t.stage[si], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+                    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) { wait = true; ok = false; break; }
+                    if (FAILED(hr)) { ok = false; why = "the read-back failed"; break; }
+                    for (int p = 0; p < kFillPix; p++) Decode(t.fmt, (const uint8_t*)m.pData + p * PixelBytes(t.fmt), v[si][p]);
+                    imm->Unmap(t.stage[si], 0);
+                }
+                if (!ok) break;
+                for (int si = 0; si < 2; si++) for (int p = 0; p < kFillPix; p++) for (int ch = 0; ch < 4; ch++)
+                    if (!(v[si][p][ch] == v[0][0][ch])) { ok = false; why = fmt::format("target {} ({}x{} format {}) holds {:.3f} / {:.3f} at two of its pixels", i, t.w, t.h, (int)t.fmt, v[0][0][ch], v[si][p][ch]); }
+                if (!ok) break;
+                memcpy(t.value, v[0][0], 16);
+                vals += fmt::format(" [{}x{} format {} = {:.3f},{:.3f},{:.3f},{:.3f}]", t.w, t.h, (int)t.fmt, t.value[0], t.value[1], t.value[2], t.value[3]);
+                D3D11_RENDER_TARGET_VIEW_DESC rd{}; rd.Format = t.fmt; rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                if (FAILED(dev->CreateRenderTargetView(t.tex, &rd, &t.rtv))) { ok = false; why = "a view of its target"; }
+            }
+            if (imm) imm->Release();
+            dev->Release();
+            if (wait) { if (now > F.recordedAt + 240) { LOGI("PassProfile: SkipDisabledEffects: the SSAO read-back never arrived: it keeps running"); FillReset(F); F.state = 3; } continue; }
+            if (!ok)
+            {
+                LOGI("PassProfile: SkipDisabledEffects: the {} eye's SSAO pass is not a constant fill ({}): it keeps running", eye ? "right" : "left", why);
+                FillReset(F); F.state = 3; continue;
+            }
+            for (FillTarget& t : F.t) for (auto*& st : t.stage) if (st) { st->Release(); st = nullptr; }
+            F.state = 2;
+            LOGI("PassProfile: SkipDisabledEffects: the {} eye's SSAO pass fills {} target(s) with one value each:{} -- from now on they are only cleared to it",
+                 eye ? "right" : "left", F.n, vals);
+        }
+    }
+    void MarkEmpty(void* task)
+    {   // what the executor does for a disabled task: the context recorded nothing
+        __try { uint8_t* w = *(uint8_t**)((uint8_t*)task + 0x108); if (w) w[0x12AD4] = 1; }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
     uintptr_t Thunk(void* task)
     {
         const TaskFn real = t_Real; const int row = t_Pass;
+        const bool prof = g_On.load(std::memory_order_relaxed);
         ID3D11DeviceContext* c = ContextOf(task);
         const void* view = nullptr;
         const int kind = KindOf(task, &view);
-        const int slot = c ? Open(c, row, kind, view) : -1;
+        const int eye = kind == kLeft ? 0 : kind == kRight ? 1 : -1;
+        const int eff = SkipEffect(task, row, eye);
+        if (eff == kEffSkip) { MarkEmpty(task); return 0; }
+        if (eff == kEffClear && c)
+        {   // the SSAO pass's constant fill, as clears (see g_SkipEffects)
+            std::lock_guard lk(g_EffM);
+            const Fill& F = g_Fill[eye];
+            if (F.state == 2)
+            {
+                for (int i = 0; i < F.n; i++) c->ClearRenderTargetView(F.t[i].rtv, F.t[i].value);
+                if (g_EffSkipped[0]++ == 0) LOGI("PassProfile: SkipDisabledEffects: the SSAO pass's neutral fill is replaced by clears from now on");
+                return F.ret;
+            }
+        }
+        const bool learn = (eff == kEffSample || eff == kEffCheck) && c;
+        if (learn) { t_Caps = Caps{}; t_Caps.c = c; t_Caps.on = true; }
+        const int slot = c && prof ? Open(c, row, kind, view) : -1;
         if (!c) g_NoCtx++;
+        const bool mainView = kind == kLeft || kind == kRight;
+        // Fog: drawn at the start of the transparent pass (counted in its GPU time when profiling)
+        const bool fogged = c && mainView && row == g_RowTransparent && g_FogHook.load(std::memory_order_relaxed) && Fog::BeforeTransparent(c, view);
+        const bool fovRow = c && mainView && row >= 0 && row < 64 && g_FovRow[row] && g_FovHook.load(std::memory_order_relaxed);
+        const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
         const Acc saved = t_Acc;
-        t_Acc = Acc{}; t_Acc.on = true;
+        t_Acc = Acc{}; t_Acc.on = prof;
         LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
         const uintptr_t ret = real(task);
         LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
         const Acc mine = t_Acc;
         t_Acc = saved;
+        if (learn) AfterLearn(c, eye, eff, ret);
+        if (fovRow) Foveation::End(c, foveated);
+        if (fogged) ClearEmpty(task);
+        if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
         if (slot >= 0)
         {
             Rec& r = g_Rec[slot];
@@ -232,12 +530,18 @@ namespace
     template <int W> uintptr_t HkExec(void* task)
     {
         const ExecFn real = W ? g_ExecImm : g_Exec;
-        if (!g_On.load(std::memory_order_relaxed) || !task) return real(task);
+        const bool prof = g_On.load(std::memory_order_relaxed);
+        const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
+        if (!task || (!prof && !fog && !fov && !eff)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
         if (!fn || fn == (uintptr_t)&Thunk) return real(task);
+        const int pass = PassOf(fn);
+        const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
+                         || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))));
+        if (!wanted) return real(task);
         const TaskFn savedReal = t_Real; const int savedPass = t_Pass;
-        t_Real = (TaskFn)fn; t_Pass = PassOf(fn);
+        t_Real = (TaskFn)fn; t_Pass = pass;
         *slot = (uintptr_t)&Thunk;
         const uintptr_t ret = real(task);
         if (*slot == (uintptr_t)&Thunk) *slot = fn;
@@ -464,7 +768,19 @@ void PassProfile::SetEnabled(bool on)
 
 void PassProfile::Install()
 {
-    if (!g_On.load() || g_Exec) return;
+    for (int i = 0; i < kKnown; i++)
+    {
+        if (!strcmp(kPasses[i].name, "FORWARD_DYNAMIC")) g_RowOpaque = i;
+        if (!strcmp(kPasses[i].name, "ALPHA_LIT")) g_RowTransparent = i;
+        if (!strcmp(kPasses[i].name, "SSAO")) g_RowSsao = i;
+        if (!strcmp(kPasses[i].name, "DOF")) g_RowDof = i;
+        // Foveation: what shades the scene at the eye's resolution
+        static const char* fov[] = { "DEPTHPASS", "DEPTHALPHA_LIT", "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY" };
+        for (const char* n : fov) if (!strcmp(kPasses[i].name, n) && i < 64) g_FovRow[i] = true;
+    }
+    g_FogHook = Fog::Wanted();
+    g_FovHook = Foveation::Wanted();
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -476,13 +792,21 @@ void PassProfile::Install()
     DetourAttach(&(PVOID&)g_ExecImm, (PVOID)&HkExec<1>);
     const LONG e = DetourTransactionCommit();
     LOGI("PassProfile: task executors exe+0x2C5D50 / exe+0x2C5F60 hooked (detour={})", e);
-    if (e != NO_ERROR) g_On = false;
+    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; }
+}
+
+void PassProfile::SetSkipEffects(int mode)
+{
+    g_SkipEffects = mode >= 1; g_SkipDof = mode >= 2;
+    if (mode >= 1) LOGI("PassProfile: SkipDisabledEffects = {} (experimental): {} leftover work is skipped while {} off", mode,
+                        mode >= 2 ? "the SSAO and DOF passes'" : "the SSAO pass's", mode >= 2 ? "those effects are" : "it is");
 }
 
 bool PassProfile::On() { return g_On.load(std::memory_order_relaxed); }
 
 void PassProfile::NoteDraw(unsigned elements, unsigned instances, bool indirect)
 {
+    if (t_Caps.on) CaptureTargets();
     if (!t_Acc.on) return;
     t_Acc.draws++; if (indirect) t_Acc.indirect++;
     t_Acc.elems += (uint64_t)elements * (instances ? instances : 1);
@@ -518,6 +842,7 @@ void PassProfile::EndSection(int s)
 
 void PassProfile::OnPresent(IDXGISwapChain* sc)
 {
+    if (g_SkipEffects.load(std::memory_order_relaxed) && sc) ResolveFill(sc);
     if (!g_On.load() || !g_Exec) return;
     if (!g_Dev)
     {

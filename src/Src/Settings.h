@@ -3,6 +3,7 @@
 #include <vector>
 #include "StereoSync.h"
 #include "Fog.h"
+#include "Foveation.h"
 
 //! The player's settings: <game>\DishonoredVR.ini, read once at startup. Every key has a default, so a missing file,
 //! a missing key or a value that cannot be read all leave the mod working (and the log says which). Settings are
@@ -50,6 +51,8 @@ namespace Settings
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
+    int SkipDisabledEffects();                    //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF
+    Foveation::Params Foveated();                 //!< [Display] FoveatedRendering / FoveatedInner / FoveatedOuter
     bool ProfileRenderPasses();                   //!< [Advanced] ProfileRenderPasses: GPU time per render pass (PassProfile)
     std::string FogMaps();
     Fog::Params CheapFog();                       //!< [Display] CheapFog*: the mod's own fog while the game's is off                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply

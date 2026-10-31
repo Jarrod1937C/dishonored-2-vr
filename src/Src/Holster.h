@@ -14,6 +14,11 @@
 //! is ARK_MSG_INVENTORY_UNEQUIP_ITEM (0x9E, arkMsgInventoryUnequipItem {m_decl, m_slot, m_instant}), as that node's
 //! Unequip sends it. The player's equip state then changes the hands with their animations.
 //!
+//! The hands are independent: once one has been emptied by its holster, the game's own re-equips into it (choosing a
+//! power on the wheel, a quick slot, the block, an attack with nothing in the hand, the end of a stun) are held back
+//! (Holster.cpp, kPushState) until the player puts something in it -- a holster's draw, or for the left hand the wheel
+//! or a quick slot.
+//!
 //! The pistol / crossbow are found in the inventory's equipment list (arkCpntInventory+0x58, count +0x60: pointers to
 //! the item entries that have an equipment entity) by their item component's class (entry+0x10: arkCpntWeaponGun /
 //! arkCpntWeaponCrossbow). Where there are several of one (one per ammunition), the one last held is drawn. Powers are
@@ -24,6 +29,8 @@ namespace Holster
     enum Kind { kPistol = 0, kCrossbow = 1, kMagic = 2, kSword = 3 };
     void SetEnabled(bool on);
     bool Enabled();
+    //! The filter on the hands' equip changes (a hand put away stays empty): hooked always, acts only while enabled
+    void Install();
     //! The player has that weapon (refreshed by Tick a few times a second).
     bool Owns(int kind);
     //! That weapon is in its hand now (the sword: the right hand; the others: the left).
