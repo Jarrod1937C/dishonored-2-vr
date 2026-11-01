@@ -213,8 +213,16 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 ------------------------------------------------------------------------------------------------
 
  DishonoredVR.ini (in the game folder) - open it with Notepad. Each setting is explained there.
- Changes apply the next time you start the game. 1 = on, 0 = off. Deleting a line (or the whole
- file) gives you the default back. The values in this build's file:
+ Changes made in the file apply the next time you start the game. 1 = on, 0 = off. Deleting a line (or
+ the whole file) gives you the default back. Most of them can also be changed in the game itself: Options
+ has VR tabs (VR Controls, VR Gameplay, VR Display, VR Performance, VR System/Cheats) after its own,
+ each setting showing the value recommended for most players. Going back from a VR tab after changing
+ something asks whether to apply the changes: Yes writes them into DishonoredVR.ini and they take effect
+ at once, except the ones marked "restart" (used from the next start); No leaves everything as it was.
+ The file is in main groups ([Display]) and subgroups
+ ([Display.Fog]), and every setting is marked @user (for everyone) or @hidden (tuning, experiments
+ and troubleshooting most players never need; last in each subgroup). A setting is found by its
+ name in any group, so an older file still reads. The defaults, by main group:
 
    [Controls]  TurnMode = smooth (or snap)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 45
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
@@ -270,6 +278,15 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ScreenSpaceShadowSmallObjects = 1 (m across: smaller moving objects too, out of the shadow maps)
                ScreenSpaceShadowLength = 3 (m)   ScreenSpaceShadowContact = 0 (m, everything's contact shadows)
                ScreenSpaceShadowSteps = 24   ScreenSpaceShadowStrength = 1
+               DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,
+                                 about half the frame rate; the mod is made for 1: leave it,
+                                 0 / 2 are likely to break things)
+               RenderScale = 1 (sharpness: 1 = what the headset asks for, lower = faster)
+               MenuScreen = 1   MenuScreenSize = 62 (deg wide)   MenuScreenDistance = 2.4 (m)
+               MenuBackground = 0.22 (how bright the paused world is around the menu screen)
+               CutsceneLetterbox = 0 (1 = keep the black bars)   CutsceneArms = 0 (1 = the
+                                 cutscene moves your hands, not the controllers)
+   [Performance]
                ShadowCullDistance = 0 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
                ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
@@ -286,26 +303,18 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                OutOfViewMaskCorners = 4 (also each picture's two outer corners outside a rounded outline; 0 = off)
                FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)
                FoveatedInner = 35   FoveatedOuter = 50 (deg: full rate, then 2x2, 4x4 beyond)
-               DisableMotionBlur = 1   Stereo3D = 1 (real depth, each eye drawn at the same instant,
-                                 about half the frame rate; 0 = flat, both eyes the same
-                                 picture; 2 = the old alternating 3D of version 1.0)
-               RenderScale = 1 (sharpness: 1 = what the headset asks for, lower = faster)
-               MenuScreen = 1   MenuScreenSize = 62 (deg wide)   MenuScreenDistance = 2.4 (m)
-               MenuBackground = 0.22 (how bright the paused world is around the menu screen)
-               CutsceneLetterbox = 0 (1 = keep the black bars)   CutsceneArms = 0 (1 = the
-                                 cutscene moves your hands, not the controllers)
-   [Cheats]    UnlockEverything = 1   InfiniteMana = 1   InfiniteAmmo = 0   InfiniteHealth = 0
-   [Advanced]  KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
-                                 picture instead of an hourglass)
-               NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
-                                 Link / Air Link only)
                Experimental, 0 by default (1 = the right eye's frame reuses the left eye's work):
                                  StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
                SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
-   [Logging]   LogControllerInput = 1   WriteStatusFile = 0 (an older file's [Advanced] ones still work)
+   [Cheats]    UnlockEverything = 1   InfiniteMana = 1   InfiniteAmmo = 0   InfiniteHealth = 0
+   [System]    KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
+                                 picture instead of an hourglass)
+               NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
+                                 Link / Air Link only)
+   [Logging]   LogControllerInput = 1   WriteStatusFile = 0
                ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
                                       the mod's own steps, hitches and a frame draw by draw)
 
@@ -362,8 +371,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 
  Low frame rate
    - Lower the resolution in SteamVR / the Meta Horizon app / Virtual Desktop, or set
-     DishonoredVR.ini > RenderScale = 0.8. Lower the game's graphics settings. Stereo3D = 1
-     draws the world twice per frame (about half the frame rate): use 0 if it stutters.
+     DishonoredVR.ini > RenderScale = 0.8. Lower the game's graphics settings. (Stereo3D = 1
+     draws the world twice per frame, about half the frame rate, but leave it at 1: the mod is
+     made for it and the other values are likely to break things.)
 
  Warped, "glitchy" edges around your hands or the world when you move fast
    - Your headset's app is inventing frames because the game runs below the headset's refresh.

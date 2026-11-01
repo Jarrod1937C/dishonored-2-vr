@@ -60,6 +60,9 @@ namespace
     // black screen twice (never explained), and at the main menu there is nothing for them to act on.
     std::atomic<int> g_Auto{ 1 };
     bool g_AutoDone = false; int g_AutoStable = 0;
+    // the settings' commands as last run (Commands::SettingsChanged runs what has changed since); render thread
+    std::vector<std::string> g_RanStartup, g_RanPackage;
+    std::atomic<bool> g_SettingsChanged{ false };
 
     //! Grenades thrown by hand (ThrowGesture): hold the left trigger (cooks), let go and it leaves with the hand's
     //! velocity. throwcfg <name> <value> tunes it (no args: list); throwtrack <s> [ms] logs the next flight. Out of the
@@ -1331,7 +1334,24 @@ void Commands::OnPresent()
     }
     {   // The player's settings that do not need a game (turning, the button layout): once, on the first frame.
         static bool startup = false;
-        if (!startup) { startup = true; for (const std::string& c : Settings::StartupCommands()) { LOGI("settings: {}", c); Execute(c); } }
+        if (!startup) { startup = true; g_RanStartup = Settings::StartupCommands(); for (const std::string& c : g_RanStartup) { LOGI("settings: {}", c); Execute(c); } }
+        if (g_SettingsChanged.exchange(false))
+        {   // Saved in the VR options tabs: what is new is run; a command that is no longer there and has an "off" is
+            // switched off (the others are replaced by their new form, "vr snap 20" by "vr snap 0" and so on)
+            auto rerun = [](std::vector<std::string>& ran, std::vector<std::string> now, const char* what)
+            {
+                static const std::pair<const char*, const char*> kOff[] = { { "vr hp inf", "vr hp 0" }, { "vr autoall 1", "vr autoall 0" },
+                    { "exec r_skipCameraMotionBlur 1", "exec r_skipCameraMotionBlur 0" } };
+                for (const std::string& c : ran)
+                    if (std::find(now.begin(), now.end(), c) == now.end())
+                        for (const auto& o : kOff) if (c == o.first) { LOGI("{} (saved): {}", what, o.second); Execute(o.second); }
+                for (const std::string& c : now)
+                    if (std::find(ran.begin(), ran.end(), c) == ran.end()) { LOGI("{} (saved): {}", what, c); Execute(c); }
+                ran = std::move(now);
+            };
+            rerun(g_RanStartup, Settings::StartupCommands(), "settings");
+            if (g_AutoDone && !g_RanPackage.empty()) rerun(g_RanPackage, Settings::PackageCommands(), "auto (settings)");
+        }
     }
     if (g_Auto.load() && !g_AutoDone)
     {
@@ -1356,7 +1376,8 @@ void Commands::OnPresent()
                      "Restart the game.", vs);
             Execute("vr weapon6dof 1");
             CameraHook::Recenter(); ViewMatrixHook::Recenter(); KbmInject::ResetHeadRef();
-            for (const std::string& c : Settings::PackageCommands()) { LOGI("auto (settings): {}", c); Execute(c); }
+            g_RanPackage = Settings::PackageCommands();
+            for (const std::string& c : g_RanPackage) { LOGI("auto (settings): {}", c); Execute(c); }
             std::ifstream f(GameInfo::GameDir() + L"\\DVR_autoexec.txt");
             std::string line;
             while (f && std::getline(f, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); if (!line.empty() && line[0] != '#') { LOGI("auto: {}", line); Execute(line); } }
@@ -1364,3 +1385,5 @@ void Commands::OnPresent()
     }
     if (now.QuadPart - g_LastBeat.QuadPart >= fq.QuadPart) { g_LastBeat = now; if (Settings::StatusFile()) Heartbeat(); }
 }
+
+void Commands::SettingsChanged() { g_SettingsChanged = true; }

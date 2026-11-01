@@ -27,6 +27,8 @@
 #include "PadProbe.h"
 #include "KbmInject.h"
 #include "Reticle.h"
+#include "MenuProbe.h"
+#include "VrMenu.h"
 #include "ScreenMode.h"
 #include "HandAimHook.h"
 #include "WeaponPose.h"
@@ -126,6 +128,56 @@ static std::string ReadOneLine(const wchar_t* name)
     }
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
     return s;
+}
+
+//! After the VR options tabs saved settings that take effect at once (VrMenu; `changed` = their bare lower-case
+//! names): the modules that were given those settings at startup (InitThread, below) are given them again, and the
+//! settings' commands that came out different run at the next frame. Only what changed, so a module is not touched
+//! for nothing (MeleeAim::SetFinishers patches code). The setters store atomics / take their own locks.
+static void ApplySettings(const std::vector<std::string>& changed)
+{
+    auto has = [&](std::initializer_list<const char*> keys)
+    {
+        for (const char* k : keys) for (const std::string& c : changed) if (c == k) return true;
+        return false;
+    };
+    bool fog = false; for (const std::string& c : changed) if (c.rfind("cheapfog", 0) == 0) fog = true;
+    if (has({ "vrgraphicstweaks" })) VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
+    if (has({ "ambientocclusion" })) VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
+    if (has({ "fog" })) VrTweaks::SetFog(Settings::Fog());
+    if (has({ "staticlodzoom" })) VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    if (fog) Fog::SetParams(Settings::CheapFog());
+    if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
+    if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
+    if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
+    if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
+    if (has({ "swordbladedamage", "sworddamagescale" })) MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
+    if (has({ "knockoutblow" })) MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
+    if (has({ "knockoutspeed" })) MeleeAim::SetKnockoutSpeed(Settings::KnockoutSpeed());
+    if (has({ "knockoutsoundvolume" })) MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
+    if (has({ "finisheranimations" })) MeleeAim::SetFinishers(Settings::FinisherAnimations());
+    if (has({ "physicalcrouch", "physicalcrouchdepth" })) KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
+    if (has({ "handcollision" })) Collision::SetHands(Settings::HandCollision());
+    if (has({ "weaponcollision" })) Collision::SetWeapons(Settings::WeaponCollision());
+    if (has({ "pushobjects" })) Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
+    if (has({ "pushdoors" })) Collision::SetDoors(Settings::PushDoors());
+    if (has({ "pulltoopen" })) Collision::SetOpenables(Settings::PullToOpen());
+    if (has({ "physicalpickup" })) Collision::SetItems(Settings::PhysicalPickup());
+    if (has({ "swipedials" })) Collision::SetDials(Settings::SwipeDials());
+    if (has({ "slidewindows" })) Collision::SetWindows(Settings::SlideWindows());
+    if (has({ "holsterweapons" })) Holster::SetEnabled(Settings::HolsterWeapons());
+    if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
+    if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
+    if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
+    if (has({ "outofviewmask" })) FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
+    if (has({ "screenspaceshadows" }))
+        ScreenShadows::SetParams(Settings::ScreenSpaceShadows(), Settings::ScreenSpaceShadowLength(), Settings::ScreenSpaceShadowSteps(),
+                                 Settings::ScreenSpaceShadowStrength());
+    if (has({ "shadowsunupdateevery" })) ScreenShadows::SetSunUpdateEvery(Settings::ShadowSunUpdateEvery());
+    if (has({ "shadowculldistance" })) ScreenShadows::SetCullDistance(Settings::ShadowCullDistance());
+    if (has({ "shadowultratrim" })) ScreenShadows::SetUltraTrim(Settings::ShadowUltraTrim());
+    if (has({ "shadowlampfewerupdates" })) ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
+    Commands::SettingsChanged();   // turning, layout, menu screen, cutscenes, gestures, reticle, wrist HUD, cheats ...
 }
 
 static DWORD WINAPI InitThread(LPVOID)
@@ -242,6 +294,8 @@ static DWORD WINAPI InitThread(LPVOID)
     GrabHand::Install();             // a held object's throw leaves with the left hand's velocity
     Holster::Install();              // a hand put away stays empty: the game's pairing of the hands' equips is held back
     ScreenMode::InstallMarkers(Settings::HudMarkers());   // a guard's awareness marker over his head in the headset
+    MenuProbe::Install(Settings::LogMenuData());   // research: the options screen's Flash traffic (for a VR options tab)
+    VrMenu::Install(Settings::VrOptionsMenu(), ApplySettings);   // VR tabs in the game's Options screen
     BinkVideo::Install();            // the pre-rendered videos: A / X held skips them as in a cutscene
     // The probe goes LAST: it only feeds the overlay, and xrCreateInstance can block for seconds (measured 6.1 s with
     // Meta's runtime on a game launched from Air Link). Run first, the game kept booting meanwhile and created its

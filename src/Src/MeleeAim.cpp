@@ -923,7 +923,8 @@ namespace
     // smack, a click of noise on the attack), made once in memory as a WAV and played with PlaySound, which goes to the
     // default output -- the headset's when it is Windows' default. DVR_knockout.wav in the game's folder replaces it.
     std::atomic<float> g_KoVolume{ 0.8f };
-    std::vector<uint8_t> g_KoWav;
+    std::vector<uint8_t> g_KoWav;   // only PlayKoSound touches it (PlaySound keeps playing from it)
+    float g_KoWavVol = -1.f;        // the volume it was made at
     using FnPlaySound = BOOL(WINAPI*)(LPCWSTR, HMODULE, DWORD);
     void BuildKoWav(float vol)
     {
@@ -959,7 +960,11 @@ namespace
         if (!play) return;
         constexpr DWORD kAsync = 0x0001, kNoDefault = 0x0002, kMemory = 0x0004, kFile = 0x00020000;
         if (GetFileAttributesW(L"DVR_knockout.wav") != INVALID_FILE_ATTRIBUTES) { play(L"DVR_knockout.wav", nullptr, kFile | kAsync | kNoDefault); return; }
-        if (g_KoWav.empty()) BuildKoWav(vol);
+        if (g_KoWav.empty() || g_KoWavVol != vol)
+        {   // KnockoutSoundVolume changed (the VR options tabs): made again, the sound still playing from it stopped first
+            if (!g_KoWav.empty()) play(nullptr, nullptr, 0);
+            BuildKoWav(vol); g_KoWavVol = vol;
+        }
         play((LPCWSTR)g_KoWav.data(), nullptr, kMemory | kAsync | kNoDefault);
     }
     std::mutex g_KoAimM; float g_KoAim[3] = {}; long long g_KoAimAt = 0;   // the knockout's target point (the reticle)
@@ -1113,7 +1118,8 @@ namespace
 void MeleeAim::SetKnockoutSound(float volume)
 {
     g_KoVolume = std::clamp(volume, 0.f, 1.f);
-    g_KoWav.clear();   // made again at that volume
+    // the sound is made again at that volume when it next plays (not here: this may be the menu's thread, and a sound
+    // may still be playing from the old one)
     LOGI("MeleeAim: knockout hit sound {}", g_KoVolume.load() > 0.f ? fmt::format("at {:.0f}% (DVR_knockout.wav in the game's folder replaces it)", g_KoVolume.load() * 100.f) : std::string("off"));
 }
 void MeleeAim::SetKnockoutZone(float angleDeg, float radiusM)

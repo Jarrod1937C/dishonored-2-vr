@@ -115,6 +115,8 @@ set(MOD_SOURCES
     Src/KeyBinds.cpp   Src/KeyBinds.h
     Src/SysInfo.cpp    Src/SysInfo.h
     Src/Seeds.cpp      Src/Seeds.h
+    Src/MenuProbe.cpp  Src/MenuProbe.h
+    Src/VrMenu.cpp     Src/VrMenu.h       Src/VrMenuLayout.inc
     "${CMAKE_BINARY_DIR}/generated/Version.rc"
     Src/VRMath.h
     Src/pch.h

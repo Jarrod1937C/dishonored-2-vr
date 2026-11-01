@@ -82,9 +82,24 @@ namespace Settings
     int OutOfViewMask();                          //!< [Display] OutOfViewMask (FovMask): 0 off, 1 all, 2 outer sides only
     float OutOfViewMaskMargin();                  //!< [Display] OutOfViewMaskMargin, degrees
     bool OutOfViewMaskLens();                     //!< [Display] OutOfViewMaskLens
-    bool ProfileRenderPasses();                   //!< [Advanced] ProfileRenderPasses: GPU time per render pass (PassProfile)
+    bool ProfileRenderPasses();                   //!< [Logging] ProfileRenderPasses: GPU time per render pass (PassProfile)
+    bool VrOptionsMenu();                         //!< [System] VrOptionsMenu: VR tabs in the game's Options screen (VrMenu)
+    bool LogMenuData();                           //!< [Logging] LogMenuData: the options screen's Flash traffic (MenuProbe)
     std::string FogMaps();
     Fog::Params CheapFog();                       //!< [Display] CheapFog*: the mod's own fog while the game's is off                        //!< [Display] FogMaps: words of map names where Fog = 0 does not apply
     StereoSync::ReuseFlags StereoReuse();         //!< [Advanced] Stereo*Reuse, StereoStreamOncePerPair (experimental, StereoSync)
     std::string Summary();                        //!< one line for the log
+    //! The setting is @hidden (most players never need to change it) rather than @user; "key" or "group.key"
+    bool IsHidden(const std::string& name);
+    //! One setting as the VR options tabs show it (VrMenu): kind 0 bool, 1 number (lo..hi; both 0 = no range), 2 one of
+    //! `choices` ("a|b"), 3 free text; the value as read (or the default)
+    struct KeyInfo { std::string name; int kind = 0; std::string value, def; float lo = 0, hi = 0; std::string choices; bool hidden = false;
+                     std::string rec; /*!< recommended for most players (@user ones; "" = none) */
+                     bool restart = false; /*!< a change takes effect when the game is started again; value = the saved one */ };
+    bool Info(const std::string& name, KeyInfo& out);
+    //! The VR options tabs' Save (VrMenu): each (name, value) checked as the file's own would be, written into
+    //! DishonoredVR.ini in place (only the value on that setting's line changes) and then used: at once, or after a
+    //! restart (KeyInfo::restart). `live`: the bare lower-case names that changed at once, for the modules to be told.
+    //! false (+ err) = the file could not be written, and nothing changed.
+    bool Save(const std::vector<std::pair<std::string, std::string>>& changes, std::vector<std::string>& live, std::string& err);
 }

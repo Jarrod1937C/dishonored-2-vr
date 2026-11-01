@@ -5,4 +5,7 @@
 namespace Commands
 {
     void OnPresent();   //!< call every frame (cheap; polls at ~10 Hz)
+    //! Settings were changed (the VR options tabs' Save): at the next frame, the settings' commands that came out
+    //! different from the ones run (StartupCommands; PackageCommands once the VR package is on) are run. Any thread.
+    void SettingsChanged();
 }
