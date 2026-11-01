@@ -32,6 +32,9 @@ namespace
     // [Display] HudScale (2026-10-31, reported: interface elements too far out towards the edges of the view): the
     // panel covers this share of the picture's frustum, about its centre; the markers are placed for it (MarkerProjHook)
     std::atomic<float> g_HudScale{ 0.8f };
+    // [Performance] HudResolution (2026-11-01): the HUD panel's swapchain at this share of the picture's size per side
+    // (the panel shader averages the source pixels each one covers); same place, same size in the view
+    std::atomic<float> g_HudRes{ 1.f };
     // [Display] HudMarkers 1 (2026-10-31, reported: the alert markers in the right direction but at the HUD's depth, not
     // over the guards' heads): the markers the game placed this tick (MarkerProjHook: their HUD pixels and distance),
     // in batches -- one game tick's calls come together -- tagged with the newest main view then. PlayHud lifts each
@@ -604,7 +607,11 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
     float w[3]; VRMath::QRotate(quat, c, w);
     for (int i = 0; i < 3; i++) p.pos[i] = pos[i] + w[i];
     memcpy(p.quat, quat, 16);
-    p.outW = std::min(tw, 4096u); p.outH = std::min(th, 4096u);
+    {
+        const float hr = g_HudRes.load();
+        p.outW = std::max(256u, (unsigned)std::lround(std::min(tw, 4096u) * hr));
+        p.outH = std::max(144u, (unsigned)std::lround(std::min(th, 4096u) * hr));
+    }
     if (g_MarkersOn.load() && g_MarkBox.load() > 0.f)
     {   // the markers at their characters' distance: the batch of the tick this picture was drawn from (the newest one
         // made no later than its view), each marker's square of the HUD on a panel of its own, left out of the HUD's
@@ -790,6 +797,11 @@ void ScreenMode::SetHud(bool on, float dist, float scale, float markerSize)
     g_HudOn = on; g_HudDist = std::clamp(dist, 0.5f, 10.f); g_HudScale = std::clamp(scale, 0.3f, 1.f); g_MarkBox = std::clamp(markerSize, 0.f, 0.25f);
     LOGI("ScreenMode: stereo HUD {} ({:.1f} m, {:.0f} % of the view's width: HudScale)", on ? "on one panel for both eyes (StereoHud = 1)" : "in each eye's picture (StereoHud = 0)",
          g_HudDist.load(), g_HudScale.load() * 100.f);
+}
+void ScreenMode::SetHudResolution(float share)
+{
+    g_HudRes = std::clamp(share, 0.25f, 1.f);
+    LOGI("ScreenMode: the HUD panel at {:.0f} % of the picture's resolution per side (HudResolution)", g_HudRes.load() * 100.f);
 }
 
 void ScreenMode::SetMode(int m)

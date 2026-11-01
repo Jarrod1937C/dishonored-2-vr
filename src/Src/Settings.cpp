@@ -104,6 +104,7 @@ namespace
         { "display.depthpassdepthonly", Kind::Bool,   "0", 0, 0, nullptr, true },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
         { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr, true }, // GpuTrace: a depth copy that changes nothing is not made
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
+        { "display.hudresolution",      Kind::Float,  "1", 0.25f, 1, nullptr },   // ScreenMode: the HUD panel's resolution, share of the picture's per side
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr, true },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr, true },   // ViewMatrixHook: no game neck on top of the real one
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr, true },
@@ -454,6 +455,7 @@ bool Settings::DepthPassSkipRedundantCopies() { return B("display.depthpassskipr
 float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjectsize"); }
 int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
+float Settings::HudResolution() { return F("display.hudresolution"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
@@ -596,6 +598,7 @@ namespace
         { "shadowlampfewerupdates", "1" },
         { "viewdistance", "3" },
         { "staticlodzoom", "1.5" },
+        { "hudresolution", "0.5" },
         { "foveatedrendering", "0" },
         { "outofviewmask", "2" },
         { "fpscounter", "off" },

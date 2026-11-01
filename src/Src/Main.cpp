@@ -185,6 +185,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
         if (power) { const std::string p = Settings::PowerUnlocks(); TestAids::SetAutoPowers(p.empty() ? "off" : p); }
     }
     if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
+    if (has({ "hudresolution" })) ScreenMode::SetHudResolution(Settings::HudResolution());
     if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
     if (has({ "outofviewmask" })) FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
@@ -254,6 +255,7 @@ static DWORD WINAPI InitThread(LPVOID)
     if (const std::string p = Settings::PowerUnlocks(); !p.empty()) TestAids::SetAutoPowers(p);   // [Cheats.Powers]: the mark and those
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
+    ScreenMode::SetHudResolution(Settings::HudResolution());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install

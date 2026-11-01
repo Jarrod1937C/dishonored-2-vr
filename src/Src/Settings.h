@@ -33,6 +33,7 @@ namespace Settings
     float SwordBloodflyReach();                   //!< [Gameplay] SwordBloodflyReach: m further from a bloodfly the blade touches it (SwordContact)
     float KnockoutRadius();                       //!< [Gameplay] KnockoutRadius: m around the head's centre (MeleeAim)
     float HudScale();
+    float HudResolution();                        //!< [Performance] HudResolution: the HUD panel's resolution, 0.25..1 of the picture's per side (ScreenMode)
     bool ScreenSpaceShadows();                    //!< [Display] ScreenSpaceShadows (ScreenShadows)
     float ScreenSpaceShadowLength();
     int ScreenSpaceShadowSteps();

@@ -333,6 +333,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
                ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
                StaticLodZoom = 1 (experimental: >1 = static models switch to simpler versions sooner; 1 = the game's)
+               HudResolution = 1 (the HUD panel's resolution per side: 0.25 / 0.5 / 0.75 / 1; same place and size)
                ViewDistance = -1 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
                DepthPassDepthOnly = 0 (experimental: the depth pass's main shader drawn depth-only)
                DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)
