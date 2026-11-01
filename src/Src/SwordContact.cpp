@@ -845,8 +845,8 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             MeleeAim::HitBox hb; HitBoxOf(tg, hb); MeleeAim::AddHitBox(hb);
             // ...and the character whose sword, hat or arm guard the blade met first
             uint32_t ownerId = 0;
-            const bool small = tg.mx[0] - tg.mn[0] <= C.maxDim && tg.mx[1] - tg.mn[1] <= C.maxDim && tg.mx[2] - tg.mn[2] <= C.maxDim && tg.vol <= C.maxVol;
-            if (!tg.skel && small)
+            const bool smallBox = tg.mx[0] - tg.mn[0] <= C.maxDim && tg.mx[1] - tg.mn[1] <= C.maxDim && tg.mx[2] - tg.mn[2] <= C.maxDim && tg.vol <= C.maxVol;
+            if (!tg.skel && smallBox)
                 for (const Target& ch : g_Targets)
                     if (ch.skel && ch.sk >= 0 && SkelDist(g_Skels[ch.sk], bestPt) < C.attach)
                     { MeleeAim::HitBox h2; HitBoxOf(ch, h2); MeleeAim::AddHitBox(h2); ownerId = ch.id; g_Attach++; break; }
