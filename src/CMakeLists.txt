@@ -119,6 +119,7 @@ set(MOD_SOURCES
     Src/VrMenu.cpp     Src/VrMenu.h       Src/VrMenuLayout.inc
     Src/Roomscale.cpp  Src/Roomscale.h
     Src/ControllerBindings.cpp Src/ControllerBindings.h
+    Src/PostShare.cpp Src/PostShare.h
     "${CMAKE_BINARY_DIR}/generated/Version.rc"
     Src/VRMath.h
     Src/pch.h

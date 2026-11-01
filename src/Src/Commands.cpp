@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "Commands.h"
+#include "PostShare.h"
 #include "Watchdog.h"
 #include "GameInfo.h"
 #include "CVars.h"
@@ -1190,6 +1191,7 @@ namespace
               << " gpu_frames " << GpuTrace::Frames() << " gpu_on " << GpuTrace::Installed()
               << " gpu_swap " << GpuTrace::SwapStats() << "\n";
         f << "gpu_shadercache " << GpuTrace::ShaderCache() << "\n";
+        f << PostShare::Status() << "\n";
             f << "gpu6dof " << GpuTrace::SixDofStats() << "\n";
             f << "gpu6dof_weapondraws " << GpuTrace::WeaponDraws() << "\n";
             f << "gpuhands " << GpuTrace::HandStats() << "\n";

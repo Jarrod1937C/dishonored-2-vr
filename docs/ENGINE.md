@@ -1434,6 +1434,8 @@ Things that cost real time. Measured; listed so nobody repeats them.
   broke in BOTH eyes. The sun's farther cascades are updated on alternate frames (frame parity, exe+0x32EF1D); in
   synchronised stereo alternate frames are alternate eyes, so some cascades are only ever updated in the right eye's
   frames. A pass may be skipped per eye only if the engine simply redoes it every frame.
+  (2026-11-01: the nearest cascade is now shared through the engine's own keep path instead -- StereoSunShadowReuse,
+  STATUS.md: the set-up's slice-0 `je` at exe+0x32B49D and the split distance's store at exe+0x330A1B switched per eye.)
 - **Writing r_skipDOF / r_skipLensFlares / r_SSSBlurQuality / r_textureUploadTimesliceMs while in VR**: the game hung
   at its main menu (not narrowed down to one). r_skipDOF and r_skipLensFlares are the game's own menu options
   (ARK_VISUALSETTING_DOF / _LENS_FLARE); the menu code backs r_skipDOF up into r_skipDofBck and restores it through

@@ -162,8 +162,9 @@ namespace
     // asks for it; experimental: whether what the left frame left behind is still intact when the right eye's frame
     // reads it has not been seen in a headset yet. Hooks only for what is asked.
     //
-    // NOT the sun's shadow maps (tried as StereoShadowReuse, exe+0x32D4B0: shadows broke in BOTH eyes; the spot / omni
-    // lights' are below, with the condition that makes them safe). The engine updates
+    // NOT the sun's shadow maps this way (tried as StereoShadowReuse, exe+0x32D4B0: shadows broke in BOTH eyes; the spot /
+    // omni lights' are below, with the condition that makes them safe; the sun's nearest cascade, StereoSunShadowReuse,
+    // through the engine's own keep path, below). The engine updates
     // the sun's farther cascades on alternate frames (frame parity, exe+0x32EF1D) and keeps the rest in caches; in
     // synchronised stereo alternate frames are alternate eyes, so the right eye's frames are the ones that update some
     // cascades -- skipped, those were never updated for either eye. Any pass the engine schedules by frame parity has the
@@ -334,12 +335,108 @@ namespace
         }
         return true;
     }
+    // ---- the sun's nearest cascade ([Performance] StereoSunShadowReuse) ----
+    // The cascades beyond the nearest are already shared by the eyes: the engine redraws them on alternate frames (the
+    // frame parity), and in synchronised stereo alternate frames are alternate eyes -- each is fitted and drawn in one
+    // eye's frame and copied from its cache in the other's, with the same matrix and split distance. Only cascade 0 is
+    // fitted to each eye's own view and drawn twice. Here the right eye's frame keeps the left's cascade 0: its matrix
+    // (the set-up exe+0x32B280 takes the path the engine takes for a kept cascade, exe+0x32BD16), its split distance
+    // (exe+0x330A1B stores the one in use, xmm2, instead of this frame's, xmm3) and its map (the right frame's two slice-0
+    // shadow tasks, world and dynamic, are skipped: the map the left frame drew stays in place). Every cascade is then the
+    // same in both eyes -- the near one too, so its far edge (the switch to the next) is at the same place for both.
+    // Two code bytes are switched before each eye's SHADOWS_PREPARE (exe+0x333550): exe+0x32B49D, the `je` that sends
+    // slice 0 to the fit (0x3A -> exe+0x32B4D8), becomes 0x29 (-> exe+0x32B4C7, `je exe+0x32BD16`, taken: ZF is still
+    // set); exe+0x330A1E, the ModRM of `movss [rdi], xmm3`, becomes 0x17 (xmm2). Only when the right frame's own left
+    // frame (its pair) drew cascade 0; otherwise both eyes fit their own, as the engine does.
+    std::atomic<bool> g_SunShareOn{ false }, g_SunReady{ false };
+    std::atomic<unsigned long long> g_SunLeft0{ 0 };      // the pair (its left view's serial) whose left frame drew cascade 0
+    std::atomic<unsigned long long> g_SunKeep{ 0 };       // the right view (serial) whose frame keeps the left's cascade 0
+    std::atomic<int> g_SunInPrep{ 0 };
+    std::atomic<unsigned long long> g_SunKept{ 0 }, g_SunFitted{ 0 }, g_SunNoLeft{ 0 }, g_SunSkipped{ 0 }, g_SunLeftDrawn{ 0 };
+    bool g_SunBytesKeep = false;
+    constexpr uint32_t kPrepare = 0x333550, kSetupJe = 0x32B49D, kSplitModrm = 0x330A1E;
+    using PrepareFn = uintptr_t(*)(void*, void*);
+    PrepareFn g_PrepareReal = nullptr;
+
+    bool ReadMem(void* out, uintptr_t a, size_t n)
+    {
+        __try { memcpy(out, (const void*)a, n); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void SunSetKeep(bool keep)
+    {
+        if (keep == g_SunBytesKeep) return;
+        uint8_t* a = (uint8_t*)(GameInfo::Base() + kSetupJe); uint8_t* b = (uint8_t*)(GameInfo::Base() + kSplitModrm);
+        *(volatile uint8_t*)a = keep ? 0x29 : 0x3A;
+        *(volatile uint8_t*)b = keep ? 0x17 : 0x1F;
+        FlushInstructionCache(GetCurrentProcess(), a, 1); FlushInstructionCache(GetCurrentProcess(), b, 1);
+        g_SunBytesKeep = keep;
+    }
+    //! which eye's frame a task belongs to (its view's matrix -> the render pose): s = its view's serial, pair = the
+    //! pair's left serial
+    bool EyeOfTask(void* task, bool& left, bool& right, unsigned long long& s, unsigned long long& pair)
+    {
+        left = right = false; s = pair = 0;
+        const uint8_t* view = *(const uint8_t* const*)((const uint8_t*)task + 0x70);
+        if (!view || !CameraHook::IsMainViewObject(view)) return false;
+        float m[16]; memcpy(m, view + 0x7450, 64);
+        s = ViewMatrixHook::SerialOfViewMatrix(m);
+        if (!s) return false;
+        const ViewMatrixHook::XrPose p = ViewMatrixHook::RenderPoseXr(s);
+        left = p.valid && p.eye == 0 && p.pair;
+        right = p.valid && p.eye == 1 && p.pair && p.pair != s;
+        pair = p.pair;
+        return left || right;
+    }
+    uintptr_t HkPrepare(void* task, void* a2)
+    {
+        bool left = false, right = false; unsigned long long s = 0, pair = 0;
+        if (g_SunInPrep.fetch_add(1) != 0 && g_SunShareOn.load())
+        {   // two preparations at once: the switched bytes would be shared between them -- off for good
+            g_SunShareOn = false;
+            LOGI("StereoSync: StereoSunShadowReuse: two shadow preparations ran at the same time: switched off");
+        }
+        const bool on = task && g_SunShareOn.load(std::memory_order_relaxed) && g_SyncOn.load(std::memory_order_relaxed);
+        if (!on || !EyeOfTask(task, left, right, s, pair))
+        {   // not an eye's frame of synchronised stereo: as the engine
+            g_SunKeep = 0; SunSetKeep(false);
+            const uintptr_t r = g_PrepareReal(task, a2);
+            g_SunInPrep--;
+            return r;
+        }
+        const bool keep = right && pair && g_SunLeft0.load() == pair;
+        g_SunKeep = keep ? s : 0;
+        SunSetKeep(keep);
+        if (keep) g_SunKept++; else if (right) g_SunNoLeft++; else g_SunFitted++;
+        const uintptr_t r = g_PrepareReal(task, a2);
+        g_SunInPrep--;
+        return r;
+    }
+    //! a sun cascade-0 task (world or dynamic pass): true = not to be run (the right frame keeps the left's map)
+    bool SunSlice0(void* task, char dynamic)
+    {
+        bool left = false, right = false; unsigned long long s = 0, pair = 0;
+        if (!EyeOfTask(task, left, right, s, pair)) return false;
+        if (left) { if (!dynamic) { g_SunLeft0 = pair; g_SunLeftDrawn++; } return false; }
+        if (right && s == g_SunKeep.load()) { g_SunSkipped++; return true; }
+        return false;
+    }
+
     bool HkShadowTask(void* task, char dynamic)
     {
-        if (!task || !g_LightShadowOn.load(std::memory_order_relaxed) || !g_SyncOn.load(std::memory_order_relaxed))
-            return g_ShadowReal(task, dynamic);
+        if (!task || !g_SyncOn.load(std::memory_order_relaxed)) return g_ShadowReal(task, dynamic);
         const int slices = *(const int*)(GameInfo::Base() + kSliceCnt);
-        if (*(const int*)((const uint8_t*)task + 0xF8) < slices) return g_ShadowReal(task, dynamic);   // a sun cascade: never
+        const int slice = *(const int*)((const uint8_t*)task + 0xF8);
+        if (slice < slices)
+        {   // a sun cascade: only the nearest's, for the right eye (StereoSunShadowReuse)
+            if (slice == 0 && g_SunReady.load(std::memory_order_relaxed) && g_SunShareOn.load(std::memory_order_relaxed) && SunSlice0(task, dynamic))
+            {
+                if (uint8_t* ctx = *(uint8_t**)((uint8_t*)task + 0x108)) ctx[0x12AD4] = 1;   // as the engine marks a task it skips
+                return false;
+            }
+            return g_ShadowReal(task, dynamic);
+        }
+        if (!g_LightShadowOn.load(std::memory_order_relaxed)) return g_ShadowReal(task, dynamic);
         const uint8_t* view = *(const uint8_t* const*)((const uint8_t*)task + 0x70);
         unsigned long long s = 0;
         ViewMatrixHook::XrPose p;
@@ -585,15 +682,38 @@ void StereoSync::Install()
     const LONG e = DetourTransactionCommit();
     g_PollsHooked = e == NO_ERROR;
     LOGI("StereoSync: RunFrame + keyboard/mouse read hooks {}", e == NO_ERROR ? "installed" : "FAILED");
-    if (g_LightShadowOn.load())
-    {   // (experimental) the right eye's spot / omni shadow maps, when they are the left eye's (see HkShadowTask)
+    if (g_SunShareOn.load())
+    {   // StereoSunShadowReuse: the two code bytes (checked) made writable, and the shadow preparation hooked
+        const uintptr_t base = GameInfo::Base();
+        uint8_t je[2] = {}, mv[4] = {}, tgt[6] = {};
+        const bool ok = ReadMem(je, base + kSetupJe - 1, 2) && ReadMem(mv, base + kSplitModrm - 3, 4) && ReadMem(tgt, base + 0x32B4C7, 6)
+                     && je[0] == 0x74 && je[1] == 0x3A && mv[0] == 0xF3 && mv[1] == 0x0F && mv[2] == 0x11 && mv[3] == 0x1F
+                     && tgt[0] == 0x0F && tgt[1] == 0x84 && tgt[2] == 0x49 && tgt[3] == 0x08 && tgt[4] == 0 && tgt[5] == 0;
+        DWORD old = 0;
+        if (!ok) LOGI("StereoSync: StereoSunShadowReuse: the code at exe+0x{:X} / exe+0x{:X} is not as expected (another game version?): off", kSetupJe, kSplitModrm);
+        else if (!VirtualProtect((void*)(base + kSetupJe), 1, PAGE_EXECUTE_READWRITE, &old) || !VirtualProtect((void*)(base + kSplitModrm), 1, PAGE_EXECUTE_READWRITE, &old))
+            LOGI("StereoSync: StereoSunShadowReuse: the code cannot be made writable: off");
+        else
+        {
+            g_PrepareReal = (PrepareFn)(base + kPrepare);
+            DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+            DetourAttach(&(PVOID&)g_PrepareReal, HkPrepare);
+            const LONG s = DetourTransactionCommit();
+            if (s == NO_ERROR) g_SunReady = true; else g_PrepareReal = nullptr;
+            LOGI("StereoSync: StereoSunShadowReuse: the right eye's frame keeps the left eye's nearest sun cascade (its matrix, split distance and map: "
+                 "exe+0x{:X} / exe+0x{:X} switched per frame, SHADOWS_PREPARE exe+0x{:X} hooked {})", kSetupJe, kSplitModrm, kPrepare, s == NO_ERROR ? "" : "FAILED: off");
+        }
+        if (!g_SunReady.load()) g_SunShareOn = false;
+    }
+    if (g_LightShadowOn.load() || g_SunShareOn.load())
+    {   // the right eye's spot / omni shadow maps, when they are the left eye's, and its nearest sun cascade (see HkShadowTask)
         g_ShadowReal = (ShadowTaskFn)(GameInfo::Base() + kShadowTask);
         DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)g_ShadowReal, HkShadowTask);
         const LONG s = DetourTransactionCommit();
-        if (s != NO_ERROR) { g_ShadowReal = nullptr; g_LightShadowOn = false; }
-        LOGI("StereoSync: StereoLightShadowReuse (experimental): the right eye's frame reuses the left's spot / omni shadow maps when its jobs are the same and none is new: hook exe+0x{:X} {}",
-             kShadowTask, s == NO_ERROR ? "installed" : "FAILED");
+        if (s != NO_ERROR) { g_ShadowReal = nullptr; g_LightShadowOn = false; g_SunShareOn = false; g_SunReady = false; }
+        LOGI("StereoSync: the shadow task exe+0x{:X} hooked ({}{}{}): {}", kShadowTask, g_LightShadowOn.load() ? "StereoLightShadowReuse: the right eye reuses the left's spot / omni shadow maps when its jobs are the same and none is new" : "",
+             g_LightShadowOn.load() && g_SunShareOn.load() ? "; " : "", g_SunShareOn.load() ? "StereoSunShadowReuse: cascade 0's tasks" : "", s == NO_ERROR ? "installed" : "FAILED");
     }
     for (int i = 0; i < kPasses; i++)
     {   // only what the ini asks for (experimental): a pass not asked for is not touched at all
@@ -632,6 +752,18 @@ void StereoSync::OnPresent()
                  g_Sh.rdBigger, g_Sh.rdSmaller, g_Sh.rdSameEntry, g_Sh.needN ? g_Sh.needSum / (double)g_Sh.needN : 0.0, g_Sh.needMax,
                  CVars::GetInt("r_shadowCacheSliceCnt", -1), g_Sh.sampleText.empty() ? "" : "; e.g." + g_Sh.sampleText);
             g_Sh.samples = 0; g_Sh.sampleText.clear(); g_Sh.needMax = g_Sh.needSum = 0; g_Sh.needN = 0;
+        }
+    }
+    if (g_SunReady.load())
+    {   // StereoSunShadowReuse: how often the right eye kept the left's nearest cascade (every 60 s)
+        static ULONGLONG next = 0; const ULONGLONG now = GetTickCount64();
+        if (!next) next = now + 60000;
+        if (now >= next)
+        {
+            next = now + 60000;
+            LOGI("StereoSync: sun cascade 0 (StereoSunShadowReuse {}): right frames that kept the left's {}, that fitted their own (no left cascade 0 of their pair) {}; "
+                 "left frames {}, drew it {}; right tasks skipped {}", g_SunShareOn.load() ? "on" : "off", g_SunKept.load(), g_SunNoLeft.load(), g_SunFitted.load(),
+                 g_SunLeftDrawn.load(), g_SunSkipped.load());
         }
     }
     UiStackTick();
@@ -697,6 +829,8 @@ void StereoSync::SetReuse(const ReuseFlags& f)
     if (f.reflections) LOGI("StereoSync: StereoReflectionReuse is ignored: skipping the reflection probes' update for the right eye broke its reflections and saved nothing");
     g_ReuseOn[rDecals] = f.decals; g_ReuseOn[rStreaming] = f.streaming;
     g_LightShadowOn = f.lightShadows;
+    g_SunShareOn = f.sunShadows && (!g_Installed.load() || g_SunReady.load());   // (off: the bytes go back at the next preparation)
+    if (!f.sunShadows) g_SunKeep = 0;
 }
 
 std::string StereoSync::Status()

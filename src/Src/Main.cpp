@@ -44,6 +44,7 @@
 #include "GunRay.h"
 #include "BinkVideo.h"
 #include "Settings.h"
+#include "PostShare.h"
 #include "Roomscale.h"
 #include "ControllerBindings.h"
 #include "TestAids.h"
@@ -187,6 +188,9 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     if (has({ "hudresolution" })) ScreenMode::SetHudResolution(Settings::HudResolution());
     if (has({ "hudskipempty" })) ScreenMode::SetHudSkipEmpty(Settings::HudSkipEmpty());
+    if (has({ "skipemptyoutlines" })) PostShare::SetOutlines(Settings::SkipEmptyOutlines());
+    if (has({ "stereoexposurereuse" })) PostShare::SetExposure(Settings::StereoExposureReuse());
+    if (has({ "stereosunshadowreuse" })) StereoSync::SetReuse(Settings::StereoReuse());   // (on: only if it was on at start)
     if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
     if (has({ "outofviewmask" })) FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
@@ -264,6 +268,8 @@ static DWORD WINAPI InitThread(LPVOID)
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
     PassProfile::SetDepthOnly(Settings::DepthPassDepthOnly());
     PassProfile::SetDepthCopies(Settings::DepthPassSkipRedundantCopies());
+    PostShare::SetOutlines(Settings::SkipEmptyOutlines());      // before PassProfile::Install
+    PostShare::SetExposure(Settings::StereoExposureReuse());
     Foveation::SetParams(Settings::Foveated());
     FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
     FovMask::SetCorners(Settings::OutOfViewMaskCorners());

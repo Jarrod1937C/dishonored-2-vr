@@ -103,6 +103,8 @@ namespace
         { "display.viewdistance",       Kind::Float,  "-1", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
         { "display.depthpassdepthonly", Kind::Bool,   "0", 0, 0, nullptr, true },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
         { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr, true }, // GpuTrace: a depth copy that changes nothing is not made
+        { "display.skipemptyoutlines",  Kind::Bool,   "1", 0, 0, nullptr, true },   // PostShare: the outline effect's full-screen passes only with something outlined
+        { "advanced.stereoexposurereuse", Kind::Bool, "1", 0, 0, nullptr, true },   // PostShare: the right eye adapts its exposure from the left eye's histogram
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudresolution",      Kind::Float,  "1", 0.25f, 1, nullptr },   // ScreenMode: the HUD panel's resolution, share of the picture's per side
         { "display.hudskipempty",       Kind::Bool,   "1", 0, 0, nullptr, true },     // ScreenMode / XRSession: the HUD panel only where it shows something
@@ -183,6 +185,7 @@ namespace
         { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr, true },
         { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr, true },
         { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr, true },
+        { "advanced.stereosunshadowreuse", Kind::Bool, "1", 0, 0, nullptr, true },   // StereoSync: the right eye keeps the left's nearest sun cascade
         { "advanced.skipdisabledeffects", Kind::Float, "0", 0, 2, nullptr, true },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
         // [Logging] (2026-11-01: moved from [Advanced]; the old place is still read: kMoved)
         { "logging.logcontrollerinput", Kind::Bool,   "1", 0, 0, nullptr, true },
@@ -453,6 +456,8 @@ float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
 int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
 bool Settings::DepthPassDepthOnly() { return B("display.depthpassdepthonly"); }
 bool Settings::DepthPassSkipRedundantCopies() { return B("display.depthpassskipredundantcopies"); }
+bool Settings::SkipEmptyOutlines() { return B("display.skipemptyoutlines"); }
+bool Settings::StereoExposureReuse() { return B("advanced.stereoexposurereuse"); }
 float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjectsize"); }
 int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
@@ -540,6 +545,7 @@ StereoSync::ReuseFlags Settings::StereoReuse()
     f.reflections = B("advanced.stereoreflectionreuse"); f.decals = B("advanced.stereodecalreuse");
     f.streaming = B("advanced.stereostreamonceperpair");
     f.lightShadows = B("advanced.stereolightshadowreuse");
+    f.sunShadows = B("advanced.stereosunshadowreuse");
     return f;
 }
 

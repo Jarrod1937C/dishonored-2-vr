@@ -38,8 +38,10 @@ namespace StereoSync
     //! [Advanced] Stereo*Reuse (experimental, set before Install): passes the right eye's frame skips, using what the left
     //! eye's frame of the same tick just did: the ocean's simulation, the reflection probes' relighting, the decals on
     //! NPCs, and the texture streamer's uploads (once per pair instead of once per frame); and the spot / omni lights'
-    //! shadow maps, when the right frame's shadow jobs are the left's and none draws a new cache entry. Not the sun's
-    //! cascades: see StereoSync.cpp.
-    struct ReuseFlags { bool ocean = false, reflections = false, decals = false, streaming = false, lightShadows = false; };
+    //! shadow maps, when the right frame's shadow jobs are the left's and none draws a new cache entry. The sun's cascades
+    //! only through the engine's own keep path (StereoSunShadowReuse): see StereoSync.cpp.
+    //! StereoSunShadowReuse: the right eye's frame keeps the left eye's nearest sun cascade (its matrix, split distance
+    //! and map); the farther ones are already shared (the engine's alternate-frame updates).
+    struct ReuseFlags { bool ocean = false, reflections = false, decals = false, streaming = false, lightShadows = false, sunShadows = false; };
     void SetReuse(const ReuseFlags& f);
 }

@@ -336,6 +336,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                HudResolution = 1 (the HUD panel's resolution per side: 0.25 / 0.5 / 0.75 / 1; same place and size)
                HudSkipEmpty = 1 (the HUD panel only where it shows something, none when empty; the watch's
                                  cluster left off it while the watch holds the HUD on)
+               SkipEmptyOutlines = 1 (the outline effect's full-screen passes skipped by the GPU when nothing is outlined)
+               StereoExposureReuse = 1 (the right eye adapts its exposure from the left eye's measurement)
+               StereoSunShadowReuse = 1 (the right eye keeps the left eye's nearest sun shadow cascade: the same
+                                 near shadows and the same switch to the farther ones in both eyes)
                ViewDistance = -1 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
                DepthPassDepthOnly = 0 (experimental: the depth pass's main shader drawn depth-only)
                DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)

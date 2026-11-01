@@ -22,6 +22,7 @@
 #include <thread>
 #include <d3d11shader.h>
 #include "GpuTrace.h"
+#include "PostShare.h"
 
 namespace
 {
@@ -727,6 +728,9 @@ namespace
         const bool fogged = c && mainView && row == g_RowTransparent && g_FogHook.load(std::memory_order_relaxed) && Fog::BeforeTransparent(c, view);
         const bool fovRow = c && mainView && row >= 0 && row < 64 && g_FovRow[row] && g_FovHook.load(std::memory_order_relaxed);
         const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
+        // SkipEmptyOutlines / StereoExposureReuse (PostShare): GpuTrace's draw / dispatch hooks act inside these tasks
+        const bool shared = c && mainView && ((row == g_RowEmissive && PostShare::OutlinesOn()) || (row == g_RowPost && PostShare::ExposureOn()));
+        if (shared) PostShare::Enter(c, row == g_RowEmissive ? 1 : 2, eye);
         const Acc saved = t_Acc;
         t_Acc = Acc{}; t_Acc.on = prof;
         const Desc savedDesc = t_Desc;
@@ -751,6 +755,7 @@ namespace
         t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
+        if (shared) PostShare::Leave(c);
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
         if (c && mainView && row == g_RowWater && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterWater(c, view);
@@ -785,7 +790,8 @@ namespace
         const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
         const bool mask = g_MaskHook.load(std::memory_order_relaxed) || g_DepthOnly.load(std::memory_order_relaxed) || g_DepthCopies.load(std::memory_order_relaxed);
         const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
-        if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars)) return real(task);
+        const bool share = PostShare::OutlinesOn() || PostShare::ExposureOn();
+        if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars && !share)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
         if (!fn || fn == (uintptr_t)&Thunk) return real(task);
@@ -799,7 +805,8 @@ namespace
         const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent || pass == g_RowWater)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
                          || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))))
                          || (mask && pass == g_RowDepth) || (sss && pass == g_RowScreenShadows)
-                         || (chars && (pass == g_RowDepth || pass == g_RowShWorldSun || pass == g_RowShDynSun));
+                         || (chars && (pass == g_RowDepth || pass == g_RowShWorldSun || pass == g_RowShDynSun))
+                         || (share && (pass == g_RowEmissive || pass == g_RowPost));
         if (!wanted) return real(task);
         const TaskFn savedReal = t_Real; const int savedPass = t_Pass;
         t_Real = (TaskFn)fn; t_Pass = pass;
@@ -1216,7 +1223,8 @@ void PassProfile::Install()
     g_MaskHook = FovMask::Wanted();
     g_SssHook = ScreenShadows::Wanted();
     g_CharHook = ScreenShadows::CharactersWanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load() && !g_DepthOnly.load() && !g_DepthCopies.load()) || g_Exec) return;
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load() && !g_DepthOnly.load() && !g_DepthCopies.load()
+         && !PostShare::OutlinesOn() && !PostShare::ExposureOn()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;

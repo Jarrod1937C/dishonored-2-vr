@@ -30,6 +30,7 @@
 #include "Fog.h"
 #include "VrTweaks.h"
 #include "ScreenShadows.h"
+#include "PostShare.h"
 
 namespace
 {
@@ -4251,6 +4252,7 @@ namespace
         static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext* c, UINT x, UINT y, UINT z)
         {
             PassProfile::NoteDispatch(c, x, y, z, false);
+            if (PostShare::Active() && PostShare::AtDispatch(c)) return;   // StereoExposureReuse
             if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, x, y, z, false, p);
             realDispatch(c, x, y, z);
@@ -4259,6 +4261,7 @@ namespace
         static void STDMETHODCALLTYPE DispatchInd(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
             PassProfile::NoteDispatch(c, 0, 0, 0, true);
+            if (PostShare::Active() && PostShare::AtDispatch(c)) return;   // StereoExposureReuse
             if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, 0, 0, 0, true, p);
             realDispatchInd(c, b, o);
@@ -4328,6 +4331,7 @@ namespace
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(c, n, 1, false);
             if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
@@ -4348,6 +4352,7 @@ namespace
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(c, n, 1, false);
             if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
@@ -4367,6 +4372,7 @@ namespace
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
             if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
@@ -4386,6 +4392,7 @@ namespace
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
             if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
@@ -4402,7 +4409,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawIdxInstIndirect(c, b, o);
@@ -4410,7 +4417,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawInstIndirect(c, b, o);

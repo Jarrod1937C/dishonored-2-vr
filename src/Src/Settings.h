@@ -52,6 +52,8 @@ namespace Settings
     int ViewDistance();                           //!< [Display] ViewDistance (VrTweaks): -1 = the game's
     bool DepthPassDepthOnly();                    //!< [Display] DepthPassDepthOnly (experimental)
     bool DepthPassSkipRedundantCopies();          //!< [Display] DepthPassSkipRedundantCopies
+    bool SkipEmptyOutlines();                     //!< [Performance] SkipEmptyOutlines (PostShare)
+    bool StereoExposureReuse();                   //!< [Performance] StereoExposureReuse (PostShare)
     float ShadowMapMinObjectSize();               //!< [Display] (ScreenShadows), m across
     int ShadowSunUpdateEvery();                   //!< [Display] (ScreenShadows), frame pairs 1 / 2 / 4
     float HudMarkerSize();                        //!< [Display] HudMarkerSize: the HUD square around a marker put at its character's distance (ScreenMode)                             //!< [Display] HudScale: the stereo HUD panel's share of the view (ScreenMode)
