@@ -41,6 +41,8 @@ namespace VRRuntime
     bool GetInput(XRInputState& out);
     //! A haptic pulse on a controller (0 left, 1 right). RENDER THREAD only (the Present path: KbmInject::Tick).
     bool Vibrate(int hand, float amplitude, float seconds, float hz = 0.f);
+    //! ControllerPitchOffset / FingerTracking changed (a controller profile, the VR options tabs): to the session now
+    void SetControllerOptions(float pitchOffsetDeg, bool fingerTracking);
     unsigned long long HapticPulses();
 
     //! Stage 5: alternating-eye stereo. Each game frame is rendered from ONE eye's

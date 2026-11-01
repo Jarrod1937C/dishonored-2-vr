@@ -12,6 +12,7 @@
 #include "SysInfo.h"
 #include "Watchdog.h"
 #include "PassProfile.h"
+#include "ControllerBindings.h"
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -1498,7 +1499,7 @@ void XRSession::PollEventsNow()
         else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED)
         {   // which controller profile the runtime actually bound (Touch, Index...): the first thing to look at when a
             // tester's buttons do nothing
-            std::string prof;
+            std::string prof, path[2];
             for (int h = 0; h < 2; h++)
             {
                 XrInteractionProfileState st = { XR_TYPE_INTERACTION_PROFILE_STATE };
@@ -1507,8 +1508,13 @@ void XRSession::PollEventsNow()
                     && st.interactionProfile != XR_NULL_PATH)
                     xrPathToString(g.instance, st.interactionProfile, sizeof buf, &n, buf);
                 prof += fmt::format("{}{} {}", h ? ", " : "", h ? "right" : "left", buf);
+                path[h] = buf;
             }
-            if (prof != m_Profiles) LOGI("XRSession: controllers bound as: {}", prof);   // runtimes repeat the event
+            if (prof != m_Profiles)
+            {   // runtimes repeat the event
+                LOGI("XRSession: controllers bound as: {}", prof);
+                ControllerBindings::OnProfile(path[0], path[1]);   // the controller profile for these (auto)
+            }
             m_Profiles = prof;
         }
         else if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR)

@@ -58,6 +58,10 @@ namespace Settings
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
     bool Roomscale();                             //!< [Controls] Roomscale: walking in the room walks the character (Roomscale)
+    std::string ControllerBindings();             //!< [Controls] ControllerBindings: auto or a profile's file name (ControllerBindings)
+    float PadPressForce();                        //!< a controller profile's trackpad press force (KbmInject)
+    float PadReleaseForce();                      //!< ...and the force it lets go below
+    float PadCenterRadius();                      //!< ...and the left pad's centre (the menu button), 0..1
     bool WallFade();                              //!< [Controls] WallFade: the headset darkens with the head in a wall (Roomscale)
     void WallFadeColor(float srgb[3]);            //!< [Controls] WallFadeColor: what it fades to (R,G,B 0-255 in the file)
     float RoomscaleDeadzone();                    //!< [Controls] RoomscaleDeadzone: m (the ini says cm) before it follows
@@ -100,11 +104,15 @@ namespace Settings
     //! `choices` ("a|b"), 3 free text; the value as read (or the default)
     struct KeyInfo { std::string name; int kind = 0; std::string value, def; float lo = 0, hi = 0; std::string choices; bool hidden = false;
                      std::string rec; /*!< recommended for most players (@user ones; "" = none) */
-                     bool restart = false; /*!< a change takes effect when the game is started again; value = the saved one */ };
+                     bool restart = false; /*!< a change takes effect when the game is started again; value = the saved one */
+                     std::string source;   /*!< the controller profile that holds it ("index.json"; "" = the ini) */ };
     bool Info(const std::string& name, KeyInfo& out);
     //! The VR options tabs' Save (VrMenu): each (name, value) checked as the file's own would be, written into
     //! DishonoredVR.ini in place (only the value on that setting's line changes) and then used: at once, or after a
     //! restart (KeyInfo::restart). `live`: the bare lower-case names that changed at once, for the modules to be told.
     //! false (+ err) = the file could not be written, and nothing changed.
     bool Save(const std::vector<std::pair<std::string, std::string>>& changes, std::vector<std::string>& live, std::string& err);
+    //! A controller profile's settings (ControllerBindings: bare name, value as written), checked as the ini's are and
+    //! used instead of the ini's; `changed` = the bare names whose value changed. Any thread.
+    void ApplyOverrides(const std::vector<std::pair<std::string, std::string>>& values, const std::string& source, std::vector<std::string>& changed);
 }

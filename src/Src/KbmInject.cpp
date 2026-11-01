@@ -220,25 +220,28 @@ namespace
     // right pad is the interact key -- on the hand whose ray picks what is interacted with.
     enum : unsigned { kVPadUp = 1u << 12, kVPadRight = 1u << 13, kVPadDown = 1u << 14, kVPadLeft = 1u << 15, kVPadUse = 1u << 16 };
     constexpr unsigned kVPadDirs = kVPadUp | kVPadRight | kVPadDown | kVPadLeft;
-    //! The trackpads as presses (force past 0.5, let go below 0.3), each press's meaning fixed by where it began.
+    //! The trackpads as presses (force past 0.5, let go below 0.3: a controller profile's PadPressForce /
+    //! PadReleaseForce), each press's meaning fixed by where it began (the left pad's centre: PadCenterRadius).
+    std::atomic<float> g_PadOn{ 0.5f }, g_PadOff{ 0.3f }, g_PadCentre{ 0.45f };
     unsigned PadBits(const XRInputState& in)
     {
         static bool down[2] = {}; static unsigned what[2] = {};
+        const float on = g_PadOn.load(), off = g_PadOff.load(), rc = g_PadCentre.load();
         for (int h = 0; h < 2; h++)
         {
             const float f = in.padForce[h];
-            if (!down[h] && f > 0.5f)
+            if (!down[h] && f > on)
             {
                 down[h] = true;
                 if (h == 1) what[h] = kVPadUse;
                 else
                 {
                     const float x = in.padX[0], y = in.padY[0];
-                    what[h] = x * x + y * y < 0.45f * 0.45f ? kXRBtnMenu
+                    what[h] = x * x + y * y < rc * rc ? kXRBtnMenu
                             : fabsf(y) >= fabsf(x) ? (y > 0 ? kVPadUp : kVPadDown) : (x > 0 ? kVPadRight : kVPadLeft);
                 }
             }
-            else if (down[h] && f < 0.3f) down[h] = false;
+            else if (down[h] && f < off) down[h] = false;
         }
         return (down[0] ? what[0] : 0u) | (down[1] ? what[1] : 0u);
     }
@@ -1889,6 +1892,11 @@ void KbmInject::Tick()
 bool KbmInject::Possessing() { return g_Possessing.load(); }
 bool KbmInject::PhysicalCrouchOwns() { return g_PcOwnA.load() || g_VStandA.load(); }
 unsigned KbmInject::CrouchLiftCancels() { return g_LiftCancels.load(); }
+void KbmInject::SetPadParams(float pressForce, float releaseForce, float centreRadius)
+{
+    g_PadOn = std::clamp(pressForce, 0.05f, 1.f); g_PadOff = std::clamp(releaseForce, 0.02f, g_PadOn.load() - 0.01f); g_PadCentre = std::clamp(centreRadius, 0.1f, 0.9f);
+    LOGI("KbmInject: trackpad presses past {:.2f} force, let go below {:.2f}; the left pad's centre (menu) within {:.2f}", g_PadOn.load(), g_PadOff.load(), g_PadCentre.load());
+}
 void KbmInject::SetPhysicalCrouch(bool on, float depth)
 {
     g_PcOn = on; g_PcDepth = std::clamp(depth, 0.1f, 0.8f);

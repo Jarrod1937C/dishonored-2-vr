@@ -2,6 +2,7 @@
 #include "Settings.h"
 #include "GameInfo.h"
 #include "StereoSync.h"
+#include "ControllerBindings.h"
 #include <map>
 #include <algorithm>
 #include <cmath>
@@ -37,6 +38,12 @@ namespace
         { "controls.gripthresholdright", Kind::Float, "0.45", 0.05f, 0.95f, nullptr },  // ...the right grip's (more sensitive)
         { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr, true },   // (old: both grips) used when the two above are absent
         { "controls.controllerpitchoffset", Kind::Float, "0", -60, 60, nullptr },
+        // ControllerBindings: the profile in VRControllerBindings\ (auto = the controller's; or a file name) and the
+        // trackpads' press (force past, let go below) and the left pad's centre (the menu button), a radius 0..1
+        { "controls.controllerbindings", Kind::Text,  "auto", 0, 0, nullptr },
+        { "controls.padpressforce",     Kind::Float,  "0.5", 0.05f, 1, nullptr, true },
+        { "controls.padreleaseforce",   Kind::Float,  "0.3", 0.02f, 1, nullptr, true },
+        { "controls.padcenterradius",   Kind::Float,  "0.45", 0.1f, 0.9f, nullptr, true },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr, true },
         { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: crouching for real crouches the character
         { "controls.physicalcrouchdepth", Kind::Float, "30", 10, 80, nullptr }, // cm the head goes under its standing height to crouch
@@ -159,6 +166,7 @@ namespace
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present (never inserted into after Load)
     std::map<std::string, std::string> g_Pending; //!< saved from the VR options tabs, used after a restart (kRestart)
+    std::map<std::string, std::string> g_Source;  //!< bare name -> the controller profile that set it ("index.json")
     SRWLOCK g_Lock = SRWLOCK_INIT;                //!< g_Val's values / g_Pending: the VR options tabs change them while others read
     std::map<std::string, bool> g_Given;          //!< the keys the file set (validly)
     bool g_FileFound = false;
@@ -341,6 +349,10 @@ float Settings::KnockoutRadius() { return F("gameplay.knockoutradius"); }
 bool Settings::SkipIntroVideos() { return B("advanced.skipintrovideos"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
 bool Settings::Roomscale() { return B("controls.roomscale"); }
+std::string Settings::ControllerBindings() { return V("controls.controllerbindings"); }
+float Settings::PadPressForce() { return F("controls.padpressforce"); }
+float Settings::PadReleaseForce() { return std::min(F("controls.padreleaseforce"), F("controls.padpressforce") - 0.02f); }
+float Settings::PadCenterRadius() { return F("controls.padcenterradius"); }
 bool Settings::WallFade() { return B("controls.wallfade"); }
 void Settings::WallFadeColor(float srgb[3])
 {
@@ -558,15 +570,16 @@ namespace
         { "infinitemana", "1" },
         { "infiniteammo", "1" },
         { "infinitehealth", "1" },
-        { "skipintrovideos", "1" }
+        { "skipintrovideos", "1" },
+        { "controllerbindings", "auto" }
     };
     // The @user settings a change of which only takes effect when the game is started again (VrMenu labels them, and
     // Settings::Save keeps their new value for then): read once when the headset's session or the swapchain is made
-    // (Stereo3D: the VR package's command, run once a game is first entered; RenderScale; ControllerPitchOffset and
-    // FingerTracking: the session), a hook installed or not at startup (HudMarkers), only used while starting
-    // (SkipIntroVideos), or applied by the game when it applies its own view distance (ViewDistance).
-    const char* const kRestart[] = { "stereo3d", "renderscale", "controllerpitchoffset", "fingertracking", "hudmarkers",
-                                     "skipintrovideos", "viewdistance" };
+    // (Stereo3D: the VR package's command, run once a game is first entered; RenderScale), a hook installed or not at
+    // startup (HudMarkers), only used while starting (SkipIntroVideos), or applied by the game when it applies its own
+    // view distance (ViewDistance). (ControllerPitchOffset and FingerTracking: given to the session at once since
+    // 2026-11-01, as a controller profile can change them after it started.)
+    const char* const kRestart[] = { "stereo3d", "renderscale", "hudmarkers", "skipintrovideos", "viewdistance" };
     bool Restart(const std::string& bare)
     {
         for (const char* r : kRestart) if (bare == r) return true;
@@ -587,6 +600,9 @@ bool Settings::Info(const std::string& name, KeyInfo& out)
             if (auto it = g_Pending.find(k.name); it != g_Pending.end()) out.value = it->second;   // saved, for after a restart
             ReleaseSRWLockShared(&g_Lock);
             out.restart = Restart(out.name);
+            AcquireSRWLockShared(&g_Lock);
+            if (auto it = g_Source.find(out.name); it != g_Source.end()) out.source = it->second;
+            ReleaseSRWLockShared(&g_Lock);
             out.def = k.def; out.lo = k.lo; out.hi = k.hi; out.choices = k.choices ? k.choices : ""; out.hidden = k.hidden;
             out.rec.clear();
             for (const auto& r : kRecommended) if (out.name == r.first) { out.rec = r.second; break; }
@@ -598,7 +614,7 @@ bool Settings::Info(const std::string& name, KeyInfo& out)
 bool Settings::Save(const std::vector<std::pair<std::string, std::string>>& changes, std::vector<std::string>& live, std::string& err)
 {
     live.clear(); err.clear();
-    struct Change { const Key* k; std::string name, value; bool written = false; };
+    struct Change { const Key* k; std::string name, value; bool written = false, json = false; };
     std::vector<Change> todo;
     for (const auto& c : changes)
     {
@@ -610,6 +626,14 @@ bool Settings::Save(const std::vector<std::pair<std::string, std::string>>& chan
         todo.push_back({ k, c.first, v });
     }
     if (todo.empty()) return true;
+    // A controller profile's settings go back into its file (ControllerBindings), the others into the ini
+    std::vector<std::pair<std::string, std::string>> toJson;
+    for (Change& c : todo)
+        if (ControllerBindings::Owns(strchr(c.k->name, '.') + 1)) { toJson.push_back({ c.name, c.value }); c.written = c.json = true; }
+    if (!toJson.empty() && !ControllerBindings::Write(toJson, err)) return false;
+    bool anyIni = false; for (const Change& c : todo) if (!c.json) anyIni = true;
+    if (anyIni)
+    {
     // The file, its lines changed in place: only the value on each one's line (what is around it, comments and line
     // ends included, stays); a setting the file does not have yet goes at its end (it is found by its name alone).
     const std::wstring path = GameInfo::GameDir() + L"\\DishonoredVR.ini";
@@ -635,7 +659,7 @@ bool Settings::Save(const std::vector<std::pair<std::string, std::string>>& chan
         {
             const std::string bare = Lower(Trim(line.substr(0, eq)));
             for (Change& c : todo)
-                if (bare == strchr(c.k->name, '.') + 1)
+                if (!c.json && bare == strchr(c.k->name, '.') + 1)
                 {
                     size_t vs = eq + 1; while (vs < end && (line[vs] == ' ' || line[vs] == '\t')) vs++;
                     size_t ce = line.find_first_of(";#", vs); if (ce == std::string::npos || ce > end) ce = end;
@@ -666,6 +690,7 @@ bool Settings::Save(const std::vector<std::pair<std::string, std::string>>& chan
         err = fmt::format("DishonoredVR.ini could not be replaced (error {})", GetLastError());
         return false;
     }
+    }
     // Now the values themselves: at once, or (kRestart) kept for the tabs and used after a restart
     AcquireSRWLockExclusive(&g_Lock);
     for (const Change& c : todo)
@@ -676,7 +701,31 @@ bool Settings::Save(const std::vector<std::pair<std::string, std::string>>& chan
     }
     ReleaseSRWLockExclusive(&g_Lock);
     std::string said;
-    for (const Change& c : todo) said += fmt::format(" {}={}{}", c.name, c.value, Restart(strchr(c.k->name, '.') + 1) ? " (after a restart)" : "");
-    LOGI("Settings: saved to DishonoredVR.ini:{}", said);
+    for (const Change& c : todo) said += fmt::format(" {}={}{}{}", c.name, c.value, c.json ? " (in VRControllerBindings\\" + ControllerBindings::Active() + ".json)" : "",
+                                                    Restart(strchr(c.k->name, '.') + 1) ? " (after a restart)" : "");
+    LOGI("Settings: saved:{}", said);
     return true;
+}
+
+void Settings::ApplyOverrides(const std::vector<std::pair<std::string, std::string>>& values, const std::string& source, std::vector<std::string>& changed)
+{
+    changed.clear();
+    for (const auto& kv : values)
+    {
+        const std::string bare = Lower(Trim(kv.first));
+        const Key* k = nullptr;
+        for (const Key& kk : kKeys) if (bare == strchr(kk.name, '.') + 1) { k = &kk; break; }
+        if (!k) { LOGI("Settings: {}: unknown setting '{}' ignored", source, kv.first); continue; }
+        if (bare == "controllerbindings") { LOGI("Settings: {}: ControllerBindings is chosen in DishonoredVR.ini, not in a profile: ignored", source); continue; }
+        std::string v;
+        if (!Validate(*k, kv.second, v)) { LOGI("Settings: {}: {} = '{}' is not a valid value: ignored", source, kv.first, kv.second); continue; }
+        AcquireSRWLockExclusive(&g_Lock);
+        const std::string was = g_Val[k->name];
+        const bool fromIni = g_Given.count(k->name) && !g_Source.count(bare);
+        g_Val[k->name] = v; g_Given[k->name] = true; g_Source[bare] = source;
+        g_Pending.erase(k->name);
+        ReleaseSRWLockExclusive(&g_Lock);
+        if (fromIni && was != v) LOGI("Settings: {} = {} in DishonoredVR.ini: {} has {}, which is used", strchr(k->name, '.') + 1, was, source, v);
+        if (was != v) changed.push_back(bare);
+    }
 }

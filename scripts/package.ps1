@@ -2,6 +2,7 @@
 #   dinput8.dll, DishonoredVR.dll        the mod (C runtime linked in: no Visual C++ redistributable needed)
 #   DishonoredVR.ini                     the settings, every one at its default and explained
 #   README.txt                           install / setup / controls / troubleshooting ({REPO_URL} = -RepoUrl)
+#   VRControllerBindings\*.json          the controller profiles (one per controller: layout, grips, trackpads...)
 #   THIRD-PARTY-NOTICES.txt              the licences of what is linked in (Detours, fmt, Dear ImGui, OpenXR loader, jsoncpp)
 # and keeps the matching symbols in local\releases\<version>-<commit>\ (tools\symbolize.py turns a tester's CRASH lines
 # into functions with them). The version is set in src\CMakeLists.txt; the commit is appended by the build.
@@ -38,6 +39,12 @@ Copy-Item "$repo\build\bin\dinput8.dll", "$repo\build\bin\DishonoredVR.dll" $sta
 foreach ($t in 'DishonoredVR.ini', 'README.txt') {
     $text = (Get-Content "$repo\package\$t" -Raw) -replace "`r`n", "`n" -replace '\{VERSION\}', $ver -replace '\{REPO_URL\}', $RepoUrl
     [IO.File]::WriteAllText("$stage\$t", ($text -replace "`n", "`r`n"), [Text.UTF8Encoding]::new($false))
+}
+# the controller profiles, in their own folder next to the DLLs
+New-Item -ItemType Directory -Force "$stage\VRControllerBindings" | Out-Null
+foreach ($j in Get-ChildItem "$repo\package\VRControllerBindings" -Filter *.json) {
+    $text = (Get-Content $j.FullName -Raw) -replace "`r`n", "`n"
+    [IO.File]::WriteAllText("$stage\VRControllerBindings\$($j.Name)", ($text -replace "`n", "`r`n"), [Text.UTF8Encoding]::new($false))
 }
 # the licences of everything linked into the DLLs, from vcpkg's copies
 $share = "$repo\build\vcpkg_installed\x64-windows-static\share"

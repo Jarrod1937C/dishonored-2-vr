@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # first configure b
 | `src/Proxy/` | `dinput8.dll`: forwards `DirectInput8Create` to the system DLL and `LoadLibrary`s `DishonoredVR.dll` from the game folder. |
 | `src/Src/` | The mod. `Main.cpp` (init order, the per-Present call list), `Commands.cpp` (command files, heartbeat, the `vr` command chain), one module per feature (`XRSession`, `VRRuntime`, `KbmInject`, `GpuTrace`, `ViewMatrixHook`, `GunRay`, `SwordContact`, `ScreenMode`, `WristHud`, `RenderRes`, `StereoTaa`...), `Settings` (the ini), `CrashLog`, `Watchdog`, `Log`, `SysInfo`, `TestAids`, `Seeds` + generated `SeedsData.inc`, `Version.h.in`/`Version.rc.in`. |
 | `mockxr/` | The mock OpenXR runtime (`mock_runtime.cpp`, one file). Test tool only. |
-| `package/` | Sources of the release zip's text files: `DishonoredVR.ini` and `README.txt` (`{VERSION}` and `{REPO_URL}` are substituted). |
+| `package/` | Sources of the release zip's text files: `DishonoredVR.ini` and `README.txt` (`{VERSION}` and `{REPO_URL}` are substituted), and `VRControllerBindings/*.json`, the controller profiles (`deploy.ps1` adds the ones the game folder lacks). |
 | `scripts/` | `build.ps1`, `build-mockxr.ps1`, `deploy.ps1`, `undeploy.ps1`, `run-test.ps1`, `package.ps1`. |
 | `scripts/testing/` | Not in the public repository (see section 6): the headless driver `Play.ps1` and the test batteries. |
 | `tools/` | Python: `symbolize.py` (crash lines -> functions), `make_seeds.py` (regenerate `SeedsData.inc`), static RE helpers for `Dishonored2.exe`. |
@@ -108,6 +108,7 @@ The mod reads and writes everything next to `Dishonored2.exe` (the game's workin
 | File | Who writes it | Purpose |
 |---|---|---|
 | `DishonoredVR.ini` | you | Player settings (see below). Optional: every key has a default in code. |
+| `VRControllerBindings\*.json` | you / deploy.ps1 | Controller profiles ([ControllerBindings.cpp](../src/Src/ControllerBindings.cpp)): per controller, its settings (`settings`: any ini key; wins over the ini), the OpenXR interaction profiles it is for (`match`). `ControllerBindings = auto` picks the reported controller's, else the first file by name. |
 | `DVR_autoexec.txt` | you (dev only) | `vr ...` / engine lines run once per launch, after the ini's package settings. `#` comments a line out. |
 | `DVR_usemock.txt` | you / scripts | One line: an OpenXR runtime manifest path. Sets `XR_RUNTIME_JSON` for this process. |
 | `DVR_validate.txt` | you (dev only) | One line: the folder of the Khronos core validation layer. Loads it; report in `DVR_xrvalidation.html`. |

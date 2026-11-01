@@ -118,6 +118,7 @@ set(MOD_SOURCES
     Src/MenuProbe.cpp  Src/MenuProbe.h
     Src/VrMenu.cpp     Src/VrMenu.h       Src/VrMenuLayout.inc
     Src/Roomscale.cpp  Src/Roomscale.h
+    Src/ControllerBindings.cpp Src/ControllerBindings.h
     "${CMAKE_BINARY_DIR}/generated/Version.rc"
     Src/VRMath.h
     Src/pch.h

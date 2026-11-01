@@ -5,6 +5,7 @@ static const VrRow kVrRows[] = {
     { "Controls", "Turning", "SmoothTurnSpeed" },
     { "Controls", "Turning", "SnapTurnAngle" },
     { "Controls", "Turning", "SnapTurnBlank" },
+    { "Controls", "Controllers", "ControllerBindings" },
     { "Controls", "Controllers", "Layout" },
     { "Controls", "Controllers", "QuickSlotHoldTime" },
     { "Controls", "Controllers", "Haptics" },

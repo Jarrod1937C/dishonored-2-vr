@@ -65,6 +65,7 @@ namespace KbmInject
     //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
     //! character (the game's crouch key), standing up stands it.
     void SetPhysicalCrouch(bool on, float depth);
+    void SetPadParams(float pressForce, float releaseForce, float centreRadius);   //!< a controller profile's trackpad presses
     //! The game's crouch now is the one the real head made (ViewMatrixHook keeps the view at the head's height then).
     bool PhysicalCrouchOwns();
     //! Counts the times the view's crouch lift is to go at once (B back down after a kept stand-up).

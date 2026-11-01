@@ -2,6 +2,7 @@
 #include "VrMenu.h"
 #include "Settings.h"
 #include "GameInfo.h"
+#include "ControllerBindings.h"
 #include <detours/detours.h>
 #include <atomic>
 #include <climits>
@@ -181,6 +182,12 @@ namespace
             return w;
         }
         if (name == "outofviewmask") { stepper({ { "0", "Off" }, { "1", "Both sides" }, { "2", "Outer side only" } }); return w; }
+        if (name == "controllerbindings")
+        {   // auto, or one of the profiles in VRControllerBindings
+            std::vector<std::pair<std::string, std::string>> o{ { "auto", "auto (for the controllers in use)" } };
+            for (const std::string& n : ControllerBindings::Names()) o.push_back({ n, n });
+            stepper(o); return w;
+        }
         if (name == "renderscale")
         {
             std::vector<std::pair<std::string, std::string>> o{ { "0", "Window size" } };
@@ -300,7 +307,7 @@ namespace
         const VrTab& tab = kVrTabList[t];
         const char* group = tab.label;
         const bool several = tab.groups[1] != nullptr;
-        std::vector<std::string> cats;
+        std::vector<std::string> cats, catSrc;
         std::vector<Item> items;
         for (const char* g : tab.groups)
         for (const VrRow& r : kVrRows)
@@ -309,7 +316,8 @@ namespace
             Settings::KeyInfo k;
             if (!Settings::Info(r.key, k) || k.hidden) continue;
             const std::string sub = several ? std::string(g) + ": " + Words(r.sub) : Words(r.sub);
-            if (cats.empty() || cats.back() != sub) cats.push_back(sub);
+            if (cats.empty() || cats.back() != sub) { cats.push_back(sub); catSrc.push_back(""); }
+            if (!k.source.empty()) catSrc.back() = k.source;   // a controller profile's: saved into that file
             Widget w = Make(r.key, k);
             const std::string rec = RecText(w, k);
             // "Render scale (restart, recommended: 1)": a change of a restart one is saved and used next time
@@ -326,6 +334,8 @@ namespace
             const Member mLabel = Mem(s.get(), "label"), mClass = Mem(s.get(), "screenClassName"), mCats = Mem(s.get(), "categories");
             SetStr(s.get(), mLabel, std::string("VR ") + group);
             SetStr(s.get(), mClass, "");
+            // "Controllers (index.json)": the subgroup's settings come from (and are saved into) that controller profile
+            for (size_t i = 0; i < cats.size(); i++) if (!catSrc[i].empty()) cats[i] += " (" + catSrc[i] + ")";
             StringArray(file, s.get(), mCats, cats);
             PathArray list(file, "optionsData.currentSection.settings", (int)items.size());
             const Member mL = Mem(list.elem(), "label"), mC = Mem(list.elem(), "categoryIndex");

@@ -1,0 +1,27 @@
+{
+  "name": "Valve Index (Knuckles)",
+  "about": "The settings for Valve Index controllers. The mod uses this file for the controllers listed in 'match' (ControllerBindings = auto in DishonoredVR.ini), or when ControllerBindings = index. Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
+  "match": [ "/interaction_profiles/valve/index_controller" ],
+  "settings": {
+    "Layout": "index",
+    "QuickSlotHoldTime": 0.5,
+    "GripThresholdLeft": 0.6,
+    "GripThresholdRight": 0.45,
+    "FingerTracking": true,
+    "ControllerPitchOffset": 0,
+    "PadPressForce": 0.5,
+    "PadReleaseForce": 0.3,
+    "PadCenterRadius": 0.45
+  },
+  "notes": {
+    "Layout": "default = the layout in README.txt; classic = Y leans, X interacts, menu button pauses (held: journal); index = right trigger = interact (the sword strikes by swinging; its button is the right trackpad), left trackpad = quick slots 1-4 (press its top / right / bottom / left) and menu (press its middle), left B / A = health / mana elixir; the grips are for your hands (grab, pull, holsters; the right one blocks only with the sword out), and an object you pick up stays in your hand while you hold the grip. On controllers without trackpads index is the default layout.",
+    "QuickSlotHoldTime": "How long Y / X are held to use quick slot 3 / 4 instead of 1 / 2, in seconds (0.15 - 2).",
+    "GripThresholdLeft": "How firmly the left grip must be squeezed to count (0.05 - 0.95; lower = more sensitive). On Index controllers this is the grip's squeeze FORCE, so a hand resting on it does nothing. Lower it if the hand needs too hard a squeeze, raise it if it grabs by itself. (If you changed the grip bindings in SteamVR, reset them there.)",
+    "GripThresholdRight": "The same for the right grip.",
+    "FingerTracking": "With Layout = index: the in-game fingers follow yours (each finger on its own when SteamVR gives the hand's skeleton, else thumb / index / the other three from the controller's sensors). For an empty hand and a hand with a power; a hand holding the sword, a gun or an object keeps its grip on it. false = the game's hand poses.",
+    "ControllerPitchOffset": "If the in-game hands and weapons point higher or lower than your real controllers, tilt them here, in degrees: positive = up, negative = down (-60 - 60).",
+    "PadPressForce": "How hard a trackpad is pressed to count as a press (0.05 - 1, the pad's force sensor).",
+    "PadReleaseForce": "The force it lets go below (less than PadPressForce).",
+    "PadCenterRadius": "The left trackpad's middle (the menu button), as a share of the pad's radius (0.1 - 0.9); outside it the pad's top / right / bottom / left are the quick slots."
+  }
+}

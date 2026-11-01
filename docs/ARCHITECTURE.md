@@ -113,7 +113,7 @@ Some design rules recur throughout and explain choices that may look odd:
 | `mockxr/` | a mock OpenXR runtime used for headless testing (fake HMD and controllers driven from a text file, real D3D11 swapchains, a compositor emulation that writes what each eye would see) |
 | `scripts/` | `build.ps1`, `deploy.ps1`, `undeploy.ps1`, `package.ps1`, `run-test.ps1`, `build-mockxr.ps1`; `scripts/testing/` (not published; see DEVELOPMENT.md section 6) holds the test harness (`Play.ps1` drives the game through the command channel) and one folder of test scripts per subsystem |
 | `tools/` | Python reverse-engineering helpers (RTTI, typeinfo, xref, call-site and displacement scanners, `symbolize.py` for crash backtraces, `make_seeds.py`) |
-| `package/` | files shipped to players next to the DLLs (`DishonoredVR.ini`, `README.txt`) |
+| `package/` | files shipped to players next to the DLLs (`DishonoredVR.ini`, `README.txt`, `VRControllerBindings/*.json`: the controller profiles) |
 | `docs/` | this file, ENGINE.md, DEVELOPMENT.md, STATUS.md, the cvar dump |
 
 ---
@@ -159,7 +159,9 @@ At that point no engine global (cvars, the game-local object, the command system
 
 ### Settings
 
-[Settings.cpp](../src/Src/Settings.cpp) reads `<game folder>\DishonoredVR.ini` once. Every key has a default in code,
+[Settings.cpp](../src/Src/Settings.cpp) reads `<game folder>\DishonoredVR.ini` once, then [ControllerBindings.cpp](../src/Src/ControllerBindings.cpp)
+lays the controller profile's settings (`<game folder>\VRControllerBindings\<name>.json`) over it (again when the runtime
+reports the controllers, for `ControllerBindings = auto`). Every key has a default in code,
 so a missing file, key or unreadable value leaves the mod working (and the log says which). Values are validated
 (booleans, clamped floats with comma-or-point decimals, choices). Settings are not applied directly: they are turned
 into `vr ...` commands in two batches:

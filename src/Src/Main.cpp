@@ -45,6 +45,7 @@
 #include "BinkVideo.h"
 #include "Settings.h"
 #include "Roomscale.h"
+#include "ControllerBindings.h"
 #include "Seeds.h"
 #include "SysInfo.h"
 #include "Version.h"
@@ -152,6 +153,9 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
+    if (has({ "layout", "fingertracking", "controllerpitchoffset" })) VRRuntime::SetControllerOptions(Settings::ControllerPitchOffset(), Settings::FingerTracking());
+    if (has({ "padpressforce", "padreleaseforce", "padcenterradius" })) KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());
+    if (has({ "controllerbindings" })) ControllerBindings::Reselect();   // (its own changes come back through here)
     if (has({ "swordbladedamage", "sworddamagescale" })) MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     if (has({ "knockoutblow" })) MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
     if (has({ "knockoutspeed" })) MeleeAim::SetKnockoutSpeed(Settings::KnockoutSpeed());
@@ -196,6 +200,8 @@ static DWORD WINAPI InitThread(LPVOID)
         return 0;
     }
     Settings::Load();
+    ControllerBindings::Load();      // VRControllerBindings\*.json: the controller's settings over the ini's
+    ControllerBindings::SetApply(ApplySettings);
     LOGI("settings: {}", Settings::Summary());
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
@@ -208,6 +214,7 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
+    KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());
     GpuTrace::SetFingerTracking(Settings::FingerTracking());
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());

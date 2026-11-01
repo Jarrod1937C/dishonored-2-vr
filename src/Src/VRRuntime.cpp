@@ -743,6 +743,11 @@ bool VRRuntime::Vibrate(int hand, float amplitude, float seconds, float hz)
     return g_Session.IsInitialized() && g_Session.Vibrate(hand, amplitude, seconds, hz);
 }
 unsigned long long VRRuntime::HapticPulses() { return g_Session.HapticPulses(); }
+void VRRuntime::SetControllerOptions(float pitchOffsetDeg, bool fingerTracking)
+{   // (also given before the session starts, below; these are read by the session each frame)
+    g_Session.SetPitchOffset(pitchOffsetDeg);
+    g_Session.SetFingerTracking(fingerTracking);
+}
 
 void VRRuntime::Shutdown(bool processExit)
 {

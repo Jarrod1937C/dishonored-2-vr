@@ -181,9 +181,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  VALVE INDEX (experimental)
    The left controller's A / B act as X / Y. Menu button: press the left trackpad down hard.
    The grips react to how hard you SQUEEZE them (their force sensor), not to your fingers resting
-   on them: GripThresholdLeft / GripThresholdRight in DishonoredVR.ini set how firmly. If you changed the game's grip
-   bindings in SteamVR, reset them there.
-   Layout = index in DishonoredVR.ini uses the trackpads instead (the rest is as above):
+   on them: GripThresholdLeft / GripThresholdRight in VRControllerBindings\index.json set how firmly.
+   If you changed the game's grip bindings in SteamVR, reset them there.
+   Layout = index (in index.json, the Index's own profile) uses the trackpads instead (the rest is as above):
    Left trackpad, press its top / right / bottom / left .. quick slot 1 / 2 / 3 / 4
                                        (with the wheel open: assign the highlighted item to it;
                                        in menus: the arrows)
@@ -233,13 +233,15 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    [Controls]  TurnMode = smooth (or snap)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 45
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
                SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
-               QuickSlotHoldTime = 0.5 (s)       Haptics = 1 (vibration)
-               GripThresholdLeft = 0.6  GripThresholdRight = 0.45 (how firmly each grip is squeezed to
-                                 count; lower = more sensitive; Index: squeeze force)
-               Layout = default (the controls above; "index" = Valve Index trackpads; "classic" = Y leans, X interacts,
-                                 menu button pauses)
-               ControllerPitchOffset = 0 (tilts the hands up/down, degrees)
+               ControllerBindings = auto (which controller profile, below)   Haptics = 1 (vibration)
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)
+   Controller profiles: VRControllerBindings\<name>.json (index.json: Valve Index), one per controller, hold what
+               depends on the controller: Layout (default / classic / index), QuickSlotHoldTime = 0.5 (s),
+               GripThresholdLeft / GripThresholdRight (how firmly each grip is squeezed to count; lower = more
+               sensitive; Index: squeeze force), FingerTracking, ControllerPitchOffset (tilts the hands up / down,
+               degrees), the trackpads' press force and centre. ControllerBindings = auto picks the profile made
+               for the controllers in use, or the first file there is; a file's name (index) forces that one.
+               Open them with Notepad; "notes" in each explains its settings.
    [Gameplay]  SwordGestures = 1   ThrowGestures = 1   GrabObjects = 1
                HandCollision = 0 / WeaponCollision = 0 (experimental: your hands / the sword and guns stop at
                                  walls, tables, props and, for the blade, people's bodies, instead of passing through)
@@ -362,7 +364,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
      keyboard: the Insert key opens it. Press Insert again to close it.
 
  Hands and weapons point too high or too low compared to your real controllers
-   - DishonoredVR.ini > ControllerPitchOffset (degrees, + = up). Try steps of 10.
+   - VRControllerBindings\<your controller>.json > ControllerPitchOffset (degrees, + = up), or in the
+     game: Options > VR Controls. Try steps of 10.
 
  A laptop with two graphics cards: VR does not start, log mentions "different GPU"
    - Windows Settings > System > Display > Graphics > Dishonored2.exe > High performance.
