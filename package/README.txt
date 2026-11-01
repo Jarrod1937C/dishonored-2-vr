@@ -149,6 +149,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        (hidden while the left trigger is held)
    Lean, peek, crouch for real ....... just do it with your body: the view follows your head.
                                        There is no lean button.
+   Hand to your mouth, squeeze grip .. drink an elixir: left hand health, right hand Addermire
+                                       Solution (mana) (MouthPotions; a light buzz at the mouth)
    Walk around your room ............. the character walks with you (Roomscale); small leans
                                        (under 10 cm) leave it where it is
 

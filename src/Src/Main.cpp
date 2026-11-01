@@ -173,6 +173,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "swipedials" })) Collision::SetDials(Settings::SwipeDials());
     if (has({ "slidewindows" })) Collision::SetWindows(Settings::SlideWindows());
     if (has({ "holsterweapons" })) Holster::SetEnabled(Settings::HolsterWeapons());
+    if (has({ "mouthpotions" })) KbmInject::SetMouthPotions(Settings::MouthPotions());
     if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
@@ -237,6 +238,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetDials(Settings::SwipeDials());
     Collision::SetWindows(Settings::SlideWindows());
     Holster::SetEnabled(Settings::HolsterWeapons());
+    KbmInject::SetMouthPotions(Settings::MouthPotions());
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

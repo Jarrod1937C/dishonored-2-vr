@@ -462,6 +462,11 @@ namespace
         GpuTrace::ReturnCarry(); g_CarryClearAt = g_Now + 0.4;
         GrabHand::UnlockSensor();
     }
+    //! The hand at the mouth, relative to the eyes (the head's pose) in the head's heading: within 12 cm to either side,
+    //! 1 to 28 cm below the eyes, from 3 cm behind them to 22 cm in front. The controller is held a little under and in
+    //! front of the lips when a bottle or a piece of fruit is at them. (Until 2026-11-01: 22 cm below to 2 cm ABOVE the
+    //! eyes -- reported as "more towards my nose": its middle is 4.5 cm lower now, and the eyes are out of it.)
+    bool AtMouth(float rx, float ry, float rz) { return fabsf(rx) < 0.12f && ry > -0.28f && ry < -0.01f && rz > -0.03f && rz < 0.22f; }
     //! Where the hand is, relative to the head, in the room: behind the back (stores) or at the mouth (eats).
     int CarryZone(const XRInputState& in, int hand)
     {
@@ -475,7 +480,7 @@ namespace
         const float rel[3] = { h.posX - hp.pos[0], h.posY - hp.pos[1], h.posZ - hp.pos[2] };
         const float rx = rel[0] * right[0] + rel[2] * right[2], ry = rel[1], rz = rel[0] * f[0] + rel[2] * f[2];
         if (rz < -0.12f && ry > -0.9f && ry < 0.35f) return 1;                         // behind the back / over the shoulder
-        if (fabsf(rx) < 0.12f && ry > -0.22f && ry < 0.02f && rz > -0.02f && rz < 0.20f) return 2;   // at the mouth
+        if (AtMouth(rx, ry, rz)) return 2;                                                // at the mouth
         return 0;
     }
     // [Gameplay] HolsterWeapons: where a hand is on the body. The LEFT hand: 1 at the RIGHT hip (the pistol, a cross
@@ -522,6 +527,27 @@ namespace
         return 0;
     }
     bool g_HolsterGrip = false;                   //!< this squeeze of the left grip drew / put away: it does nothing else
+    // [Gameplay] MouthPotions: a grip squeezed with that hand at the mouth drinks an elixir -- the LEFT hand Health,
+    // the RIGHT hand Addermire (mana): the game's own keys for them (R / T, as the Index layout's left B / A). That
+    // squeeze does nothing else (no wheel, no block, no grab) until the grip opens; the same elixir again only after
+    // 1 s. Not while that hand holds or carries something (food to the mouth is eaten), nor with a corpse on the back.
+    std::atomic<bool> g_MouthPotions{ true };
+    bool g_DrinkGrip[2] = {};                     //!< this squeeze of that grip drank
+    int g_MouthWas[2] = {};
+    double g_DrankAt[2] = { -10, -10 };
+    //! The hand at the mouth (AtMouth), for the potions
+    bool HandAtMouth(const XRInputState& in, int hand)
+    {
+        const XRHandPose& h = in.hand[hand & 1];
+        const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
+        if (!h.valid || !hp.valid) return false;
+        float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
+        float f[3] = { hf[0], 0.f, hf[2] }; float n = sqrtf(f[0] * f[0] + f[2] * f[2]); if (n < 1e-3f) { f[0] = 0; f[2] = -1; n = 1; }
+        f[0] /= n; f[2] /= n;
+        const float right[3] = { -f[2], 0.f, f[0] };
+        const float rel[3] = { h.posX - hp.pos[0], h.posY - hp.pos[1], h.posZ - hp.pos[2] };
+        return AtMouth(rel[0] * right[0] + rel[2] * right[2], rel[1], rel[0] * f[0] + rel[2] * f[2]);
+    }
     bool g_SwordGrip = false;                     //!< this squeeze of the right grip drew / put away the sword: the same
     int g_HolsterZoneWas = 0, g_SwordZoneWas = 0;
     double g_HolsterLogAt = -10;
@@ -1545,6 +1571,27 @@ void KbmInject::Tick()
         else if ((pressed & kVGripR) && hz) LOGI("KbmInject: right grip at the left hip, but there is no sword: grip as usual");
         if (!(live & kVGripR)) g_SwordGrip = false;
     }
+    // [Gameplay] MouthPotions (above): a grip squeezed at the mouth drinks -- before anything else the grip would do there
+    for (int h = 0; h < 2; h++)
+    {
+        const uint32_t gripBit = h ? kVGripR : kVGripL;
+        const bool busy = h == grabHand && (holding || carrying || g_Carry.on);   // food in that hand is eaten there
+        const bool at = g_MouthPotions.load() && !busy && HandAtMouth(in, h) && !(h == 0 && g_HolsterGrip) && !(h == 1 && g_SwordGrip);
+        if ((int)at != g_MouthWas[h]) { if (at) VRRuntime::Vibrate(h, 0.12f, 0.02f); g_MouthWas[h] = at ? 1 : 0; }
+        if ((pressed & gripBit) && at)
+        {
+            g_DrinkGrip[h] = true;
+            if (g_Now - g_DrankAt[h] >= 1.0)
+            {
+                g_DrankAt[h] = g_Now;
+                Tap(h ? kT : kR); g_Count.potions[h]++;
+                VRRuntime::Vibrate(h, 0.45f, 0.06f);
+                LOGI("KbmInject: {} grip at the mouth: {} elixir", h ? "right" : "left", h ? "Addermire (mana)" : "health");
+            }
+            else LOGI("KbmInject: {} grip at the mouth again within 1 s: not drunk twice", h ? "right" : "left");
+        }
+        if (!(live & gripBit)) g_DrinkGrip[h] = false;
+    }
     // With the Index layout the grip is for PHYSICAL interaction only -- reported from the headset: the grip opening
     // drawers and taking things like a button made pulling and grabbing impossible to try. It takes what the hand is AT:
     // an item (by hand), an object the game holds (a bottle, a glass), a body to carry, a drawer / cabinet to pull --
@@ -1565,7 +1612,7 @@ void KbmInject::Tick()
     int holdKind = 0;
     const bool nearHoldable = !holding && Collision::PointerHoldable(&holdKind) == (uint32_t)pickId && pickId > 0
                            && pickDist < (holdKind == 2 ? 0.9f : 0.45f);
-    if ((pressed & grabGrip) && !(grabHand == 1 && g_SwordGrip))
+    if ((pressed & grabGrip) && !(grabHand == 1 && g_SwordGrip) && !g_DrinkGrip[grabHand])
     {
         if (physicalGrip)
         {
@@ -1809,7 +1856,7 @@ void KbmInject::Tick()
     // wheel -- until the grip opens. A light buzz as the hand reaches a holster it can draw from or put away into.
     {
         float rel[3] = {};
-        const bool usable = Holster::Enabled() && !holding && !takesL;
+        const bool usable = Holster::Enabled() && !holding && !takesL && !g_DrinkGrip[0];
         const int hz = usable ? HolsterZone(in, 0, rel) : 0;
         const int kind = hz == 1 ? Holster::kPistol : hz == 2 ? Holster::kCrossbow : Holster::kMagic;
         const char* where = hz == 1 ? "right hip" : hz == 2 ? "back" : "chest";
@@ -1840,7 +1887,7 @@ void KbmInject::Tick()
         }
         if (!(live & kVGripL)) g_HolsterGrip = false;
     }
-    Hold(kMMB,   (live & kVGripL) != 0 && !takesL && !holding && !g_HolsterGrip);   // L grip : power wheel (or take / holster, above)
+    Hold(kMMB,   (live & kVGripL) != 0 && !takesL && !holding && !g_HolsterGrip && !g_DrinkGrip[0]);   // L grip : power wheel (or take / holster / drink, above)
     // The sword by gesture (SwordGesture): a swing taps the attack, the fist by the right ear holds it (the power
     // attack's charge) until a thrust lets go, the fist at the left shoulder blocks. The trigger and the grip keep
     // doing all of it as well.
@@ -1851,7 +1898,7 @@ void KbmInject::Tick()
     // Index layout: the right grip is physical (grab, pull, the sword's holster), and blocks only while the sword is in
     // the hand -- reported: squeezing it brought the sword AND the left hand's weapon out (the game's block draws them).
     const bool blockOk = !indexPads || !Holster::Enabled() || Holster::InHand(Holster::kSword);
-    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip && blockOk;
+    const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip && !g_DrinkGrip[1] && blockOk;
     // The blade strikes what it touches (SwordContact): before the gestures, so a contact during a charged thrust
     // releases it this same tick.
     MeleeAim::NoteTrigger(trigR);
@@ -1896,6 +1943,11 @@ void KbmInject::SetPadParams(float pressForce, float releaseForce, float centreR
 {
     g_PadOn = std::clamp(pressForce, 0.05f, 1.f); g_PadOff = std::clamp(releaseForce, 0.02f, g_PadOn.load() - 0.01f); g_PadCentre = std::clamp(centreRadius, 0.1f, 0.9f);
     LOGI("KbmInject: trackpad presses past {:.2f} force, let go below {:.2f}; the left pad's centre (menu) within {:.2f}", g_PadOn.load(), g_PadOff.load(), g_PadCentre.load());
+}
+void KbmInject::SetMouthPotions(bool on)
+{
+    g_MouthPotions = on;
+    LOGI("KbmInject: elixirs at the mouth {}", on ? "on: a grip squeezed with that hand at your mouth drinks -- left hand health, right hand Addermire (MouthPotions = 1)" : "off");
 }
 void KbmInject::SetPhysicalCrouch(bool on, float depth)
 {

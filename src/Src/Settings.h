@@ -68,6 +68,7 @@ namespace Settings
     float RoomscaleMaxSpeed();                    //!< [Controls] RoomscaleMaxSpeed: m/s
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
+    bool MouthPotions();                          //!< [Gameplay] MouthPotions: a grip at the mouth drinks an elixir (KbmInject)
     bool SwipeDials();                            //!< [Gameplay] SwipeDials: slide a hand up / down a safe dial to turn it
     bool SlideWindows();                          //!< [Gameplay] SlideWindows: slide a hand up / down a window to raise / lower it
     bool HolsterWeapons();                        //!< [Gameplay] HolsterWeapons: left trigger at the left hip draws the pistol, behind the back the crossbow

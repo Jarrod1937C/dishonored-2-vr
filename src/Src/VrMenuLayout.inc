@@ -31,6 +31,7 @@ static const VrRow kVrRows[] = {
     { "Gameplay", "Interaction", "GrabObjects" },
     { "Gameplay", "Interaction", "PullToOpen" },
     { "Gameplay", "Interaction", "PhysicalPickup" },
+    { "Gameplay", "Interaction", "MouthPotions" },
     { "Gameplay", "Interaction", "SwipeDials" },
     { "Gameplay", "Interaction", "SlideWindows" },
     { "Gameplay", "Interaction", "ThrowGestures" },

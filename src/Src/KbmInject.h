@@ -65,6 +65,7 @@ namespace KbmInject
     //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
     //! character (the game's crouch key), standing up stands it.
     void SetPhysicalCrouch(bool on, float depth);
+    void SetMouthPotions(bool on);         //!< [Gameplay] MouthPotions: a grip at the mouth drinks (left health, right Addermire)
     void SetPadParams(float pressForce, float releaseForce, float centreRadius);   //!< a controller profile's trackpad presses
     //! The game's crouch now is the one the real head made (ViewMatrixHook keeps the view at the head's height then).
     bool PhysicalCrouchOwns();

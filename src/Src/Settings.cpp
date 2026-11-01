@@ -70,6 +70,7 @@ namespace
         { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
+        { "gameplay.mouthpotions",      Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: a grip at the mouth drinks (left health, right Addermire)
         { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a safe dial to turn it
         { "gameplay.slidewindows",      Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a window to raise / lower it
         { "gameplay.holsterweapons",    Kind::Bool,   "1", 0, 0, nullptr },   // Holster: left trigger at the left hip = pistol, behind the back = crossbow
@@ -367,6 +368,7 @@ float Settings::RoomscaleMaxSpeed() { return F("controls.roomscalemaxspeed"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
+bool Settings::MouthPotions() { return B("gameplay.mouthpotions"); }
 bool Settings::SwipeDials() { return B("gameplay.swipedials"); }
 bool Settings::SlideWindows() { return B("gameplay.slidewindows"); }
 bool Settings::HolsterWeapons() { return B("gameplay.holsterweapons"); }
@@ -528,6 +530,7 @@ namespace
         { "grabobjects", "1" },
         { "pulltoopen", "1" },
         { "physicalpickup", "1" },
+        { "mouthpotions", "1" },
         { "swipedials", "1" },
         { "slidewindows", "1" },
         { "throwgestures", "1" },
