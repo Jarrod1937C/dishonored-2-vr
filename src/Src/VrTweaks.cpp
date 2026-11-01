@@ -136,6 +136,7 @@ void VrTweaks::SetLodZoom(float z)
     g_LodZoom = z;
     if (fabsf(z - 1.f) > 1e-3f) LOGI("VrTweaks: StaticLodZoom {:g}: the game's r_lodZoomMultiplicator held at it (the static models' level of detail; experimental)", z);
 }
+bool VrTweaks::DofOff() { return g_Active.load(std::memory_order_relaxed) && g_Enabled.load(std::memory_order_relaxed); }
 void VrTweaks::SetViewDistance(int level)
 {
     g_ViewDist = level < 0 ? -1 : (level > 5 ? 5 : level);

@@ -31,6 +31,7 @@ namespace
     // fog then changes with the exposure exactly as the scene does. 512 sky cells (64 directions x 8 heights) learned
     // the same way check it: their ratio now (Summary[4].x) stays ~1 when the model holds (logged). And the fog never
     // goes darker than CheapFogMinBrightness (real fog scatters light: never black or dark grey).
+    // (in pieces: MSVC takes at most ~16 KB in one string literal, C2026; adjacent literals are joined)
     const char* kHlsl = R"(
 cbuffer FogCB : register(b0)
 {
@@ -41,22 +42,27 @@ cbuffer FogCB : register(b0)
     float4 g2;   // width, height, sample step of the sky's survey, 1 = learning the colours now
     float4 g3;   // 1 = the map's time to settle on a colour is up, the fog's fade-in (0..1), frames each direction is learned over,
                  // sin(CheapFogSkyHeight) (0: sky not fogged)
-    float4 g4;   // the fog's least luminance (x EngineLuminanceFactor), 1 = follow the game's exposure, -,
-                 // elements of the game's exposure buffer bound as Expo (0: not found, the factor taken as 1)
+    float4 g4;   // the fog's least luminance (x EngineLuminanceFactor), 1 = follow the game's exposure, 1 = the water's
+                 // depth is bound as Water, elements of the game's exposure buffer bound as Expo (0: not found, the factor taken as 1)
 };
 Texture2D<float4> Color : register(t0);
 Texture2D<float> Depth : register(t1);
 StructuredBuffer<float4> SummaryIn : register(t2);
+Texture2D<float> Water : register(t4);              // RENDER_WATER's depth buffer (the scene's depth copied, the water's
+                                                    // surface drawn into it), when it has one: g4.z = 1
 RWStructuredBuffer<uint> Acc : register(u0);        // this frame's horizon sky, per direction: r, g, b, weight (x256);
                                                     // [256] the highest far-background pixel's sin(elevation) + 2, as uint;
                                                     // [257], [258] the upper sky's (25-75 deg) luminance (x256) and pixels;
-                                                    // from kCell0: per sky cell luminance (x4096) and pixels
+                                                    // from kCell0: per sky cell luminance (x4096) and pixels;
+                                                    // [kWater0], [+1]: how far below the eye (m x16) the ground is where
+                                                    // nothing lies beyond it below the horizon, and how many such samples
 RWStructuredBuffer<float4> Bins : register(u1);     // learned per direction: rgb, frames averaged (kept once full)
 RWStructuredBuffer<float4> Summary : register(u2);  // [0] the average of the learned directions, how many; [1] darkest /
                                                     // brightest, the far background's top (sin elevation, the map's
                                                     // highest); [2] THE fog colour for the map, w 1 = settled (then kept);
                                                     // [3] the upper sky's mean luminance, frames averaged; [4] the exposure
-                                                    // now relative to the reference, and when the colour was set
+                                                    // now relative to the reference, and when the colour was set; [5]
+                                                    // the plane below the horizon's empty pixels (m below the eye), frames
 RWStructuredBuffer<float4> Ref : register(u3);      // per sky cell: its luminance x EngineLuminanceFactor, frames learned
 struct AutoExposure { float4 a; float4 b; };        // postfx_luminance_autoexposure_t: a.x = EngineLuminanceFactor
 StructuredBuffer<AutoExposure> Expo : register(t3); // the game's own (ro_postfx_luminance_buffautoexposure)
@@ -67,7 +73,7 @@ float Elf()
     return (e > 1e-4 && e < 1e4) ? e : 1;
 }
 static const uint kBins = 64;
-static const uint kCells = 512, kCell0 = kBins * 4 + 4;
+static const uint kCells = 512, kCell0 = kBins * 4 + 4, kWater0 = kCell0 + kCells * 2;
 static const float3 kLum = float3(0.2126, 0.7152, 0.0722);
 
 // the distance (m) along the eye's ray to what pixel `pix` (its centre, in pixels) shows; 0 = the sky: the depth
@@ -90,6 +96,17 @@ float Distance(float2 pix, float depth)
     float rx = (ndc.x * s - offx) / R0.x, ry = (ndc.y * s - offy) / R1.y;
     return d * sqrt(1 + rx * rx + ry * ry);
 }
+// the distance to what the pixel shows, the water's surface included (the nearer of the scene's depth and the water's)
+float SceneDistance(float2 pix, uint2 p)
+{
+    float d = Distance(pix, Depth[p]);
+    if (g4.z > 0.5)
+    {
+        float w = Distance(pix, Water[p]);
+        d = d > 0 && w > 0 ? min(d, w) : max(d, w);
+    }
+    return d;
+}
 // the pixel's ray in the world (unit; z up)
 float3 WorldDir(float2 pix)
 {
@@ -105,21 +122,23 @@ float BinOf(float3 wd) { return (atan2(wd.y, wd.x) / 6.2831853 + 0.5) * kBins; }
 // the sky cell of a direction (-10 to +76 deg): 64 directions x 8 heights
 uint CellOf(float3 wd) { return min(7u, (uint)((wd.z + 0.17) / 1.14 * 8)) * kBins + min(kBins - 1, (uint)BinOf(wd)); }
 
-// The sky near the horizon (-10 to +30 deg, weighted towards it), by the world direction it lies in: 64 directions
+)"
+R"(// The sky near the horizon (-10 to +30 deg, weighted towards it), by the world direction it lies in: 64 directions
 // round the horizon. Summed per group, then once per group into Acc.
 groupshared uint ga[kBins * 4];
 groupshared uint gtop;
 groupshared uint gup[2];
 groupshared uint gc[kCells * 2];
+groupshared uint gh[2];
 [numthreads(16, 16, 1)]
 void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_GroupIndex)
 {
     ga[gi] = 0;
     for (uint z = gi; z < kCells * 2; z += 256) gc[z] = 0;
-    if (gi == 0) { gtop = 0; gup[0] = 0; gup[1] = 0; }
+    if (gi == 0) { gtop = 0; gup[0] = 0; gup[1] = 0; gh[0] = 0; gh[1] = 0; }
     GroupMemoryBarrierWithGroupSync();
     uint2 p = (gid.xy * 16 + tid.xy) * (uint)g2.z;
-    float dist = (p.x < (uint)g2.x && p.y < (uint)g2.y) ? Distance(p + 0.5, Depth[p]) : -1;
+    float dist = (p.x < (uint)g2.x && p.y < (uint)g2.y) ? SceneDistance(p + 0.5, p) : -1;
     if (dist >= g0.x + 1 / g0.y)
     {   // the far background (beyond the fog's end): how high above the horizon it reaches
         float3 wd = WorldDir(p + 0.5);
@@ -128,6 +147,17 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
     if (dist == 0)
     {
         float3 wd = WorldDir(p + 0.5);
+        if (wd.z < -0.002)
+        {   // nothing below the horizon (the sea beyond its floor, with no water depth): how far below the eye the
+            // ground just under it on the screen is -- the plane those pixels are fogged at, so the two meet
+            uint2 q = p + uint2(0, (uint)g2.z);
+            float dq = q.y < (uint)g2.y ? SceneDistance(q + 0.5, q) : 0;
+            if (dq > 0)
+            {
+                float h = dq * -WorldDir(q + 0.5).z;
+                if (h > 0.3 && h < 250) { InterlockedAdd(gh[0], (uint)(h * 16)); InterlockedAdd(gh[1], 1); }
+            }
+        }
         if (wd.z > 0.42 && wd.z < 0.966)
         {   // the upper sky (for CheapFogColor = auto: night, dusk or day)
             float y = min(dot(Color[p].rgb, float3(0.2126, 0.7152, 0.0722)), 16.0);
@@ -153,10 +183,12 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
     if (ga[gi] != 0) InterlockedAdd(Acc[gi], ga[gi]);
     if (gi == 0 && gtop != 0) InterlockedMax(Acc[kBins * 4], gtop);
     if (gi == 0 && gup[1] != 0) { InterlockedAdd(Acc[kBins * 4 + 1], gup[0]); InterlockedAdd(Acc[kBins * 4 + 2], gup[1]); }
+    if (gi == 0 && gh[1] != 0) { InterlockedAdd(Acc[kWater0], gh[0]); InterlockedAdd(Acc[kWater0 + 1], gh[1]); }
     for (uint k = gi; k < kCells * 2; k += 256) if (gc[k] != 0) InterlockedAdd(Acc[kCell0 + k], gc[k]);
 }
 
-// Each direction: this frame's sky added to what it has learned (until it has enough: then kept as it is), the
+)"
+R"(// Each direction: this frame's sky added to what it has learned (until it has enough: then kept as it is), the
 // frame's sums cleared; then the average round the horizon. It becomes the map's one fog colour, kept from then on,
 // once every direction has been seen -- or, after the map's first 30 s, once at least 8 of them have.
 groupshared float4 gb[kBins];
@@ -243,28 +275,53 @@ void skyfinal(uint gi : SV_GroupIndex)
         float rs = ex.w > 0 ? ex.w : 1;
         if (gm > 0.5 && g2.w > 0) rs = lerp(rs, clamp(r, 0.4, 2.5), 0.02);
         Summary[4] = float4(r, ex.y, e, rs);   // the check, the factor when the colour was set, the factor now, the residual
+        // the plane below the horizon's empty pixels: this frame's estimate, smoothed (~0.3 s); none this frame: as it was
+        uint hs = Acc[kWater0], hn = Acc[kWater0 + 1];
+        Acc[kWater0] = 0; Acc[kWater0 + 1] = 0;
+        float4 wp = Summary[5];
+        if (hn >= 2)
+        {
+            float h = (float)hs / 16.0 / (float)hn;
+            wp = float4(wp.y > 0 ? lerp(wp.x, h, 0.05) : h, min(wp.y + 1, 1e6), 0, 0);
+            Summary[5] = wp;
+        }
     }
 }
 
+)"
+R"(// The screen as a grid of kGrid x kGrid cells, each vertex at the depth of the sphere of radius CheapFogStart round the
+// eye in its direction. The scene's depth buffer is bound (read only) with a depth test: what is nearer than the grid
+// is never shaded (early depth rejection) -- most of the screen, most of the time. Conservative: 1 / view depth is
+// linear across the screen, and the sphere's (sqrt(1 + rx^2 + ry^2) / start) is convex, so between vertices the grid
+// lies a little nearer than the sphere, never beyond it.
+static const uint kGrid = 8;
 struct VO { float4 pos : SV_Position; };
 VO vs(uint id : SV_VertexID)
 {
     VO o;
-    float2 uv = float2((id << 1) & 2, id & 2);
-    o.pos = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    uint cell = id / 6, k = id % 6;
+    uint2 c = uint2(cell % kGrid, cell / kGrid) + uint2(k == 1 || k == 4 || k == 5 ? 1 : 0, k == 2 || k == 3 || k == 5 ? 1 : 0);
+    float2 ndc = float2(c) / kGrid * 2 - 1;
+    float4 R0 = P[0], R1 = P[1], R2 = P[2], R3 = P[3];
+    bool colVec = abs(abs(R3.z) - 1) < 1e-3;
+    float s = colVec ? R3.z : R2.w;
+    float a = R2.z, b = colVec ? R2.w : R3.z;
+    float offx = colVec ? R0.z : R2.x, offy = colVec ? R1.z : R2.y;
+    float rx = (ndc.x * s - offx) / R0.x, ry = (ndc.y * s - offy) / R1.y;
+    float z = g0.x > 0.5 ? saturate(a * s + b * sqrt(1 + rx * rx + ry * ry) / g0.x) : 0;
+    o.pos = float4(ndc, z, 1);
     return o;
 }
 
 float4 ps(VO i) : SV_Target
 {
     uint2 p = (uint2)i.pos.xy;
-    float d = Distance(i.pos.xy, Depth[p]);
-    float3 wd = WorldDir(i.pos.xy);
+    float d = SceneDistance(i.pos.xy, p);
     float3 col = g1.rgb;
     if (g0.w < 0.5)
     {   // the map's one colour, once settled
         float4 c = SummaryIn[2];
-        if (c.w <= 0) return float4(0, 0, 0, 0);
+        if (c.w <= 0) discard;
         col = c.rgb;
     }
     {   // never dark: real fog scatters the light (no black or dark grey fog)
@@ -277,6 +334,14 @@ float4 ps(VO i) : SV_Target
     col /= g4.y > 0.5 ? Elf() : (ex.y > 0 ? ex.y : 1);
     if (g4.y > 0.5 && ex.w > 0) col *= ex.w;
     float f = 0;
+    float3 wd = 0;
+    if (d <= 0)
+    {   // nothing there: below the horizon, the plane the ground around such pixels lies on (the sea beyond its floor,
+        // when the water's own depth is not known), so the fog meets the ground's there without a line
+        wd = WorldDir(i.pos.xy);
+        float h = SummaryIn[5].x;
+        if (wd.z < -0.001 && h > 0) d = h / -wd.z;
+    }
     if (d > 0)
     {
         float t = saturate((d - g0.x) * g0.y);
@@ -289,7 +354,9 @@ float4 ps(VO i) : SV_Target
         float t = 1 - saturate((wd.z - base) / g3.w);
         f = g0.z * t * t * (3 - 2 * t);
     }
-    return float4(col, f * g3.y);   // blended: scene * (1 - f) + fog colour * f
+    f *= g3.y;
+    if (f < 1.0 / 512) discard;     // no fog here: the colour target is not read or written
+    return float4(col, f);          // blended: scene * (1 - f) + fog colour * f
 }
 )";
 
@@ -310,8 +377,11 @@ float4 ps(VO i) : SV_Target
     ID3D11VertexShader* g_Vs = nullptr; ID3D11PixelShader* g_Ps = nullptr;
     ID3D11Buffer* g_Cb = nullptr;
     ID3D11BlendState* g_Blend = nullptr; ID3D11DepthStencilState* g_NoDepth = nullptr; ID3D11RasterizerState* g_Rs = nullptr;
+    // the depth test against the grid at the fog's start (see the vertex shader): standard depth (1 far) / reversed (0 far)
+    ID3D11DepthStencilState* g_DepthLess = nullptr; ID3D11DepthStencilState* g_DepthGreater = nullptr;
+    constexpr UINT kGridVerts = 8 * 8 * 6;
     // the horizon's colours (see the shaders): the frame's sums, the learned directions, the summary; a copy read back
-    constexpr UINT kBins = 64, kFilled = 5, kCells = 512, kAcc = kBins * 4 + 4 + kCells * 2;
+    constexpr UINT kBins = 64, kFilled = 6, kCells = 512, kAcc = kBins * 4 + 4 + kCells * 2 + 2;
     ID3D11Buffer* g_Acc = nullptr; ID3D11UnorderedAccessView* g_AccUav = nullptr;
     ID3D11Buffer* g_Ref = nullptr; ID3D11UnorderedAccessView* g_RefUav = nullptr;
     float g_LoggedExpo = 1.f;                   // the exposure (relative to when the colour was set) as last logged
@@ -324,13 +394,22 @@ float4 ps(VO i) : SV_Target
     {
         ID3D11Texture2D* color = nullptr; ID3D11Texture2D* depth = nullptr;
         ID3D11RenderTargetView* rtv = nullptr; ID3D11ShaderResourceView* colorSrv = nullptr; ID3D11ShaderResourceView* depthSrv = nullptr;
+        ID3D11DepthStencilView* dsv = nullptr;   // read only: the depth test that keeps the fog off what is nearer than its start
         UINT w = 0, h = 0, gx = 0, gy = 0; bool bad = false;
     };
     Target g_T[4];
+    // RENDER_WATER's depth buffer (2026-11-01: the water is drawn with a copy of the scene's depth, not the depth the
+    // fog was reading -- the fog measured to the sea floor, and found nothing where the floor ends: a line there)
+    struct WaterT { ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr; UINT w = 0, h = 0; bool bad = false; };
+    WaterT g_W[4];
+    struct WNote { unsigned frame = 0; int slot = -1; };
+    WNote g_WNotes[8]; WNote g_WLast;
+    std::atomic<unsigned long long> g_WaterUsed{ 0 }, g_EarlyZ{ 0 };
+    float g_LoggedPlane = -1.f;
     // what the end of FORWARD_DYNAMIC left, per frame (the view's frame number), for that frame's ALPHA_LIT
     struct Note { unsigned frame = 0; int target = -1; float proj[16] = {}, view[16] = {}; bool valid = false; };
     Note g_Notes[8]; Note g_Last;
-    std::atomic<unsigned long long> g_Drawn{ 0 }, g_Matched{ 0 }, g_Fallback{ 0 }, g_NoNote{ 0 }, g_Immediate{ 0 };
+    std::atomic<unsigned long long> g_Drawn{ 0 }, g_Matched{ 0 }, g_Fallback{ 0 }, g_NoNote{ 0 }, g_Immediate{ 0 }, g_Faded{ 0 };
     std::string g_Why = "not seen yet";
     constexpr uint32_t kViewProj = 0x7390, kViewFrame = 0x77B4, kViewMatrix = 0x7450;   // the view object (StereoTaa: current projection, frame number)
 
@@ -397,10 +476,26 @@ float4 ps(VO i) : SV_Target
         D3D11_RASTERIZER_DESC rd{}; rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
         if (FAILED(dev->CreateBlendState(&bl, &g_Blend)) || FAILED(dev->CreateDepthStencilState(&ds, &g_NoDepth)) || FAILED(dev->CreateRasterizerState(&rd, &g_Rs)))
         { g_Why = "pipeline states"; return false; }
+        D3D11_DEPTH_STENCIL_DESC dt = ds; dt.DepthEnable = TRUE; dt.DepthFunc = D3D11_COMPARISON_LESS;
+        if (FAILED(dev->CreateDepthStencilState(&dt, &g_DepthLess))) g_DepthLess = nullptr;
+        dt.DepthFunc = D3D11_COMPARISON_GREATER;
+        if (FAILED(dev->CreateDepthStencilState(&dt, &g_DepthGreater))) g_DepthGreater = nullptr;
         g_Dev = dev; g_Dev->AddRef();
         g_Failed = false; g_Ready = true;
         LOGI("Fog: shaders ready (sky colour, fog)");
         return true;
+    }
+    DXGI_FORMAT DepthDsvFormat(DXGI_FORMAT f, bool* stencil)
+    {
+        *stencil = f == DXGI_FORMAT_R24G8_TYPELESS || f == DXGI_FORMAT_R32G8X24_TYPELESS;
+        switch (f)
+        {
+        case DXGI_FORMAT_R24G8_TYPELESS: return DXGI_FORMAT_D24_UNORM_S8_UINT;
+        case DXGI_FORMAT_R32_TYPELESS: return DXGI_FORMAT_D32_FLOAT;
+        case DXGI_FORMAT_R32G8X24_TYPELESS: return DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+        case DXGI_FORMAT_R16_TYPELESS: return DXGI_FORMAT_D16_UNORM;
+        default: return DXGI_FORMAT_UNKNOWN;
+        }
     }
     DXGI_FORMAT DepthSrvFormat(DXGI_FORMAT f)
     {
@@ -421,7 +516,7 @@ float4 ps(VO i) : SV_Target
         for (int i = 0; i < 4 && slot < 0; i++) if (!g_T[i].color) slot = i;
         if (slot < 0)
         {   // more than four pairs: start again
-            for (Target& t : g_T) { Rel(t.depthSrv); Rel(t.colorSrv); Rel(t.rtv); Rel(t.depth); Rel(t.color); t = Target{}; }
+            for (Target& t : g_T) { Rel(t.dsv); Rel(t.depthSrv); Rel(t.colorSrv); Rel(t.rtv); Rel(t.depth); Rel(t.color); t = Target{}; }
             slot = 0;
         }
         Target& t = g_T[slot];
@@ -445,7 +540,37 @@ float4 ps(VO i) : SV_Target
         if (FAILED(g_Dev->CreateShaderResourceView(color, &cv, &t.colorSrv)) || FAILED(g_Dev->CreateRenderTargetView(color, &rv, &t.rtv))) return fail("colour views");
         t.w = cd.Width; t.h = cd.Height;
         t.gx = (t.w + 16 * kSkyStep - 1) / (16 * kSkyStep); t.gy = (t.h + 16 * kSkyStep - 1) / (16 * kSkyStep);
-        LOGI("Fog: the scene's targets: colour {}x{} format {} and depth format {} (read as {}): fog drawn into them", t.w, t.h, (int)cd.Format, (int)dd.Format, (int)sf);
+        {   // the depth test (read only: it is read by the shader at the same time)
+            bool st = false; const DXGI_FORMAT df = DepthDsvFormat(dd.Format, &st);
+            D3D11_DEPTH_STENCIL_VIEW_DESC dv{}; dv.Format = df; dv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+            dv.Flags = D3D11_DSV_READ_ONLY_DEPTH | (st ? D3D11_DSV_READ_ONLY_STENCIL : 0);
+            if (!(dd.BindFlags & D3D11_BIND_DEPTH_STENCIL) || df == DXGI_FORMAT_UNKNOWN || !g_DepthLess || !g_DepthGreater
+                || FAILED(g_Dev->CreateDepthStencilView(depth, &dv, &t.dsv)))
+            { t.dsv = nullptr; LOGI("Fog: no read-only depth view of the scene's depth (format {}): every pixel is shaded", (int)dd.Format); }
+        }
+        LOGI("Fog: the scene's targets: colour {}x{} format {} and depth format {} (read as {}): fog drawn into them{}", t.w, t.h, (int)cd.Format, (int)dd.Format, (int)sf,
+             t.dsv ? ", what is nearer than its start skipped by the depth test" : "");
+        return slot;
+    }
+    //! The mod's view of RENDER_WATER's depth buffer, made once; -1 when it cannot be read
+    int WaterOf(ID3D11Texture2D* tex)
+    {
+        for (int i = 0; i < 4; i++) if (g_W[i].tex == tex) return g_W[i].bad ? -1 : i;
+        int slot = -1;
+        for (int i = 0; i < 4 && slot < 0; i++) if (!g_W[i].tex) slot = i;
+        if (slot < 0) { for (WaterT& w : g_W) { Rel(w.srv); Rel(w.tex); w = WaterT{}; } slot = 0; }
+        WaterT& w = g_W[slot];
+        w.tex = tex; tex->AddRef();
+        D3D11_TEXTURE2D_DESC dd{}; tex->GetDesc(&dd);
+        const DXGI_FORMAT sf = DepthSrvFormat(dd.Format);
+        D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = sf; vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; vd.Texture2D.MipLevels = 1;
+        if (dd.SampleDesc.Count > 1 || dd.ArraySize != 1 || !(dd.BindFlags & D3D11_BIND_SHADER_RESOURCE) || sf == DXGI_FORMAT_UNKNOWN
+            || FAILED(g_Dev->CreateShaderResourceView(tex, &vd, &w.srv)))
+        {
+            LOGI("Fog: the water's depth buffer ({}x{} format {} bind 0x{:X}) cannot be read: the fog does not see the water's surface", dd.Width, dd.Height, (int)dd.Format, dd.BindFlags);
+            w.srv = nullptr; w.bad = true; return -1;
+        }
+        w.w = dd.Width; w.h = dd.Height;
         return slot;
     }
 
@@ -454,18 +579,20 @@ float4 ps(VO i) : SV_Target
     //! "a fresh context's defaults" instead was reported to break the transparent surfaces: 2026-10-31.)
     struct Saved
     {
-        ID3D11ComputeShader* cs = nullptr; ID3D11Buffer* csCb = nullptr; ID3D11ShaderResourceView* csSrv[4] = {}; ID3D11UnorderedAccessView* csUav[4] = {};
+        ID3D11ComputeShader* cs = nullptr; ID3D11Buffer* csCb = nullptr; ID3D11ShaderResourceView* csSrv[5] = {}; ID3D11UnorderedAccessView* csUav[4] = {};
         D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED; ID3D11InputLayout* il = nullptr;
-        ID3D11VertexShader* vs = nullptr; ID3D11PixelShader* ps = nullptr; ID3D11Buffer* psCb = nullptr; ID3D11ShaderResourceView* psSrv[4] = {};
+        ID3D11VertexShader* vs = nullptr; ID3D11Buffer* vsCb = nullptr;
+        ID3D11PixelShader* ps = nullptr; ID3D11Buffer* psCb = nullptr; ID3D11ShaderResourceView* psSrv[5] = {};
         ID3D11RasterizerState* rs = nullptr; D3D11_VIEWPORT vp[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {}; UINT nvp = 0;
         ID3D11BlendState* bs = nullptr; float bf[4] = {}; UINT mask = 0xFFFFFFFF;
         ID3D11DepthStencilState* dss = nullptr; UINT ref = 0;
         ID3D11RenderTargetView* rtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {}; ID3D11DepthStencilView* dsv = nullptr;
         void Save(ID3D11DeviceContext* c)
         {
-            c->CSGetShader(&cs, nullptr, nullptr); c->CSGetConstantBuffers(0, 1, &csCb); c->CSGetShaderResources(0, 4, csSrv); c->CSGetUnorderedAccessViews(0, 4, csUav);
+            c->CSGetShader(&cs, nullptr, nullptr); c->CSGetConstantBuffers(0, 1, &csCb); c->CSGetShaderResources(0, 5, csSrv); c->CSGetUnorderedAccessViews(0, 4, csUav);
             c->IAGetPrimitiveTopology(&topo); c->IAGetInputLayout(&il);
-            c->VSGetShader(&vs, nullptr, nullptr); c->PSGetShader(&ps, nullptr, nullptr); c->PSGetConstantBuffers(0, 1, &psCb); c->PSGetShaderResources(0, 4, psSrv);
+            c->VSGetShader(&vs, nullptr, nullptr); c->VSGetConstantBuffers(0, 1, &vsCb);
+            c->PSGetShader(&ps, nullptr, nullptr); c->PSGetConstantBuffers(0, 1, &psCb); c->PSGetShaderResources(0, 5, psSrv);
             c->RSGetState(&rs); nvp = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE; c->RSGetViewports(&nvp, vp);
             c->OMGetBlendState(&bs, bf, &mask); c->OMGetDepthStencilState(&dss, &ref);
             c->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, &dsv);
@@ -473,13 +600,14 @@ float4 ps(VO i) : SV_Target
         void Restore(ID3D11DeviceContext* c)
         {
             const UINT keep[4] = { (UINT)-1, (UINT)-1, (UINT)-1, (UINT)-1 };
-            c->CSSetShader(cs, nullptr, 0); c->CSSetConstantBuffers(0, 1, &csCb); c->CSSetUnorderedAccessViews(0, 4, csUav, keep); c->CSSetShaderResources(0, 4, csSrv);
+            c->CSSetShader(cs, nullptr, 0); c->CSSetConstantBuffers(0, 1, &csCb); c->CSSetUnorderedAccessViews(0, 4, csUav, keep); c->CSSetShaderResources(0, 5, csSrv);
             c->IASetPrimitiveTopology(topo); c->IASetInputLayout(il);
-            c->VSSetShader(vs, nullptr, 0); c->PSSetShader(ps, nullptr, 0); c->PSSetConstantBuffers(0, 1, &psCb); c->PSSetShaderResources(0, 4, psSrv);
+            c->VSSetShader(vs, nullptr, 0); c->VSSetConstantBuffers(0, 1, &vsCb);
+            c->PSSetShader(ps, nullptr, 0); c->PSSetConstantBuffers(0, 1, &psCb); c->PSSetShaderResources(0, 5, psSrv);
             c->RSSetState(rs); c->RSSetViewports(nvp, nvp ? vp : nullptr);
             c->OMSetBlendState(bs, bf, mask); c->OMSetDepthStencilState(dss, ref);
             c->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, dsv);
-            Rel(cs); Rel(csCb); for (auto*& p : csSrv) Rel(p); for (auto*& p : csUav) Rel(p); Rel(il); Rel(vs); Rel(ps); Rel(psCb);
+            Rel(cs); Rel(csCb); for (auto*& p : csSrv) Rel(p); for (auto*& p : csUav) Rel(p); Rel(il); Rel(vs); Rel(vsCb); Rel(ps); Rel(psCb);
             for (auto*& p : psSrv) Rel(p); Rel(rs); Rel(bs); Rel(dss); for (auto*& p : rtv) Rel(p); Rel(dsv);
         }
     };
@@ -542,6 +670,42 @@ void Fog::AfterOpaque(ID3D11DeviceContext* c, const void* view)
     if (dsv) dsv->Release();
 }
 
+void Fog::AfterWater(ID3D11DeviceContext* c, const void* view)
+{
+    if (!g_Want.load(std::memory_order_relaxed) || !g_GameFogOff.load(std::memory_order_relaxed) || !c || !view) return;
+    ID3D11DepthStencilView* dsv = nullptr;
+    c->OMGetRenderTargets(0, nullptr, &dsv);
+    if (!dsv) return;
+    ID3D11Resource* dr = nullptr; dsv->GetResource(&dr);
+    D3D11_RESOURCE_DIMENSION b{};
+    if (dr) dr->GetType(&b);
+    unsigned frame = 0;
+    if (b == D3D11_RESOURCE_DIMENSION_TEXTURE2D && ReadBytes(&frame, (const uint8_t*)view + kViewFrame, 4))
+    {
+        // whether the water's last draw wrote depth (for the log: the depth is the water's surface only if it does)
+        ID3D11DepthStencilState* st = nullptr; UINT ref = 0; c->OMGetDepthStencilState(&st, &ref);
+        D3D11_DEPTH_STENCIL_DESC sd{}; if (st) { st->GetDesc(&sd); st->Release(); }
+        std::lock_guard lk(g_M);
+        if (g_Ready)
+        {
+            const int slot = WaterOf(static_cast<ID3D11Texture2D*>(dr));
+            if (slot >= 0)
+            {
+                static ID3D11Texture2D* told = nullptr;
+                if (told != g_W[slot].tex)
+                {
+                    told = g_W[slot].tex;
+                    LOGI("Fog: RENDER_WATER's depth buffer ({}x{}; its last draw: depth test {}, depth write {}): the fog measures to the nearer of it and the scene's depth (the water's surface)",
+                         g_W[slot].w, g_W[slot].h, sd.DepthEnable ? "on" : "off", sd.DepthWriteMask == D3D11_DEPTH_WRITE_MASK_ALL ? "on" : "off");
+                }
+                g_WNotes[frame % 8] = WNote{ frame, slot }; g_WLast = g_WNotes[frame % 8];
+            }
+        }
+    }
+    if (dr) dr->Release();
+    dsv->Release();
+}
+
 bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
 {
     if (!g_Want.load(std::memory_order_relaxed) || !g_GameFogOff.load(std::memory_order_relaxed) || g_Menu.load(std::memory_order_relaxed) || !c || !view) return false;
@@ -558,6 +722,18 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     if (n.target < 0) return false;
     Target& t = g_T[n.target];
     if (!t.rtv) return false;
+    // the water's depth this frame (or within the last few: the same buffer, rewritten every frame), if it is not the
+    // scene's own and has its size
+    ID3D11ShaderResourceView* water = nullptr;
+    {
+        WNote w = g_WNotes[frame % 8];
+        if (!(w.slot >= 0 && w.frame == frame) && g_WLast.slot >= 0 && frame - g_WLast.frame < 4) w = g_WLast;
+        if (w.slot >= 0 && (w.frame == frame || frame - w.frame < 4))
+        {
+            const WaterT& wt = g_W[w.slot];
+            if (wt.srv && wt.tex != t.depth && wt.w == t.w && wt.h == t.h) water = wt.srv;
+        }
+    }
 
     struct { float P[16]; float V[12]; float g0[4], g1[4], g2[4], g3[4], g4[4]; } k{};
     memcpy(k.P, n.proj, 64);
@@ -572,13 +748,13 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     k.g3[1] = P.sky || P.category ? (g_SettledAt > 0 && (!P.category || g_Cat >= 0) ? (float)std::min(1.0, (Now() - g_SettledAt) / 2.0) : 0.f) : 1.f;
     k.g3[2] = kLearnFrames;
     k.g3[3] = P.skyHeight > 0.f ? sinf(std::min(90.f, P.skyHeight) * 0.0174533f) : 0.f;
-    k.g4[0] = std::max(0.f, P.minBrightness); k.g4[1] = P.followExposure ? 1.f : 0.f;
+    k.g4[0] = std::max(0.f, P.minBrightness); k.g4[1] = P.followExposure ? 1.f : 0.f; k.g4[2] = water ? 1.f : 0.f;
     ID3D11ShaderResourceView* expo = nullptr;   // the game's exposure buffer (its EngineLuminanceFactor), when found
     { std::lock_guard ek(g_EsM); expo = g_ExpoSrv; if (expo) { expo->AddRef(); k.g4[3] = (float)g_ExpoElems; } }
     Saved saved; saved.Save(c);
     c->UpdateSubresource(g_Cb, 0, nullptr, &k, 0, 0);
 
-    ID3D11ShaderResourceView* nullSrv[4] = {}; ID3D11UnorderedAccessView* nullUav[4] = {};
+    ID3D11ShaderResourceView* nullSrv[5] = {}; ID3D11UnorderedAccessView* nullUav[4] = {};
     // nothing bound for output while the scene's targets are read (a resource bound both ways is read as nothing)
     c->OMSetRenderTargets(0, nullptr, nullptr);
     if (g_ResetColour.exchange(false))
@@ -586,35 +762,49 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
         const float z[4] = {}; const UINT zu[4] = {};
         c->ClearUnorderedAccessViewFloat(g_BinsUav, z); c->ClearUnorderedAccessViewFloat(g_SummaryUav, z); c->ClearUnorderedAccessViewUint(g_AccUav, zu);
         c->ClearUnorderedAccessViewFloat(g_RefUav, z);
-        g_SettledAt = 0; g_LoggedTop = -9.f; g_Cat = -1; g_LoggedExpo = 1.f; g_Gen++;   // a read-back copied before this is stale
+        g_SettledAt = 0; g_LoggedTop = -9.f; g_Cat = -1; g_LoggedExpo = 1.f; g_LoggedPlane = -1.f; g_Gen++;   // a read-back copied before this is stale
     }
     {   // 1) the horizon's colours, round it (only what this eye sees of the sky adds to them; with a fixed colour, for the log)
         c->CSSetConstantBuffers(0, 1, &g_Cb);
-        { ID3D11ShaderResourceView* srv[4] = { t.colorSrv, t.depthSrv, nullptr, expo }; c->CSSetShaderResources(0, 4, srv); }
+        { ID3D11ShaderResourceView* srv[5] = { t.colorSrv, t.depthSrv, nullptr, expo, water }; c->CSSetShaderResources(0, 5, srv); }
         { ID3D11UnorderedAccessView* uav[4] = { g_AccUav, g_BinsUav, g_SummaryUav, g_RefUav }; c->CSSetUnorderedAccessViews(0, 4, uav, nullptr); }
         c->CSSetShader(g_CsSky, nullptr, 0);
         c->Dispatch(t.gx, t.gy, 1);
         c->CSSetShader(g_CsFinal, nullptr, 0);
         c->Dispatch(1, 1, 1);
         c->CSSetUnorderedAccessViews(0, 4, nullUav, nullptr);
-        c->CSSetShaderResources(0, 4, nullSrv);
+        c->CSSetShaderResources(0, 5, nullSrv);
     }
-    // 2) the fog, blended over the scene
-    c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    c->IASetInputLayout(nullptr);
-    c->VSSetShader(g_Vs, nullptr, 0);
-    c->PSSetShader(g_Ps, nullptr, 0);
-    c->PSSetConstantBuffers(0, 1, &g_Cb);
-    { ID3D11ShaderResourceView* srv[4] = { nullptr, t.depthSrv, g_SummarySrv, expo }; c->PSSetShaderResources(0, 4, srv); }
-    c->RSSetState(g_Rs);
-    D3D11_VIEWPORT vp{ 0.f, 0.f, (float)t.w, (float)t.h, 0.f, 1.f };
-    c->RSSetViewports(1, &vp);
-    c->OMSetBlendState(g_Blend, nullptr, 0xFFFFFFFF);
-    c->OMSetDepthStencilState(g_NoDepth, 0);
-    c->OMSetRenderTargets(1, &t.rtv, nullptr);
-    c->Draw(3, 0);
+    // 2) the fog, blended over the scene: a grid at its start, depth tested against the scene (only what lies beyond it
+    // is shaded); not drawn at all before it has faded in
+    if (k.g3[1] > 0.f)
+    {
+        // which way the depth runs (as the shaders tell it: the depth at infinity is 1 or 0)
+        const float* R = n.proj;
+        const bool colVec = fabsf(fabsf(R[14]) - 1.f) < 1e-3f;
+        const float sgn = colVec ? R[14] : R[11];
+        const bool reversed = std::clamp(R[10] * sgn, 0.f, 1.f) <= 0.5f;
+        ID3D11DepthStencilView* dsv = P.start >= 1.f ? t.dsv : nullptr;
+        c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        c->IASetInputLayout(nullptr);
+        c->VSSetShader(g_Vs, nullptr, 0);
+        c->VSSetConstantBuffers(0, 1, &g_Cb);
+        c->PSSetShader(g_Ps, nullptr, 0);
+        c->PSSetConstantBuffers(0, 1, &g_Cb);
+        { ID3D11ShaderResourceView* srv[5] = { nullptr, t.depthSrv, g_SummarySrv, expo, water }; c->PSSetShaderResources(0, 5, srv); }
+        c->RSSetState(g_Rs);
+        D3D11_VIEWPORT vp{ 0.f, 0.f, (float)t.w, (float)t.h, 0.f, 1.f };
+        c->RSSetViewports(1, &vp);
+        c->OMSetBlendState(g_Blend, nullptr, 0xFFFFFFFF);
+        c->OMSetDepthStencilState(dsv ? (reversed ? g_DepthGreater : g_DepthLess) : g_NoDepth, 0);
+        c->OMSetRenderTargets(1, &t.rtv, dsv);
+        c->Draw(kGridVerts, 0);
+        if (dsv) g_EarlyZ++;
+        if (water) g_WaterUsed++;
+    }
+    else g_Faded++;
     // the game's state as it was (the PS's inputs first: the colour target goes back to being an output)
-    c->PSSetShaderResources(0, 4, nullSrv);
+    c->PSSetShaderResources(0, 5, nullSrv);
     if (expo) expo->Release();
     c->OMSetRenderTargets(0, nullptr, nullptr);
     saved.Restore(c);
@@ -944,6 +1134,12 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 LOGI("Fog: its brightness {:.3f} x EngineLuminanceFactor (the game's factor now {:.3f}){}; CheapFogMinBrightness {:.2f} keeps it from going darker",
                      cyl, v[18], cyl < P.minBrightness ? std::string(": darker than the floor, drawn brighter") : std::string(""), P.minBrightness);
             }
+            if (v[21] > 0 && (g_LoggedPlane <= 0 || fabsf(logf(v[20] / g_LoggedPlane)) > 0.25f))
+            {   // the plane the empty pixels below the horizon are fogged at
+                g_LoggedPlane = v[20];
+                LOGI("Fog: nothing drawn below the horizon here (the sea beyond its floor{}): fogged as a plane {:.1f} m below the eye, where the ground next to it lies",
+                     g_WaterUsed.load() ? "" : ", the water's depth not known", v[20]);
+            }
             if (P.skyAuto && fabsf(r[2] - g_LoggedTop) > 0.02f)
             {   // the sky's fog follows the far background up (CheapFogSkyHeight = auto)
                 g_LoggedTop = r[2];
@@ -977,6 +1173,8 @@ void Fog::OnPresent(IDXGISwapChain* sc)
 std::string Fog::Status()
 {
     std::lock_guard lk(g_M);
-    return fmt::format("fog want {} gamefogoff {} ready {} drawn {} (same frame {}, latest targets {}, none {}, immediate {}) ({})", g_Want.load() ? 1 : 0,
-                       g_GameFogOff.load() ? 1 : 0, g_Ready ? 1 : 0, g_Drawn.load(), g_Matched.load(), g_Fallback.load(), g_NoNote.load(), g_Immediate.load(), g_Why);
+    return fmt::format("fog want {} gamefogoff {} ready {} drawn {} (same frame {}, latest targets {}, none {}, immediate {}; not faded in {}, depth-tested {}, "
+                       "with the water's depth {}) ({})", g_Want.load() ? 1 : 0,
+                       g_GameFogOff.load() ? 1 : 0, g_Ready ? 1 : 0, g_Drawn.load(), g_Matched.load(), g_Fallback.load(), g_NoNote.load(), g_Immediate.load(),
+                       g_Faded.load(), g_EarlyZ.load(), g_WaterUsed.load(), g_Why);
 }

@@ -43,6 +43,13 @@ namespace PassProfile
     //! ScreenShadows' characters, for the draw hooks: 1 = a sun cascade's shadow task runs on this thread, 2 = an
     //! eye's main depth pass (CharEye 0 / 1), 0 = neither
     int CharTask();
+    //! DepthPassDepthOnly (experimental): an eye's main DEPTHPASS task runs on this thread (GpuTrace's draw hooks)
+    bool DepthOnlyNow();
+    void SetDepthOnly(bool on);   //!< from the ini, before Install
+    //! DepthPassSkipRedundantCopies: an eye's main DEPTHPASS task runs on this thread, and which one (a serial)
+    bool DepthCopiesNow();
+    unsigned long long DepthTaskSerial();
+    void SetDepthCopies(bool on); //!< from the ini, before Install
     int CharEye();
     //! GpuTrace's draw / dispatch hooks: counted into the render task running on this thread, if any
     void NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect);

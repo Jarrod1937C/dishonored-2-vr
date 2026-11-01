@@ -27,8 +27,8 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
     std::atomic<int> g_Mode{ 1 };
     std::atomic<float> g_Margin{ 2.f };
     std::atomic<bool> g_Lens{ true };       // OutOfViewMaskLens: the lens's hidden area too (XR_KHR_visibility_mask)
-    // OutOfViewMaskCorners: the two outer corners of each eye's fov (plus the margin) outside a superellipse |x/X|^n + |y/Y|^n = 1
-    // through the middles of its four edges, X / Y the tangents of that quadrant's edges; 0 = none. For a headset whose
+    // OutOfViewMaskCorners: the two outer corners of each eye's rendered picture outside a superellipse |x|^n + |y|^n = 1
+    // (x, y the picture's own -1..1 coordinates: through the middles of its edges); 0 = none. For a headset whose
     // runtime gives no lens mask (Pimax via SteamVR: none): the lens shows a rounded picture, its corners are never seen.
     // n = 4 masks ~3.5 % of the fov (two corners of four), 3 ~6 %, 2 (an ellipse) ~11 %
     std::atomic<float> g_Corners{ 0.f };
@@ -216,40 +216,27 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
                 lensShare += Area(tri) / 4.f; lensTris++;
                 for (const V2& p : q) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
             }
-        // the fov's corners outside a superellipse (OutOfViewMaskCorners), in the eye frame on z = -1, projected the same way
+        // the picture's two outer corners outside a superellipse (OutOfViewMaskCorners), in the render rectangle itself
+        // (NDC, linear in the view's tangents): the first version fitted it to the native fov, whose corners lie outside
+        // the rendered rectangle on a Pimax (the rectangle sits inside the fov there) -- it masked nothing
         g_CornerShare[eye & 1] = 0;
         if (const float n = g_Corners.load(); n >= 1.f)
         {
             constexpr int kSeg = 16;
             const float e = 2.f / n;
-            for (int q = 0; q < 4; q++)
+            const float sx = eye == 0 ? -1.f : 1.f;              // the outer side: the left eye's left, the right eye's right
+            for (int q = 0; q < 2; q++)
             {
-                // only the two OUTER corners (the left eye's left ones, the right eye's right ones): between the eyes the
-                // mask broke the screen-space reflections, hair and glass (OutOfViewMask 1); the outer side does not
-                if ((eye == 0) != (q == 1 || q == 2)) continue;
-                const float X = (q == 0 || q == 3) ? R : L, Y = (q < 2) ? U : D;   // the quadrant's edges (tangents)
-                auto toRender = [&](float x, float y, V2& out) {
-                    const float ve[3] = { x, y, -1.f }; float vr[3];
-                    VRMath::QRotate(conj, ve, vr);
-                    return vr[2] < -1e-3f && Project(P, vr, out);
-                };
-                V2 corner;
-                if (!toRender(X, Y, corner)) continue;
-                V2 prev; bool havePrev = false;
-                for (int k = 0; k <= kSeg; k++)
+                const float sy = q == 0 ? 1.f : -1.f;
+                const V2 corner{ sx, sy };
+                V2 prev{ sx, 0.f };
+                for (int k = 1; k <= kSeg; k++)
                 {
                     const float th = 1.5707963f * (float)k / (float)kSeg;
-                    const float c = powf(std::max(0.f, cosf(th)), e), sn = powf(std::max(0.f, sinf(th)), e);
-                    V2 cur;
-                    if (!toRender(X * c, Y * sn, cur)) { havePrev = false; continue; }
-                    if (havePrev)
-                    {
-                        std::vector<V2> tri = { corner, prev, cur };
-                        for (int i = 0; i < 4 && !tri.empty(); i++) { const V2 a = rect[i], b = rect[(i + 1) % 4]; tri = Clip(tri, a, b, 1.f); }
-                        if (tri.size() >= 3) g_CornerShare[eye & 1] += Area(tri) / 4.f;
-                        for (const V2& p : { corner, prev, cur }) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
-                    }
-                    prev = cur; havePrev = true;
+                    const V2 cur{ sx * powf(std::max(0.f, cosf(th)), e), sy * powf(std::max(0.f, sinf(th)), e) };
+                    g_CornerShare[eye & 1] += Area({ corner, prev, cur }) / 4.f;
+                    for (const V2& p : { corner, prev, cur }) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
+                    prev = cur;
                 }
             }
         }

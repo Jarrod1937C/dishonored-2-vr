@@ -179,6 +179,8 @@ static DWORD WINAPI InitThread(LPVOID)
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
+    PassProfile::SetDepthOnly(Settings::DepthPassDepthOnly());
+    PassProfile::SetDepthCopies(Settings::DepthPassSkipRedundantCopies());
     Foveation::SetParams(Settings::Foveated());
     FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
     FovMask::SetCorners(Settings::OutOfViewMaskCorners());

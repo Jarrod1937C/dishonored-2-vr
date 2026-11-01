@@ -83,6 +83,8 @@ namespace
         { "display.shadowlampcacheslices", Kind::Float, "32", 0, 128, nullptr }, // ScreenShadows: r_shadowCacheSliceCnt (0 = the game's 12)
         { "display.staticlodzoom",      Kind::Float,  "1", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
         { "display.viewdistance",       Kind::Float,  "-1", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
+        { "display.depthpassdepthonly", Kind::Bool,   "0", 0, 0, nullptr },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
+        { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr }, // GpuTrace: a depth copy that changes nothing is not made
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
@@ -130,8 +132,6 @@ namespace
         { "cheats.infinitemana",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infiniteammo",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infinitehealth",      Kind::Bool,   "0", 0, 0, nullptr },
-        { "advanced.writestatusfile",   Kind::Bool,   "1", 0, 0, nullptr },
-        { "advanced.logcontrollerinput", Kind::Bool,  "1", 0, 0, nullptr },
         { "advanced.keepaliveframes",   Kind::Bool,   "1", 0, 0, nullptr },
         { "advanced.newsessionafter",   Kind::Float,  "5", 0, 120, nullptr },
         // experimental (StereoSync): passes the right eye's frame skips, using what the left eye's frame of the same tick did
@@ -140,8 +140,11 @@ namespace
         { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr },
         { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr },
         { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr },
-        { "advanced.profilerenderpasses", Kind::Bool, "0", 0, 0, nullptr },   // PassProfile: GPU ms per render pass, to the log
         { "advanced.skipdisabledeffects", Kind::Float, "0", 0, 2, nullptr },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
+        // [Logging] (2026-11-01: moved from [Advanced]; the old place is still read: kMoved)
+        { "logging.logcontrollerinput", Kind::Bool,   "1", 0, 0, nullptr },
+        { "logging.writestatusfile",    Kind::Bool,   "1", 0, 0, nullptr },
+        { "logging.profilerenderpasses", Kind::Bool,  "0", 0, 0, nullptr },   // PassProfile: GPU ms per render pass, to the log
     };
 
     std::map<std::string, std::string> g_Val;     //!< validated values, every key present
@@ -224,7 +227,14 @@ void Settings::Load()
         }
         const size_t eq = line.find('=');
         if (eq == std::string::npos) { LOGI("Settings: line {} ignored (no '='): {}", lineNo, line); g_Bad++; continue; }
-        const std::string key = section + "." + Lower(Trim(line.substr(0, eq))), raw = Trim(line.substr(eq + 1));
+        std::string key = section + "." + Lower(Trim(line.substr(0, eq)));
+        const std::string raw = Trim(line.substr(eq + 1));
+        {   // settings that moved to another section: an older file's are read where they were
+            static const char* const kMoved[][2] = {
+                { "advanced.logcontrollerinput", "logging.logcontrollerinput" }, { "advanced.writestatusfile", "logging.writestatusfile" },
+                { "advanced.profilerenderpasses", "logging.profilerenderpasses" } };
+            for (const auto& m : kMoved) if (key == m[0]) { key = m[1]; break; }
+        }
         const Key* k = nullptr;
         for (const Key& kk : kKeys) if (key == kk.name) { k = &kk; break; }
         if (!k) { LOGI("Settings: line {}: unknown setting '{}' ignored", lineNo, key); g_Bad++; continue; }
@@ -295,8 +305,8 @@ std::vector<std::string> Settings::PackageCommands()
     return c;
 }
 
-bool Settings::StatusFile() { return B("advanced.writestatusfile"); }
-bool Settings::LogInput() { return B("advanced.logcontrollerinput"); }
+bool Settings::StatusFile() { return B("logging.writestatusfile"); }
+bool Settings::LogInput() { return B("logging.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
@@ -349,6 +359,8 @@ bool Settings::ShadowLampFewerUpdates() { return B("display.shadowlampfewerupdat
 int Settings::ShadowLampCacheSlices() { return (int)std::lround(F("display.shadowlampcacheslices")); }
 float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
 int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
+bool Settings::DepthPassDepthOnly() { return B("display.depthpassdepthonly"); }
+bool Settings::DepthPassSkipRedundantCopies() { return B("display.depthpassskipredundantcopies"); }
 float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjectsize"); }
 int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
@@ -359,7 +371,7 @@ float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
-bool Settings::ProfileRenderPasses() { return B("advanced.profilerenderpasses"); }
+bool Settings::ProfileRenderPasses() { return B("logging.profilerenderpasses"); }
 int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdisabledeffects")); }
 int Settings::OutOfViewMask() { return (int)std::lround(F("display.outofviewmask")); }
 float Settings::OutOfViewMaskMargin() { return F("display.outofviewmaskmargin"); }

@@ -276,6 +276,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
                StaticLodZoom = 1 (experimental: >1 = static models switch to simpler versions sooner; 1 = the game's)
                ViewDistance = -1 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
+               DepthPassDepthOnly = 0 (experimental: the depth pass's main shader drawn depth-only)
+               DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)
                ShadowMapMinObjectSize = 0.3 (m across: smaller moving objects cast no sun shadow-map shadow)
                ShadowSunUpdateEvery = 2 (frame pairs between redraws of the sun's shadows beyond the nearest)
                OutOfViewMask = 0 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
@@ -293,8 +295,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CutsceneLetterbox = 0 (1 = keep the black bars)   CutsceneArms = 0 (1 = the
                                  cutscene moves your hands, not the controllers)
    [Cheats]    UnlockEverything = 1   InfiniteMana = 1   InfiniteAmmo = 0   InfiniteHealth = 0
-   [Advanced]  LogControllerInput = 1   WriteStatusFile = 0
-               KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
+   [Advanced]  KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
                                  picture instead of an hourglass)
                NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
                                  Link / Air Link only)
@@ -302,10 +303,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
-               ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
-                                      the mod's own steps, hitches and a frame draw by draw)
                SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
+   [Logging]   LogControllerInput = 1   WriteStatusFile = 0 (an older file's [Advanced] ones still work)
+               ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
+                                      the mod's own steps, hitches and a frame draw by draw)
 
  TWO CHEATS ARE ON by default, so every power and weapon can be tried in VR right away:
  UnlockEverything (every power, upgrade, bone charm crafting, black market upgrade and weapon, on

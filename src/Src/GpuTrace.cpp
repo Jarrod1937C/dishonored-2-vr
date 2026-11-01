@@ -28,6 +28,7 @@
 #include "BodyHide.h"
 #include "XRSession.h"
 #include "Fog.h"
+#include "VrTweaks.h"
 #include "ScreenShadows.h"
 
 namespace
@@ -3972,9 +3973,45 @@ namespace
 
     //! Both constant-buffer paths for one target draw: the 6DOF rewrite and the legacy slot-1 view offset, which is
     //! kept because it is the scaffolding the swap mechanism was debugged on. Always paired with EndTarget.
-    struct TargetSwap { Swap six; bool legacy = false; ID3D11Buffer* legacyPrev = nullptr; };
+    struct TargetSwap
+    {
+        Swap six; bool legacy = false; ID3D11Buffer* legacyPrev = nullptr;
+        // DepthPassDepthOnly: the draw's colour target and pixel shader, taken off for it and put back after
+        bool depthOnly = false; ID3D11RenderTargetView* rtv = nullptr; ID3D11DepthStencilView* dsv = nullptr; ID3D11PixelShader* ps = nullptr;
+    };
+    std::atomic<unsigned long long> g_DepthOnlyDraws{ 0 };
+    //! DepthPassDepthOnly (experimental): in an eye's main depth pass, a draw of its main shader (PS 48f2037fd43d86c8:
+    //! 7 instructions, no textures, writes the RG16F target nothing in the frame reads -- the draw-by-draw log of
+    //! 2026-11-01) into exactly that target and a depth buffer is drawn with no pixel shader and no colour target: the
+    //! GPU's depth-only path, no colour writes
+    void DepthOnlyBegin(ID3D11DeviceContext* c, TargetSwap& t)
+    {
+        ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+        if (!ps) return;
+        thread_local const void* lastPs = nullptr; thread_local bool lastHit = false;
+        if (ps != lastPs) { lastPs = ps; lastHit = GpuTrace::ShaderHashOf(ps) == 0x48f2037fd43d86c8ull; }
+        if (!lastHit) { ps->Release(); return; }
+        ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
+        c->OMGetRenderTargets(8, rtv, &dsv);
+        bool one = rtv[0] && dsv;
+        for (int i = 1; i < 8; i++) if (rtv[i]) { one = false; rtv[i]->Release(); }
+        if (!one) { if (rtv[0]) rtv[0]->Release(); if (dsv) dsv->Release(); ps->Release(); return; }
+        t.depthOnly = true; t.rtv = rtv[0]; t.dsv = dsv; t.ps = ps;
+        c->OMSetRenderTargetsAndUnorderedAccessViews(0, nullptr, dsv, 0, D3D11_KEEP_UNORDERED_ACCESS_VIEWS, nullptr, nullptr);
+        c->PSSetShader(nullptr, nullptr, 0);
+        if (g_DepthOnlyDraws.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: DepthPassDepthOnly: the first depth-pass draw drawn depth-only");
+    }
+    void DepthOnlyEnd(ID3D11DeviceContext* c, TargetSwap& t)
+    {
+        if (!t.depthOnly) return;
+        c->OMSetRenderTargetsAndUnorderedAccessViews(1, &t.rtv, t.dsv, 0, D3D11_KEEP_UNORDERED_ACCESS_VIEWS, nullptr, nullptr);
+        c->PSSetShader(t.ps, nullptr, 0);
+        t.rtv->Release(); t.dsv->Release(); t.ps->Release();
+        t.depthOnly = false;
+    }
     void BeginTarget(ID3D11DeviceContext* c, UINT n, TargetSwap& t)
     {
+        if (PassProfile::DepthOnlyNow()) DepthOnlyBegin(c, t);
         if (Scanning()) ScanDraw(c, n);
         const bool byIndex = IsTarget(n);
         const bool candidate = byIndex || g_Near.load() > 0.f;
@@ -3986,6 +4023,7 @@ namespace
     {
         EndSixDof(c, t.six);
         RestoreView(c, t.legacy, t.legacyPrev);
+        DepthOnlyEnd(c, t);
     }
 
     void Record(ID3D11DeviceContext* ctx, int kind, Entry e, UINT indexCount)
@@ -4032,12 +4070,96 @@ namespace
     constexpr int kMapSlot = 14, kUnmapSlot = 15, kUpdateSubSlot = 48;
     // Compute dispatches and resource copies: StereoTaa (the TAA pass and its history)
     constexpr int kDispatchSlot = 41, kDispatchIndSlot = 42, kCopyRegionSlot = 46, kCopySlot = 47;
-    constexpr int kExtraSlots[] = { kMapSlot, kUnmapSlot, kUpdateSubSlot, kDispatchSlot, kDispatchIndSlot, kCopyRegionSlot, kCopySlot };
+    constexpr int kClearDsvSlot = 53;   // DepthPassSkipRedundantCopies: a clear writes the buffer too
+    constexpr int kExtraSlots[] = { kMapSlot, kUnmapSlot, kUpdateSubSlot, kDispatchSlot, kDispatchIndSlot, kCopyRegionSlot, kCopySlot, kClearDsvSlot };
     constexpr int kNumExtra = (int)(sizeof kExtraSlots / sizeof kExtraSlots[0]);
     using Dispatch_t     = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT);
     using DispatchInd_t  = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Buffer*, UINT);
     using CopyRegion_t   = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Resource*, UINT, UINT, UINT, UINT, ID3D11Resource*, UINT, const D3D11_BOX*);
     using Copy_t         = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Resource*, ID3D11Resource*);
+    using ClearDsv_t     = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11DepthStencilView*, UINT, FLOAT, UINT8);
+
+    // ---- DepthPassSkipRedundantCopies ----
+    // The eyes' depth pass copies depth buffers with full-screen draws (PS 904e7f2d94d6f085: ro_identity_bufferdepthin
+    // -> depth, ~0.07-0.1 ms each at 16 Mpx, at memory bandwidth). The resource flow of 2026-11-01: in some scenes the
+    // same copy (the same view to the same depth view) is made twice in one task, with nothing drawn into either buffer
+    // in between -- the second changes nothing. Tracked per task on its own context: the last copy made, invalidated by
+    // any draw into (or depth-tested against) its source or target, any copy, update or clear of either; a copy equal to
+    // it (views, viewport, depth-stencil state and reference, rasterizer state) while it still holds is not made. And
+    // with the depth of field off (VrGraphicsTweaks), the downsample of depth for its autofocus (PS b152af85c03cbbaf,
+    // 4 Mpx into an RG16F read only by DOF_AUTOFOCUS) is not made either.
+    constexpr uint64_t kPsDepthCopy = 0x904e7f2d94d6f085ull, kPsDofDepth = 0xb152af85c03cbbafull;
+    std::atomic<unsigned long long> g_CopiesSeen{ 0 }, g_CopiesSkipped{ 0 }, g_DofDepthSkipped{ 0 };
+    std::atomic<bool> g_ClearHooked{ false };
+    struct DCopy
+    {
+        unsigned long long serial = 0; bool valid = false;
+        const void* srv = nullptr; const void* dsv = nullptr; const void* srcRes = nullptr; const void* dstRes = nullptr;
+        D3D11_VIEWPORT vp{}; const void* dss = nullptr; UINT ref = 0; const void* rs = nullptr;
+    };
+    thread_local DCopy t_DC;
+    const void* ResOf(ID3D11View* v)
+    {
+        if (!v) return nullptr;
+        ID3D11Resource* r = nullptr; v->GetResource(&r);
+        if (r) r->Release();
+        return r;
+    }
+    void DepthCopyWrote(const void* res)
+    {   // a copy, update or clear into `res` (pointers compared only)
+        if (t_DC.valid && res && (res == t_DC.srcRes || res == t_DC.dstRes)) t_DC.valid = false;
+    }
+    //! at a draw of an eye's depth pass: true = not to be made
+    bool DepthCopySkip(ID3D11DeviceContext* c)
+    {
+        if (!PassProfile::DepthCopiesNow() || !g_ClearHooked.load(std::memory_order_relaxed)) return false;
+        const unsigned long long serial = PassProfile::DepthTaskSerial();
+        if (t_DC.serial != serial) { t_DC = DCopy{}; t_DC.serial = serial; }
+        ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
+        c->OMGetRenderTargets(8, rtv, &dsv);
+        const void* rtRes[8] = {}; int nrt = 0;
+        for (int i = 0; i < 8; i++) if (rtv[i]) { rtRes[nrt++] = ResOf(rtv[i]); rtv[i]->Release(); }
+        const void* dsRes = ResOf(dsv);
+        ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+        thread_local const void* lastPs = nullptr; thread_local uint64_t lastHash = 0;
+        if (ps != lastPs) { lastPs = ps; lastHash = ps ? GpuTrace::ShaderHashOf(ps) : 0; }
+        const uint64_t h = ps ? lastHash : 0;
+        if (ps) ps->Release();
+        bool skip = false;
+        if (h == kPsDofDepth && nrt == 1 && !dsv && VrTweaks::DofOff())
+        {
+            skip = true;
+            if (g_DofDepthSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: DepthPassSkipRedundantCopies: the depth downsample for the (off) depth of field's autofocus skipped");
+        }
+        else if (h == kPsDepthCopy && nrt == 0 && dsv)
+        {
+            ID3D11ShaderResourceView* srv = nullptr; c->PSGetShaderResources(0, 1, &srv);
+            const void* srcRes = ResOf(srv);
+            D3D11_VIEWPORT vp{}; UINT nvp = 1; c->RSGetViewports(&nvp, &vp);
+            ID3D11DepthStencilState* dss = nullptr; UINT ref = 0; c->OMGetDepthStencilState(&dss, &ref);
+            ID3D11RasterizerState* rs = nullptr; c->RSGetState(&rs);
+            g_CopiesSeen.fetch_add(1, std::memory_order_relaxed);
+            if (t_DC.valid && srv == t_DC.srv && dsv == t_DC.dsv && !memcmp(&vp, &t_DC.vp, sizeof vp) && dss == t_DC.dss && ref == t_DC.ref && rs == t_DC.rs)
+            {
+                skip = true;
+                if (g_CopiesSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: DepthPassSkipRedundantCopies: a depth copy that would change nothing skipped (the first)");
+            }
+            else if (srv && srcRes && srcRes != dsRes)
+            {
+                t_DC.valid = true; t_DC.srv = srv; t_DC.dsv = dsv; t_DC.srcRes = srcRes; t_DC.dstRes = dsRes;
+                t_DC.vp = vp; t_DC.dss = dss; t_DC.ref = ref; t_DC.rs = rs;
+            }
+            else t_DC.valid = false;
+            if (srv) srv->Release(); if (dss) dss->Release(); if (rs) rs->Release();
+        }
+        else if (t_DC.valid)
+        {   // any other draw that draws into, or depth-tests against, either buffer
+            if (dsRes && (dsRes == t_DC.srcRes || dsRes == t_DC.dstRes)) t_DC.valid = false;
+            for (int i = 0; i < nrt; i++) if (rtRes[i] == t_DC.srcRes || rtRes[i] == t_DC.dstRes) t_DC.valid = false;
+        }
+        if (dsv) dsv->Release();
+        return skip;
+    }
 
     //! One set of trampolines + hooks per context kind, so the same code serves both vtables.
     //! Can Detours patch this function safely? Detours follows a jump at a function's entry (an import thunk, or
@@ -4118,6 +4240,13 @@ namespace
         static inline DispatchInd_t  realDispatchInd = nullptr;
         static inline CopyRegion_t   realCopyRegion = nullptr;
         static inline Copy_t         realCopy = nullptr;
+        static inline ClearDsv_t     realClearDsv = nullptr;
+
+        static void STDMETHODCALLTYPE ClearDsv(ID3D11DeviceContext* c, ID3D11DepthStencilView* v, UINT flags, FLOAT d, UINT8 st)
+        {
+            if (PassProfile::DepthCopiesNow()) DepthCopyWrote(ResOf(v));
+            realClearDsv(c, v, flags, d, st);
+        }
 
         static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext* c, UINT x, UINT y, UINT z)
         {
@@ -4139,12 +4268,14 @@ namespace
                                                  ID3D11Resource* s, UINT ss, const D3D11_BOX* box)
         {
             PassProfile::NoteCopy();
+            if (PassProfile::DepthCopiesNow()) DepthCopyWrote(d);
             StereoTaa::OnCopy(c, KIND, d, s, true);
             realCopyRegion(c, d, ds, x, y, z, s, ss, box);
         }
         static void STDMETHODCALLTYPE Copy(ID3D11DeviceContext* c, ID3D11Resource* d, ID3D11Resource* s)
         {
             PassProfile::NoteCopy();
+            if (PassProfile::DepthCopiesNow()) DepthCopyWrote(d);
             StereoTaa::OnCopy(c, KIND, d, s, false);
             realCopy(c, d, s);
         }
@@ -4182,6 +4313,7 @@ namespace
             // t_InSwap: our own rewrite goes through this very hook and would cache OUR buffer, evicting the game's
             // entry from the same slot and starving the next draw.
             PassProfile::NoteUpdate();
+            if (PassProfile::DepthCopiesNow()) DepthCopyWrote(r);
             if (!sub && !box && data && !t_InSwap)
             {
                 StereoTaa::OnUpdate(c, r, data);
@@ -4195,6 +4327,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(c, n, 1, false);
+            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
@@ -4214,6 +4347,7 @@ namespace
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(c, n, 1, false);
+            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
@@ -4232,6 +4366,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
+            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
@@ -4250,6 +4385,7 @@ namespace
         {
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
+            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
@@ -4266,7 +4402,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawIdxInstIndirect(c, b, o);
@@ -4274,7 +4410,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawInstIndirect(c, b, o);
@@ -4299,6 +4435,7 @@ namespace
             realDispatchInd         = isTaken(vt[kDispatchIndSlot]) ? nullptr : (DispatchInd_t)vt[kDispatchIndSlot];
             realCopyRegion          = isTaken(vt[kCopyRegionSlot]) ? nullptr : (CopyRegion_t)vt[kCopyRegionSlot];
             realCopy                = isTaken(vt[kCopySlot]) ? nullptr : (Copy_t)vt[kCopySlot];
+            realClearDsv            = isTaken(vt[kClearDsvSlot]) ? nullptr : (ClearDsv_t)vt[kClearDsvSlot];
             // every entry checked first (Hookable): one Detours cannot follow is left alone instead of crashing the game
             const char* kind = KIND ? "deferred" : VARIANT ? "immediate (thread-safe)" : "immediate";
             auto ok = [&](auto& real, const char* name) -> bool
@@ -4311,6 +4448,7 @@ namespace
             ok(realDrawInst, "DrawInstanced"); ok(realDrawIdxInstIndirect, "DrawIndexedInstancedIndirect");
             ok(realDrawInstIndirect, "DrawInstancedIndirect"); ok(realMap, "Map"); ok(realUnmap, "Unmap"); ok(realUpdateSub, "UpdateSubresource");
             ok(realDispatch, "Dispatch"); ok(realDispatchInd, "DispatchIndirect"); ok(realCopyRegion, "CopySubresourceRegion"); ok(realCopy, "CopyResource");
+            ok(realClearDsv, "ClearDepthStencilView");
             int n = 0;
             if (realDrawIndexed)         { DetourAttach(&(PVOID&)realDrawIndexed, DrawIndexed); n++; }
             if (realDraw)                { DetourAttach(&(PVOID&)realDraw, Draw); n++; }
@@ -4325,6 +4463,7 @@ namespace
             if (realDispatchInd)         { DetourAttach(&(PVOID&)realDispatchInd, DispatchInd); n++; }
             if (realCopyRegion)          { DetourAttach(&(PVOID&)realCopyRegion, CopyRegion); n++; }
             if (realCopy)                { DetourAttach(&(PVOID&)realCopy, Copy); n++; }
+            if (realClearDsv)            { DetourAttach(&(PVOID&)realClearDsv, ClearDsv); n++; }
             return n;
         }
     };
@@ -4334,7 +4473,7 @@ namespace
     // every context slot the hooks cover (draws, Map/Unmap/UpdateSubresource, dispatches, copies, ExecuteCommandList), and
     // every function already detoured in them (RehookImmediate)
     constexpr int kHookedImmSlots[] = { 12, 13, 20, 21, 39, 40, kMapSlot, kUnmapSlot, kUpdateSubSlot, kDispatchSlot, kDispatchIndSlot,
-                                        kCopyRegionSlot, kCopySlot, 58 };
+                                        kCopyRegionSlot, kCopySlot, kClearDsvSlot, 58 };
     std::vector<void*> g_HookedFns;
     bool g_ImmMTHooked = false;
     bool g_Installed = false;
@@ -4898,6 +5037,10 @@ bool GpuTrace::Install(IDXGISwapChain* sc)
     }
     LONG r = DetourTransactionCommit();
     g_Installed = (r == NO_ERROR);
+    // DepthPassSkipRedundantCopies needs to see every clear of a depth buffer (deferred, and immediate: one shared
+    // implementation counts once, hooked through the immediate's entry)
+    g_ClearHooked = g_Installed && Imm::realClearDsv && (Def::realClearDsv || (vtDef && vtImm && vtDef[kClearDsvSlot] == vtImm[kClearDsvSlot]));
+    LOGI("GpuTrace: ClearDepthStencilView {} (DepthPassSkipRedundantCopies {})", g_ClearHooked.load() ? "hooked" : "NOT hooked", g_ClearHooked.load() ? "can run" : "stays off");
     g_Stats.installed = g_Installed;
     if (vtImm) for (int s : kHookedImmSlots) g_HookedFns.push_back(vtImm[s]);
     if (vtDef) for (int s : kHookedImmSlots) g_HookedFns.push_back(vtDef[s]);
@@ -5621,6 +5764,10 @@ uint64_t GpuTrace::ShaderHashOf(const void* sh)
     if (auto it = g_VsHash.find((void*)sh); it != g_VsHash.end()) return it->second;
     if (auto it = g_PsCsHash.find((void*)sh); it != g_PsCsHash.end()) return it->second;
     return 0;
+}
+std::string GpuTrace::DepthCopyStats()
+{
+    return fmt::format("depth copies {} seen, {} skipped (they changed nothing); autofocus depth downsamples skipped {}", g_CopiesSeen.load(), g_CopiesSkipped.load(), g_DofDepthSkipped.load());
 }
 bool GpuTrace::ShaderBytecode(const void* sh, std::vector<uint8_t>& out)
 {

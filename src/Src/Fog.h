@@ -42,6 +42,8 @@ namespace Fog
     void OnPresent(IDXGISwapChain* sc);       //!< the render thread's Present: the log's readback
     //! PassProfile's executor hook, on the task's own context: the end of a FORWARD_DYNAMIC task (targets still bound)...
     void AfterOpaque(ID3D11DeviceContext* c, const void* view);
+    //! ...the end of a RENDER_WATER task: its depth buffer (a copy of the scene's, with the water's surface) is noted...
+    void AfterWater(ID3D11DeviceContext* c, const void* view);
     //! ...and the start of an ALPHA_LIT task (a fresh context): the fog is drawn there.
     //! Returns true when it drew (the task's context must then be finished even if the pass marks it empty).
     bool BeforeTransparent(ID3D11DeviceContext* c, const void* view);

@@ -65,11 +65,17 @@ namespace
 
     std::atomic<bool> g_On{ false };              // profiling
     std::atomic<bool> g_FogHook{ false };         // Fog's anchors (FORWARD_DYNAMIC end, ALPHA_LIT start) need the hook too
-    int g_RowOpaque = -1, g_RowTransparent = -1;  // FORWARD_DYNAMIC, ALPHA_LIT
+    int g_RowOpaque = -1, g_RowTransparent = -1, g_RowWater = -1;  // FORWARD_DYNAMIC, ALPHA_LIT, RENDER_WATER
     std::atomic<bool> g_SssHook{ false };         // ScreenShadows: the end of SCREENSHADOWS (the sun's mask still bound)
     int g_RowScreenShadows = -1;
     std::atomic<bool> g_FovHook{ false };         // Foveation: the scene passes, at the eye's resolution
     std::atomic<bool> g_MaskHook{ false };        // FovMask: the depth pass of each eye's main view
+    std::atomic<bool> g_DepthOnly{ false };       // DepthPassDepthOnly (experimental): its main shader drawn depth-only
+    thread_local bool t_DepthOnly = false;
+    std::atomic<bool> g_DepthCopies{ false };     // DepthPassSkipRedundantCopies: GpuTrace skips a depth copy that changes nothing
+    thread_local bool t_DepthCopies = false;
+    thread_local unsigned long long t_DepthSerial = 0;   // which depth task (GpuTrace's copy tracking starts over with each)
+    std::atomic<unsigned long long> g_DepthSerial{ 0 };
     int g_RowDepth = -1;                          // DEPTHPASS
     // the DEPTHPASS task running on this thread, until its first draw into the scene's depth buffer (FovMask)
     struct MaskT { ID3D11DeviceContext* c = nullptr; const void* view = nullptr; int eye = -1, tries = 0; bool on = false; };
@@ -520,6 +526,7 @@ namespace
     thread_local Rd t_Rd;
     std::mutex g_ReadM;
     std::unordered_map<const void*, std::pair<uint64_t, uint64_t>> g_Reads;   // resource -> the rows that read it (bits 0..127)
+    std::unordered_map<const void*, std::pair<uint64_t, uint64_t>> g_Targets; // resource -> the rows that draw into it (colour or depth)
     void NoteReads(ID3D11DeviceContext* c, bool dispatch)
     {
         if (!c || c != t_Rd.c || t_Rd.row < 0 || t_Rd.row >= 128) return;
@@ -528,20 +535,27 @@ namespace
         const void* res[16] = {}; int n = 0;
         for (int i = 0; i < 16; i++)
             if (v[i]) { ID3D11Resource* r = nullptr; v[i]->GetResource(&r); if (r) { res[n++] = r; r->Release(); } v[i]->Release(); }
-        if (!n) return;
-        std::lock_guard lk(g_ReadM);
-        if (g_Reads.size() > 20000) return;
-        for (int i = 0; i < n; i++)
-        {
-            auto& b = g_Reads[res[i]];
-            if (t_Rd.row < 64) b.first |= 1ull << t_Rd.row; else b.second |= 1ull << (t_Rd.row - 64);
+        const void* tg[9] = {}; int nt = 0;
+        if (!dispatch)
+        {   // the targets it draws into (and depth-tests against): a buffer that is only a depth buffer later is used too
+            ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
+            c->OMGetRenderTargets(8, rtv, &dsv);
+            for (int i = 0; i < 8; i++) if (rtv[i]) { ID3D11Resource* r = nullptr; rtv[i]->GetResource(&r); if (r) { tg[nt++] = r; r->Release(); } rtv[i]->Release(); }
+            if (dsv) { ID3D11Resource* r = nullptr; dsv->GetResource(&r); if (r) { tg[nt++] = r; r->Release(); } dsv->Release(); }
         }
+        if (!n && !nt) return;
+        std::lock_guard lk(g_ReadM);
+        if (g_Reads.size() > 20000 || g_Targets.size() > 20000) return;
+        auto mark = [&](std::pair<uint64_t, uint64_t>& b) { if (t_Rd.row < 64) b.first |= 1ull << t_Rd.row; else b.second |= 1ull << (t_Rd.row - 64); };
+        for (int i = 0; i < n; i++) mark(g_Reads[res[i]]);
+        for (int i = 0; i < nt; i++) mark(g_Targets[tg[i]]);
     }
-    std::string ReadersOf(const void* res)
+    std::string ReadersOf(const void* res, bool targets = false)
     {
         std::lock_guard lk(g_ReadM);
-        auto it = g_Reads.find(res);
-        if (it == g_Reads.end()) return "none in this frame";
+        auto& m = targets ? g_Targets : g_Reads;
+        auto it = m.find(res);
+        if (it == m.end()) return "none in this frame";
         std::string out;
         for (int r = 0; r < 128; r++)
             if (r < 64 ? (it->second.first >> r) & 1 : (it->second.second >> (r - 64)) & 1) out += fmt::format("{}{}", out.empty() ? "" : ", ", RowName(r));
@@ -698,6 +712,11 @@ namespace
                    : (row == g_RowShWorldSun || row == g_RowShDynSun) ? 1
                    : (row == g_RowDepth && (kind == kLeft || kind == kRight)) ? 2 : 0;
         t_CharEye = eye;
+        const bool savedDepthOnly = t_DepthOnly, savedDepthCopies = t_DepthCopies; const unsigned long long savedDepthSerial = t_DepthSerial;
+        const bool mainDepth = c && row == g_RowDepth && (kind == kLeft || kind == kRight);
+        t_DepthOnly = mainDepth && g_DepthOnly.load(std::memory_order_relaxed);
+        t_DepthCopies = mainDepth && g_DepthCopies.load(std::memory_order_relaxed);
+        if (t_DepthCopies) t_DepthSerial = g_DepthSerial.fetch_add(1) + 1;
         if (c && eye >= 0 && row == g_RowDepth && g_MaskHook.load(std::memory_order_relaxed)) { t_Mask = MaskT{}; t_Mask.c = c; t_Mask.view = view; t_Mask.eye = eye; t_Mask.on = true; }
         else t_Mask.on = false;
         if (learn) { t_Caps = Caps{}; t_Caps.c = c; t_Caps.on = true; }
@@ -734,8 +753,10 @@ namespace
         if (fovRow) Foveation::End(c, foveated);
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
+        if (c && mainView && row == g_RowWater && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterWater(c, view);
         t_SssCtx = savedSss; t_SssView = savedSssView; t_SssEye = savedSssEye;
         t_CharTask = savedCharTask; t_CharEye = savedCharEye;
+        t_DepthOnly = savedDepthOnly; t_DepthCopies = savedDepthCopies; t_DepthSerial = savedDepthSerial;
         if (c && mainView && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed)) ScreenShadows::AfterMask(c, view, eye);
         if (slot >= 0)
         {
@@ -762,7 +783,7 @@ namespace
         const ExecFn real = W ? g_ExecImm : g_Exec;
         const bool prof = g_On.load(std::memory_order_relaxed);
         const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
-        const bool mask = g_MaskHook.load(std::memory_order_relaxed);
+        const bool mask = g_MaskHook.load(std::memory_order_relaxed) || g_DepthOnly.load(std::memory_order_relaxed) || g_DepthCopies.load(std::memory_order_relaxed);
         const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
         if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
@@ -775,7 +796,7 @@ namespace
             if (ReadInt((uint8_t*)task + 0xF8, idx) && ReadInt((const void*)(g_Base + 0x397A2F8), slices) && idx >= 0 && idx < slices)
                 pass = pass == g_RowShWorld ? g_RowShWorldSun : g_RowShDynSun;
         }
-        const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
+        const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent || pass == g_RowWater)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
                          || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))))
                          || (mask && pass == g_RowDepth) || (sss && pass == g_RowScreenShadows)
                          || (chars && (pass == g_RowDepth || pass == g_RowShWorldSun || pass == g_RowShDynSun));
@@ -944,6 +965,7 @@ namespace
             LOGI("PassProfile:   {:<36} {:7.3f} ({:6.3f}) | {:6.3f} ({:6.3f}) | {:4.2f}", kSecName[sct], c.gpu / fAll, c.gpuMax,
                  c.cpuUs / 1000.0 / fAll, c.cpuMaxUs / 1000.0, c.n / fAll);
         }
+        if (g_DepthCopies.load()) LOGI("PassProfile: DepthPassSkipRedundantCopies so far: {}", GpuTrace::DepthCopyStats());
         if (g_HitchLines || g_CpuHitchLines) LOGI("PassProfile: {} slow tasks and {} slow Presents in this window (the 'hitch' lines above)", g_HitchLines, g_CpuHitchLines);
         // the worst frame of the window, pass by pass
         int worst = -1; double worstMs = 0;
@@ -1062,15 +1084,17 @@ namespace
                     for (auto& kv : dsvUse) if (kv.second > best) { best = kv.second; sceneDs = kv.first; }
                     auto name = [&](const void* r) { return !r ? std::string("-") : r == sceneDs ? std::string("SCENE DEPTH") : r == sceneRt ? std::string("SCENE RG16F")
                                                                                    : fmt::format("{}", r); };
-                    LOGI("PassProfile: DEPTHPASS's geometry writes its target {} (read by: {}) and the depth {} (read by: {})",
-                         sceneRt, sceneRt ? ReadersOf(sceneRt) : std::string("-"), sceneDs, sceneDs ? ReadersOf(sceneDs) : std::string("-"));
+                    LOGI("PassProfile: DEPTHPASS's geometry writes its target {} (read by: {}; drawn into by: {}) and the depth {} (read by: {}; drawn / tested into by: {})",
+                         sceneRt, sceneRt ? ReadersOf(sceneRt) : std::string("-"), sceneRt ? ReadersOf(sceneRt, true) : std::string("-"),
+                         sceneDs, sceneDs ? ReadersOf(sceneDs) : std::string("-"), sceneDs ? ReadersOf(sceneDs, true) : std::string("-"));
                     for (const Out& o : out)
                     {
                         if (o.row != g_RowDepth || !o.stats || o.st.CPrimitives > 4 || o.st.PSInvocations < 1000000) continue;
                         const void* dst = o.rtvRes ? o.rtvRes : o.dsvRes;
-                        LOGI("PassProfile:   full-screen #{} (thread {}) PS {:016x} {:.3f} ms {:.1f} Mpx: reads {} ({}x{} {}) -> {} {} ({}x{} {}); that target is read by: {}",
+                        LOGI("PassProfile:   full-screen #{} (thread {}) PS {:016x} {:.3f} ms {:.1f} Mpx: reads {} ({}x{} {}) -> {} {} ({}x{} {}); that target is read by: {}; drawn / tested into by: {}",
                              o.idx, o.tid, o.ps, o.ms, o.st.PSInvocations / 1e6, name(o.srcRes), o.srcW, o.srcH, Fmt(o.srcFmt), o.rtvRes ? "target" : "depth", name(dst),
-                             o.rtvRes ? o.rtW : o.dsW, o.rtvRes ? o.rtH : o.dsH, Fmt(o.rtvRes ? o.rtFmt : o.dsFmt), dst ? ReadersOf(dst) : std::string("-"));
+                             o.rtvRes ? o.rtW : o.dsW, o.rtvRes ? o.rtH : o.dsH, Fmt(o.rtvRes ? o.rtFmt : o.dsFmt), dst ? ReadersOf(dst) : std::string("-"),
+                             dst ? ReadersOf(dst, true) : std::string("-"));
                     }
                 }
             }
@@ -1087,7 +1111,7 @@ namespace
                  o.rtN, o.rtW, o.rtH, Fmt(o.rtFmt), o.depth ? " + depth" : "", ShaderReads(o.dispatch ? o.cs : o.psPtr, o.ps));
         }
         LOGI("PassProfile: ===== end of the draw-by-draw frame #{} =====", frame);
-        { std::lock_guard lk(g_ReadM); g_Reads.clear(); }
+        { std::lock_guard lk(g_ReadM); g_Reads.clear(); g_Targets.clear(); }
     }
     void ResetWindow()
     {
@@ -1170,6 +1194,7 @@ void PassProfile::Install()
     {
         if (!strcmp(kPasses[i].name, "FORWARD_DYNAMIC")) g_RowOpaque = i;
         if (!strcmp(kPasses[i].name, "ALPHA_LIT")) g_RowTransparent = i;
+        if (!strcmp(kPasses[i].name, "RENDER_WATER")) g_RowWater = i;
         if (!strcmp(kPasses[i].name, "SSAO")) g_RowSsao = i;
         if (!strcmp(kPasses[i].name, "DOF")) g_RowDof = i;
         if (!strcmp(kPasses[i].name, "DEPTHPASS")) g_RowDepth = i;
@@ -1191,7 +1216,7 @@ void PassProfile::Install()
     g_MaskHook = FovMask::Wanted();
     g_SssHook = ScreenShadows::Wanted();
     g_CharHook = ScreenShadows::CharactersWanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load()) || g_Exec) return;
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load() && !g_DepthOnly.load() && !g_DepthCopies.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -1216,6 +1241,20 @@ void PassProfile::SetSkipEffects(int mode)
 bool PassProfile::On() { return g_On.load(std::memory_order_relaxed); }
 
 int PassProfile::CharTask() { return t_CharTask; }
+bool PassProfile::DepthOnlyNow() { return t_DepthOnly; }
+bool PassProfile::DepthCopiesNow() { return t_DepthCopies; }
+unsigned long long PassProfile::DepthTaskSerial() { return t_DepthSerial; }
+void PassProfile::SetDepthCopies(bool on)
+{
+    g_DepthCopies = on;
+    if (on) LOGI("PassProfile: DepthPassSkipRedundantCopies: in the eyes' depth pass, a depth copy whose target already holds what it would copy (the same copy "
+                 "earlier in the task, nothing drawn, cleared or copied into either since) is skipped, and with the depth of field off its depth downsample for the autofocus");
+}
+void PassProfile::SetDepthOnly(bool on)
+{
+    g_DepthOnly = on;
+    if (on) LOGI("PassProfile: DepthPassDepthOnly (experimental): the eyes' depth pass draws its main shader (48f2037fd43d86c8) depth-only: no pixel shader, no RG16F target (nothing in the frame reads it: the draw-by-draw log)");
+}
 int PassProfile::CharEye() { return t_CharEye; }
 
 void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect)

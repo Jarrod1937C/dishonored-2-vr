@@ -15,6 +15,7 @@
 #include <detours/detours.h>
 #include "GameInfo.h"
 #include "ViewMatrixHook.h"
+#include <vector>
 
 namespace
 {
@@ -382,6 +383,204 @@ bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, b
     return false;
 }
 
+// ---- each marker's whole drawing: its icon AND its label (2026-11-01) ----
+// Reported (the Heart's runes and bone charms): the label did not line up with the marker, parts of it seemed at
+// different depths, words cut in the middle unless the head was just so. Only a fixed square (HudMarkerSize) round
+// each marker's point was lifted to its distance; a label wider than that was split -- its middle at the marker's
+// distance, its ends left on the HUD's layer at HudDistance. Now the interface texture is reduced on the GPU to a
+// mask of 8x8-pixel cells holding anything (alpha), read back a couple of frames later, and from each marker's square
+// the box grows over its neighbouring cells (across gaps up to about a letter's spacing, within a window round the
+// point) until it holds all of the marker's drawing. That box (relative to the marker's point) is kept for the
+// marker -- matched by place and distance -- and lifted whole; overlapping boxes are lifted together, at the nearer
+// one's distance.
+namespace
+{
+    const char* kMaskHlsl = R"(
+Texture2D<float4> Hud : register(t0);
+RWTexture2D<uint> Mask : register(u0);
+cbuffer C : register(b0) { uint4 sz; };   // texture w, h; cells w, h
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= sz.z || id.y >= sz.w) return;
+    float a = 0;
+    uint2 b = id.xy * 8;
+    [unroll] for (uint y = 0; y < 4; y++)
+        [unroll] for (uint x = 0; x < 4; x++)
+            a = max(a, Hud[min(b + uint2(1 + 2 * x, 1 + 2 * y), sz.xy - 1)].a);
+    Mask[id.xy] = a > 0.06 ? 1 : 0;
+}
+)";
+    constexpr int kCell = 8, kStages = 3;
+    struct ShapeRec { float cx = 0, cy = 0, f = 0; };                 // a marker's point in the HUD texture (px), its distance
+    struct Shape { float cx = 0, cy = 0, f = 0, x0 = 0, y0 = 0, x1 = 0, y1 = 0; double t = 0; };   // its box, relative to the point (px)
+    struct Stage { ID3D11Texture2D* tex = nullptr; bool pending = false; int n = 0; ShapeRec m[16]; unsigned tw = 0, th = 0; double t = 0; };
+    struct MaskGpu
+    {
+        bool tried = false, ok = false;
+        ID3D11ComputeShader* cs = nullptr; ID3D11Buffer* cb = nullptr;
+        ID3D11Texture2D* mask = nullptr; ID3D11UnorderedAccessView* uav = nullptr;
+        unsigned tw = 0, th = 0, cw = 0, ch = 0;
+        Stage st[kStages]; int next = 0;
+        unsigned long long lastSerial = 0; double lastAt = 0;
+    } g_MG;
+    std::vector<Shape> g_Shapes;
+    std::vector<int> g_Integral;
+    std::atomic<unsigned long long> g_ShapesMeasured{ 0 }, g_ShapesGrown{ 0 }, g_MarkMerged{ 0 };
+    float g_PanelW = 0, g_PanelH = 0; double g_PanelShrinkSince = 0;   // the markers' panels' swapchain size (shared)
+
+    template <class T> void RelP(T*& p) { if (p) { p->Release(); p = nullptr; } }
+    bool MaskInit(ID3D11Device* dev)
+    {
+        if (g_MG.tried) return g_MG.ok;
+        g_MG.tried = true;
+        HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+        using CompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
+        auto compile = dc ? (CompileFn)GetProcAddress(dc, "D3DCompile") : nullptr;
+        ID3DBlob* b = nullptr; ID3DBlob* err = nullptr;
+        if (!compile || FAILED(compile(kMaskHlsl, strlen(kMaskHlsl), "hudmask", nullptr, nullptr, "main", "cs_5_0", 0, 0, &b, &err)))
+        {
+            LOGI("ScreenMode: the markers' mask shader is not available ({}): each marker lifts its square only",
+                 err ? (const char*)err->GetBufferPointer() : "no d3dcompiler_47");
+            RelP(err); return false;
+        }
+        RelP(err);
+        const bool okCs = SUCCEEDED(dev->CreateComputeShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &g_MG.cs));
+        b->Release();
+        D3D11_BUFFER_DESC bd{}; bd.ByteWidth = 16; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        if (!okCs || FAILED(dev->CreateBuffer(&bd, nullptr, &g_MG.cb))) { LOGI("ScreenMode: the markers' mask: no shader / buffer"); return false; }
+        g_MG.ok = true;
+        return true;
+    }
+    bool MaskSize(ID3D11Device* dev, unsigned tw, unsigned th)
+    {
+        if (g_MG.mask && g_MG.tw == tw && g_MG.th == th) return true;
+        RelP(g_MG.uav); RelP(g_MG.mask);
+        for (Stage& s : g_MG.st) { RelP(s.tex); s = Stage{}; }
+        g_MG.tw = tw; g_MG.th = th; g_MG.cw = (tw + kCell - 1) / kCell; g_MG.ch = (th + kCell - 1) / kCell;
+        D3D11_TEXTURE2D_DESC td{}; td.Width = g_MG.cw; td.Height = g_MG.ch; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R8_UINT;
+        td.SampleDesc = { 1, 0 }; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        if (FAILED(dev->CreateTexture2D(&td, nullptr, &g_MG.mask)) || FAILED(dev->CreateUnorderedAccessView(g_MG.mask, nullptr, &g_MG.uav))) { RelP(g_MG.mask); return false; }
+        td.Usage = D3D11_USAGE_STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        for (Stage& s : g_MG.st) if (FAILED(dev->CreateTexture2D(&td, nullptr, &s.tex))) { RelP(g_MG.uav); RelP(g_MG.mask); return false; }
+        LOGI("ScreenMode: the markers' mask: {}x{} cells of the {}x{} interface (each marker's box grows to hold its label)", g_MG.cw, g_MG.ch, tw, th);
+        return true;
+    }
+    //! One read-back mask: each of its frame's markers' boxes grown over the occupied cells round it
+    void MaskMeasure(const uint8_t* data, UINT pitch, const Stage& s, float square)
+    {
+        const int cw = (int)g_MG.cw, ch = (int)g_MG.ch;
+        g_Integral.assign((size_t)(cw + 1) * (ch + 1), 0);
+        auto I = [&](int x, int y) -> int& { return g_Integral[(size_t)y * (cw + 1) + x]; };
+        for (int y = 0; y < ch; y++)
+        {
+            int row = 0; const uint8_t* r = data + (size_t)y * pitch;
+            for (int x = 0; x < cw; x++) { row += r[x] ? 1 : 0; I(x + 1, y + 1) = I(x + 1, y) + row; }
+        }
+        // occupied cells in [x0, x1] x [y0, y1] (inclusive, clamped)
+        auto count = [&](int x0, int y0, int x1, int y1) -> int
+        {
+            x0 = std::max(x0, 0); y0 = std::max(y0, 0); x1 = std::min(x1, cw - 1); y1 = std::min(y1, ch - 1);
+            if (x1 < x0 || y1 < y0) return 0;
+            return I(x1 + 1, y1 + 1) - I(x0, y1 + 1) - I(x1 + 1, y0) + I(x0, y0);
+        };
+        const float th = (float)s.th;
+        const int gh = std::max(2, (int)std::lround(0.011f * th / kCell)), gv = std::max(2, (int)std::lround(0.009f * th / kCell));   // gaps crossed
+        const int wx = (int)(0.2f * th / kCell), wy = (int)(0.08f * th / kCell);                                                        // how far it may grow
+        const double now = NowSecs();
+        for (int i = 0; i < s.n; i++)
+        {
+            const ShapeRec& m = s.m[i];
+            const int cx = (int)(m.cx / kCell), cy = (int)(m.cy / kCell), hs = std::max(1, (int)(0.5f * square / kCell));
+            const int lx0 = cx - wx, lx1 = cx + wx, ly0 = cy - wy, ly1 = cy + wy;
+            int x0 = cx - hs, x1 = cx + hs, y0 = cy - hs, y1 = cy + hs;
+            if (count(x0, y0, x1, y1) == 0) continue;   // nothing drawn there (yet)
+            for (int it = 0; it < 96; it++)
+            {
+                bool grew = false;
+                for (int c = std::min(x1 + gh, lx1); c > x1; c--) if (count(c, y0, c, y1)) { x1 = c; grew = true; break; }
+                for (int c = std::max(x0 - gh, lx0); c < x0; c++) if (count(c, y0, c, y1)) { x0 = c; grew = true; break; }
+                for (int r = std::min(y1 + gv, ly1); r > y1; r--) if (count(x0, r, x1, r)) { y1 = r; grew = true; break; }
+                for (int r = std::max(y0 - gv, ly0); r < y0; r++) if (count(x0, r, x1, r)) { y0 = r; grew = true; break; }
+                if (!grew) break;
+            }
+            // tightened to what is drawn, a cell's margin, never less than the square
+            int tx0 = x0, tx1 = x1, ty0 = y0, ty1 = y1;
+            while (tx0 < tx1 && !count(tx0, y0, tx0, y1)) tx0++;
+            while (tx1 > tx0 && !count(tx1, y0, tx1, y1)) tx1--;
+            while (ty0 < ty1 && !count(tx0, ty0, tx1, ty0)) ty0++;
+            while (ty1 > ty0 && !count(tx0, ty1, tx1, ty1)) ty1--;
+            Shape sh; sh.cx = m.cx; sh.cy = m.cy; sh.f = m.f; sh.t = now;
+            sh.x0 = std::min((float)(tx0 - 1) * kCell - m.cx, -0.5f * square); sh.x1 = std::max((float)(tx1 + 2) * kCell - m.cx, 0.5f * square);
+            sh.y0 = std::min((float)(ty0 - 1) * kCell - m.cy, -0.5f * square); sh.y1 = std::max((float)(ty1 + 2) * kCell - m.cy, 0.5f * square);
+            g_ShapesMeasured++;
+            if (sh.x1 - sh.x0 > square * 1.1f || sh.y1 - sh.y0 > square * 1.1f) g_ShapesGrown++;
+            // replaces the one kept for this marker (nearby, about as far)
+            bool put = false;
+            for (Shape& o : g_Shapes)
+                if (fabsf(o.cx - sh.cx) < 0.05f * th && fabsf(o.cy - sh.cy) < 0.05f * th && fabsf(logf(o.f / sh.f)) < 0.3f) { o = sh; put = true; break; }
+            if (!put) g_Shapes.push_back(sh);
+        }
+        g_Shapes.erase(std::remove_if(g_Shapes.begin(), g_Shapes.end(), [&](const Shape& o) { return now - o.t > 0.6; }), g_Shapes.end());
+        if (g_Shapes.size() > 48) g_Shapes.erase(g_Shapes.begin(), g_Shapes.begin() + (g_Shapes.size() - 48));
+    }
+    //! The interface's mask for this frame's markers (once per frame), and any earlier one that is back from the GPU
+    void MaskFrame(ID3D11ShaderResourceView* srv, unsigned tw, unsigned th, const ShapeRec* ms, int n, unsigned long long serial, float square)
+    {
+        ID3D11Device* dev = nullptr; srv->GetDevice(&dev);
+        if (!dev) return;
+        ID3D11DeviceContext* c = nullptr; dev->GetImmediateContext(&c);
+        if (c && MaskInit(dev) && MaskSize(dev, tw, th))
+        {
+            for (int k = 0; k < kStages; k++)
+            {   // the oldest first
+                Stage& s = g_MG.st[(g_MG.next + k) % kStages];
+                if (!s.pending) continue;
+                D3D11_MAPPED_SUBRESOURCE m{};
+                const HRESULT hr = c->Map(s.tex, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+                if (SUCCEEDED(hr)) { if (s.tw == tw && s.th == th) MaskMeasure((const uint8_t*)m.pData, m.RowPitch, s, square); c->Unmap(s.tex, 0); s.pending = false; }
+                else if (hr != DXGI_ERROR_WAS_STILL_DRAWING || NowSecs() - s.t > 1.0) s.pending = false;
+            }
+            Stage& s = g_MG.st[g_MG.next];
+            if (n > 0 && !s.pending && serial != g_MG.lastSerial && NowSecs() - g_MG.lastAt > 0.03)   // ~30 times a second: the labels' shapes hold still
+            {
+                g_MG.lastSerial = serial; g_MG.lastAt = NowSecs();
+                const UINT k[4] = { tw, th, g_MG.cw, g_MG.ch };
+                c->UpdateSubresource(g_MG.cb, 0, nullptr, k, 0, 0);
+                // the compute stage's state as it was
+                ID3D11ComputeShader* oc = nullptr; ID3D11Buffer* ob = nullptr; ID3D11ShaderResourceView* os = nullptr; ID3D11UnorderedAccessView* ou = nullptr;
+                c->CSGetShader(&oc, nullptr, nullptr); c->CSGetConstantBuffers(0, 1, &ob); c->CSGetShaderResources(0, 1, &os); c->CSGetUnorderedAccessViews(0, 1, &ou);
+                c->CSSetShader(g_MG.cs, nullptr, 0); c->CSSetConstantBuffers(0, 1, &g_MG.cb); c->CSSetShaderResources(0, 1, &srv);
+                c->CSSetUnorderedAccessViews(0, 1, &g_MG.uav, nullptr);
+                c->Dispatch((g_MG.cw + 7) / 8, (g_MG.ch + 7) / 8, 1);
+                ID3D11UnorderedAccessView* nu = nullptr; ID3D11ShaderResourceView* ns = nullptr;
+                c->CSSetUnorderedAccessViews(0, 1, &nu, nullptr); c->CSSetShaderResources(0, 1, &ns);
+                const UINT keep = (UINT)-1;
+                c->CSSetShader(oc, nullptr, 0); c->CSSetConstantBuffers(0, 1, &ob); c->CSSetShaderResources(0, 1, &os); c->CSSetUnorderedAccessViews(0, 1, &ou, &keep);
+                RelP(oc); RelP(ob); RelP(os); RelP(ou);
+                c->CopyResource(s.tex, g_MG.mask);
+                s.pending = true; s.n = std::min(n, 16); memcpy(s.m, ms, sizeof(ShapeRec) * s.n); s.tw = tw; s.th = th; s.t = NowSecs();
+                g_MG.next = (g_MG.next + 1) % kStages;
+            }
+        }
+        if (c) c->Release();
+        dev->Release();
+    }
+    //! The kept box for a marker at (cx, cy) about f m away; false = none yet (its square)
+    bool ShapeOf(float cx, float cy, float f, float th, Shape& out)
+    {
+        const Shape* best = nullptr; float bd = 1e30f;
+        for (const Shape& o : g_Shapes)
+        {
+            if (fabsf(logf(o.f / f)) > 0.3f) continue;
+            const float d = (o.cx - cx) * (o.cx - cx) + (o.cy - cy) * (o.cy - cy);
+            if (d < bd && d < 0.06f * th * 0.06f * th) { bd = d; best = &o; }
+        }
+        if (best) out = *best;
+        return best != nullptr;
+    }
+}
+
 void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4], unsigned long long serial)
 {
     PassProfile::Scope prof(PassProfile::kSecScreen);   // ([Advanced] ProfileRenderPasses)
@@ -423,20 +622,66 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
         }
         std::sort(ms, ms + n, [](const MarkRec& a, const MarkRec& b) { return a.f < b.f; });
         const float S = g_MarkBox.load() * (float)th;
-        int used = 0;
-        for (int i = 0; i < n && used < kMarkPanels; i++)
+        // each marker's box: its whole drawing, as last measured (MaskMeasure), else its square; overlapping ones together
+        struct Box { float x0, y0, x1, y1, f; };
+        Box bx[16]; int nb = 0;
+        ShapeRec recs[16]; int nr = 0;
+        for (int i = 0; i < n; i++)
         {
             const MarkRec& m = ms[i];
             if (m.w <= 0 || m.h <= 0 || !(m.f > 0.5f) || m.f > 500.f) continue;
             const float cx = m.px * (float)tw / (float)m.w, cy = m.py * (float)th / (float)m.h;
-            const float x0 = std::max(0.f, cx - S * 0.5f), y0 = std::max(0.f, cy - S * 0.5f);
-            const float x1 = std::min((float)tw, cx + S * 0.5f), y1 = std::min((float)th, cy + S * 0.5f);
-            if (x1 - x0 < S * 0.5f || y1 - y0 < S * 0.5f) continue;   // at the HUD's edge (clamped there: a direction): left on the HUD
+            {   // the square at the HUD's edge (clamped there: a direction): left on the HUD
+                const float x0 = std::max(0.f, cx - S * 0.5f), y0 = std::max(0.f, cy - S * 0.5f);
+                const float x1 = std::min((float)tw, cx + S * 0.5f), y1 = std::min((float)th, cy + S * 0.5f);
+                if (x1 - x0 < S * 0.5f || y1 - y0 < S * 0.5f) continue;
+            }
+            recs[nr++] = { cx, cy, m.f };
+            Shape sh;
+            Box b = ShapeOf(cx, cy, m.f, (float)th, sh) ? Box{ cx + sh.x0, cy + sh.y0, cx + sh.x1, cy + sh.y1, m.f }
+                                                         : Box{ cx - S * 0.5f, cy - S * 0.5f, cx + S * 0.5f, cy + S * 0.5f, m.f };
+            b.x0 = std::max(0.f, b.x0); b.y0 = std::max(0.f, b.y0); b.x1 = std::min((float)tw, b.x1); b.y1 = std::min((float)th, b.y1);
+            bx[nb++] = b;
+        }
+        if (nr > 0 || g_MG.st[0].pending || g_MG.st[1].pending || g_MG.st[2].pending) MaskFrame(srv, tw, th, recs, nr, serial, S);
+        for (bool merged = true; merged;)
+        {   // overlapping boxes: one, at the nearer one's distance (they are sorted nearest first)
+            merged = false;
+            for (int a = 0; a < nb && !merged; a++)
+                for (int b = a + 1; b < nb && !merged; b++)
+                    if (bx[a].x0 < bx[b].x1 && bx[b].x0 < bx[a].x1 && bx[a].y0 < bx[b].y1 && bx[b].y0 < bx[a].y1)
+                    {
+                        bx[a] = { std::min(bx[a].x0, bx[b].x0), std::min(bx[a].y0, bx[b].y0), std::max(bx[a].x1, bx[b].x1), std::max(bx[a].y1, bx[b].y1), std::min(bx[a].f, bx[b].f) };
+                        for (int k = b; k + 1 < nb; k++) bx[k] = bx[k + 1];
+                        nb--; merged = true; g_MarkMerged++;
+                    }
+        }
+        // the panels' swapchain size: the largest box's (in 64 px steps), one size for all of them so a panel slot is
+        // not made again as markers change places; shrunk only after a while
+        {
+            float need[2] = { 128.f, 128.f };
+            for (int i = 0; i < std::min(nb, kMarkPanels); i++) { need[0] = std::max(need[0], bx[i].x1 - bx[i].x0); need[1] = std::max(need[1], bx[i].y1 - bx[i].y0); }
+            const float nw = std::min(2048.f, ceilf(need[0] / 64.f) * 64.f), nh = std::min(2048.f, ceilf(need[1] / 64.f) * 64.f);
+            const double now = NowSecs();
+            if (nw > g_PanelW || nh > g_PanelH) { g_PanelW = std::max(g_PanelW, nw); g_PanelH = std::max(g_PanelH, nh); g_PanelShrinkSince = 0; }
+            else if (nb && (nw < 0.7f * g_PanelW || nh < 0.7f * g_PanelH))
+            {
+                if (g_PanelShrinkSince <= 0) g_PanelShrinkSince = now;
+                else if (now - g_PanelShrinkSince > 3.0) { g_PanelW = nw; g_PanelH = nh; g_PanelShrinkSince = 0; }
+            }
+            else g_PanelShrinkSince = 0;
+        }
+        int used = 0;
+        for (int i = 0; i < nb && used < kMarkPanels; i++)
+        {
+            const Box& m = bx[i];
+            const float x0 = m.x0, y0 = m.y0, x1 = m.x1, y1 = m.y1;
+            if (x1 - x0 < 4.f || y1 - y0 < 4.f) continue;
             p.holes[used][0] = x0; p.holes[used][1] = y0; p.holes[used][2] = x1; p.holes[used][3] = y1;
             XRPanelLayer mp = p;
             mp.nHoles = 0;
             mp.crop[0] = x0; mp.crop[1] = y0; mp.crop[2] = x1 - x0; mp.crop[3] = y1 - y0;
-            // the square's centre as a direction from the head (the HUD's panel: its frustum shrunk by HudScale), out to
+            // the box's centre as a direction from the head (the HUD's panel: its frustum shrunk by HudScale), out to
             // the character's distance (the game's metres)
             const float mx = 0.5f * (x0 + x1), my = 0.5f * (y0 + y1);
             const float tx = 0.5f * (r + l) + (mx / (float)tw - 0.5f) * (r - l) * hs;
@@ -446,7 +691,7 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
             for (int k = 0; k < 3; k++) mp.pos[k] = pos[k] + wv[k];
             mp.width = m.f * (x1 - x0) / (float)tw * (r - l) * hs;
             mp.height = m.f * (y1 - y0) / (float)th * (u - dn) * hs;
-            mp.outW = 256; mp.outH = 256;
+            mp.outW = (unsigned)g_PanelW; mp.outH = (unsigned)g_PanelH;
             xr.SetPanelLayer(2 + used, mp);
             used++;
         }
@@ -535,8 +780,10 @@ void ScreenMode::InstallMarkers(bool on)
 }
 std::string ScreenMode::MarkerStats()
 {
-    return fmt::format("markers placed for the headset {}, left to the game (behind the head) {}, HUD frames with markers on panels of their own {}",
-                       g_MarkersFixed.load(), g_MarkersKept.load(), g_MarkPanels.load());
+    return fmt::format("markers placed for the headset {}, left to the game (behind the head) {}, HUD frames with markers on panels of their own {}; "
+                       "markers' drawings measured {} (larger than the square {}), overlapping boxes joined {}, panels {}x{}",
+                       g_MarkersFixed.load(), g_MarkersKept.load(), g_MarkPanels.load(), g_ShapesMeasured.load(), g_ShapesGrown.load(), g_MarkMerged.load(),
+                       g_PanelW, g_PanelH);
 }
 void ScreenMode::SetHud(bool on, float dist, float scale, float markerSize)
 {

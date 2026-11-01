@@ -29,6 +29,7 @@ namespace VrTweaks
     //! [Display] ViewDistance: the game's view-distance level used instead of the menu's (0 very low .. 5 ultra; -1 =
     //! the game's); InstallViewDistance hooks where the game applies it (at init, before the game sets its settings up)
     void SetViewDistance(int level);
+    bool DofOff();                          //!< the main views' depth of field is off now (VrGraphicsTweaks, headset showing the game)
     void InstallViewDistance();
     std::string MapName();                  //!< the loaded map's name as the game has it ("" between maps)
     void OnPresent();                       //!< follows whether the headset shows the game (render thread)

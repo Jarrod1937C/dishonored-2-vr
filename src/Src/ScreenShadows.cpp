@@ -1180,6 +1180,20 @@ void ScreenShadows::InstallSunUpdateRate()
         if (!ReadBytes(now, (const void*)(base + st.rva), sizeof now) || memcmp(now, expect, sizeof now))
         { LOGI("ScreenShadows: ShadowSunUpdateEvery: {} frame test at exe+0x{:X} is not as expected (another game version?): not applied", st.what, st.rva); return; }
     }
+    // ...and a third copy, twice, in the cascades' split distances (exe+0x330880..: the frame counter in r12d, read at
+    // exe+0x330880): a cascade that is redrawn takes this frame's split distance, one that is not keeps the one its map
+    // was drawn with. Left alone (the second version), the far cascades took new distances over old maps on the pairs
+    // the mask leaves out -- the distant shadows flickered (reported 2026-11-01). Site 1 compares ecx with ebp, site 2
+    // ebx with ebp; 17 bytes each (mov eax,r12d; and eax,0x80000001; jge; dec; or eax,-2; inc), followed by test eax,eax.
+    struct GSite { uint32_t rva; uint8_t cmpModrm; };
+    const GSite gsites[2] = { { 0x330999, 0xE9 }, { 0x3309E1, 0xEB } };
+    static const uint8_t kGather[17] = { 0x41, 0x8B, 0xC4, 0x25, 0x01, 0x00, 0x00, 0x80, 0x7D, 0x07, 0xFF, 0xC8, 0x83, 0xC8, 0xFE, 0xFF, 0xC0 };
+    for (const GSite& g : gsites)
+    {
+        uint8_t now[19] = {};
+        if (!ReadBytes(now, (const void*)(base + g.rva), sizeof now) || memcmp(now, kGather, 17) || now[17] != 0x85 || now[18] != 0xC0)
+        { LOGI("ScreenShadows: ShadowSunUpdateEvery: the split distances' frame test at exe+0x{:X} is not as expected (another game version?): not applied", g.rva); return; }
+    }
     // the thunks within 2 GB of the sites (rel32 calls)
     uint8_t* page = nullptr;
     for (uintptr_t a = (base - 0x10000) & ~(uintptr_t)0xFFFF; a > 0x10000 && base - a < 0x7FF00000ull && !page; a -= 0x10000)
@@ -1220,7 +1234,24 @@ void ScreenShadows::InstallSunUpdateRate()
     memcpy(setupCode + 4, &counter, 8); memcpy(setupCode + 16, &mask, 8);
     memcpy(page, taskCode, sizeof taskCode);
     memcpy(page + 128, setupCode, sizeof setupCode);
-    FlushInstructionCache(GetCurrentProcess(), page, 256);
+    // The split distances' (both sites alike but for the compare): eax = the parity from r12d, or on a pair left out
+    // 1 when the compared slice is the last (ecx / ebx == ebp), else 0 -- every slice but 0 keeps its distance.
+    for (int i = 0; i < 2; i++)
+    {
+        uint8_t gc[] = {
+            0x52,                                               // push rdx
+            0x48, 0xBA, 0, 0, 0, 0, 0, 0, 0, 0,                 // mov rdx, &g_SunMask
+            0x8B, 0x12,                                         // mov edx, [rdx]
+            0x85, 0xD2, 0x74, 0x12,                             // test edx, edx; jz normal
+            0x44, 0x89, 0xE0, 0xD1, 0xE8, 0x21, 0xD0, 0x74, 0x09,   // mov eax, r12d; shr eax, 1; and eax, edx; jz normal
+            0x31, 0xC0, 0x39, gsites[i].cmpModrm, 0x0F, 0x94, 0xC0, // xor eax, eax; cmp ecx|ebx, ebp; sete al
+            0xEB, 0x06,                                         // jmp done
+            0x44, 0x89, 0xE0, 0x83, 0xE0, 0x01,                 // normal: mov eax, r12d; and eax, 1
+            0x5A, 0xC3 };                                       // done: pop rdx; ret
+        memcpy(gc + 3, &mask, 8);
+        memcpy(page + 256 + i * 64, gc, sizeof gc);
+    }
+    FlushInstructionCache(GetCurrentProcess(), page, 512);
     const uint8_t* thunks[2] = { page, page + 128 };
     uint8_t patch[2][20];
     for (int i = 0; i < 2; i++)
@@ -1230,6 +1261,19 @@ void ScreenShadows::InstallSunUpdateRate()
         if (rel > INT32_MAX || rel < INT32_MIN) { VirtualFree(page, 0, MEM_RELEASE); LOGI("ScreenShadows: ShadowSunUpdateEvery: the thunk is out of reach: not applied"); return; }
         patch[i][0] = 0xE8; const int32_t r32 = (int32_t)rel; memcpy(patch[i] + 1, &r32, 4);
         for (int k = 5; k < 20; k++) patch[i][k] = 0x90;
+    }
+    for (int i = 0; i < 2; i++)
+    {   // the split distances first (they run before the set-up and the task): E8 rel32 + 12 NOPs
+        uint8_t* site = (uint8_t*)(base + gsites[i].rva);
+        const long long rel = (long long)(uintptr_t)(page + 256 + i * 64) - (long long)(uintptr_t)(site + 5);
+        if (rel > INT32_MAX || rel < INT32_MIN) { LOGI("ScreenShadows: ShadowSunUpdateEvery: the thunk is out of reach: not applied"); return; }
+        uint8_t gp[17]; gp[0] = 0xE8; const int32_t r32 = (int32_t)rel; memcpy(gp + 1, &r32, 4);
+        for (int k = 5; k < 17; k++) gp[k] = 0x90;
+        DWORD old = 0;
+        if (!VirtualProtect(site, 17, PAGE_EXECUTE_READWRITE, &old)) { LOGI("ScreenShadows: ShadowSunUpdateEvery: exe+0x{:X} cannot be written: not applied", gsites[i].rva); return; }
+        memcpy(site, gp, 17);
+        VirtualProtect(site, 17, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), site, 17);
     }
     for (int i = 0; i < 2; i++)
     {   // the set-up's first: it runs earlier in the frame than the task
@@ -1244,7 +1288,7 @@ void ScreenShadows::InstallSunUpdateRate()
     }
     g_SunPatched = true;
     LOGI("ScreenShadows: ShadowSunUpdateEvery = {}: the sun's cascades beyond the nearest are redrawn every {} frame pairs (the nearest, every frame; the rest "
-         "copied from their caches in between, with the matrices they were drawn with: exe+0x32EF1D and exe+0x32B4AC)", g_SunMask + 1, g_SunMask + 1);
+         "copied from their caches in between, with the matrices and split distances they were drawn with: exe+0x32EF1D, exe+0x32B4AC, exe+0x330999, exe+0x3309E1)", g_SunMask + 1, g_SunMask + 1);
 }
 
 void ScreenShadows::StartSettingsLog()
