@@ -11,6 +11,7 @@
 #include "MetaAsw.h"
 #include "SysInfo.h"
 #include "Watchdog.h"
+#include "PassProfile.h"
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -144,6 +145,7 @@ ImageWait& WaitSlot(XrSwapchain sc)
 bool AcquireWaitImage(XrSwapchain sc, uint32_t& index)
 {
     if (!sc) return false;
+    PassProfile::Scope prof(PassProfile::kSecAcquire);   // ([Advanced] ProfileRenderPasses)
     ImageWait& w = WaitSlot(sc);
     if (!w.pending)
     {
@@ -1631,6 +1633,7 @@ bool XRSession::BeginFrame()
 {
     if (!m_SessionRunning)
         return false;
+    PassProfile::Scope prof(PassProfile::kSecBegin);     // ([Advanced] ProfileRenderPasses: the wait is this less the next)
 
     bool recenterPending = false; long long recenterAt = 0;
     if (pump.thread)
@@ -1682,6 +1685,7 @@ bool XRSession::BeginFrame()
         recenterPending = m_RecenterPending; recenterAt = m_RecenterAt;
     }
 
+    PassProfile::Scope profBegin(PassProfile::kSecXrBegin);
     XrFrameBeginInfo fbi = { XR_TYPE_FRAME_BEGIN_INFO };
     XrResult r;
     { Watchdog::Mark mk("xrBeginFrame"); r = xrBeginFrame(g.session, &fbi); }
@@ -2035,6 +2039,7 @@ void XRSession::SubmitFrame(ID3D11Texture2D* source, int onlyEye)
 bool XRSession::StagePairLeft(ID3D11Texture2D* source, const float quat[4], const float pos[3], unsigned long long pair, const float* tan, const float* warp)
 {
     m_PairStaged = false;
+    PassProfile::Scope prof(PassProfile::kSecStage);     // ([Advanced] ProfileRenderPasses)
     memcpy(m_PairTan, tan ? tan : m_SrcTan, 16);
     if (warp) memcpy(m_PairWarp, warp, 16); else { m_PairWarp[0] = m_PairWarp[1] = m_PairWarp[2] = 0.f; m_PairWarp[3] = 1.f; }
     if (!source || !g.device || !g.context) return false;
@@ -2151,6 +2156,7 @@ bool XRSession::DrawInto(int i, ID3D11Texture2D* source, ID3D11ShaderResourceVie
 bool XRSession::DrawEye(int i, ID3D11Texture2D* source, ID3D11ShaderResourceView* srv, const float pose[7], const float tan[4], const float* warp,
                         float fade, XrCompositionLayerProjectionView& pv)
 {
+    PassProfile::Scope prof(PassProfile::kSecEyes);      // ([Advanced] ProfileRenderPasses)
     const bool declare = m_Declare;
     { float x0, y0, rw, rh; EyeRect(i, tan, declare, x0, y0, rw, rh); }   // (the swapchain grown BEFORE an image is acquired)
     uint32_t imgIndex = 0;
@@ -2169,6 +2175,7 @@ bool XRSession::DrawEye(int i, ID3D11Texture2D* source, ID3D11ShaderResourceView
 bool XRSession::CopyPairLeft(ID3D11Texture2D* dst)
 {
     if (!dst || !m_PairTex || !g.context) return false;
+    PassProfile::Scope prof(PassProfile::kSecMirror);    // ([Advanced] ProfileRenderPasses)
     D3D11_TEXTURE2D_DESC d = {}; dst->GetDesc(&d);
     if (d.Width != m_PairW || d.Height != m_PairH || (int)d.Format != m_PairFmt || d.SampleDesc.Count != 1) return false;
     g.context->CopyResource(dst, m_PairTex);
@@ -2220,6 +2227,7 @@ bool XRSession::SubmitPair(ID3D11Texture2D* right, const float quat[4], const fl
 //! unlike UI baked into the projection. Then ends the frame.
 void XRSession::EndFrameWithLayers(XrCompositionLayerProjection& layer)
 {
+    PassProfile::Scope prof(PassProfile::kSecEnd);       // ([Advanced] ProfileRenderPasses)
     XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
     bool haveQuad = false;
     if (m_QuadSource && g.viewSpace)
@@ -2336,7 +2344,9 @@ void XRSession::EndFrameWithLayers(XrCompositionLayerProjection& layer)
     fei.layers = layers;
     SaveLayers(layers, haveWrist ? nLayers - 1 : nLayers);   // the keep-alive's copy (the watch, last, left out)
     XrResult er;
+    PassProfile::BeginSection(PassProfile::kSecXrEnd);
     { Watchdog::Mark mk("xrEndFrame"); er = xrEndFrame(g.session, &fei); }
+    PassProfile::EndSection(PassProfile::kSecXrEnd);
     if (XR_FAILED(er) && m_EndFrameFails++ < 10)   // the runtime refused the frame: a black headset, said nowhere else
         LOGI("XRSession: xrEndFrame FAILED {} ({} layers{})", (int)er, nLayers, m_EndFrameFails == 10 ? "; not logged again" : "");
 
@@ -2452,6 +2462,7 @@ void XRSession::OfferSnapshot(ID3D11Texture2D* source, const float quat[4], ID3D
 {
     const long long now = Qpc();
     if (QpcSec(now - m_LastSnapQpc) < 0.2 || !g_Blit.ready || !g_Blit.srv || !g.device || !g.context) return;
+    PassProfile::Scope prof(PassProfile::kSecSnapshot);  // ([Advanced] ProfileRenderPasses)
     D3D11_TEXTURE2D_DESC sd = {}; source->GetDesc(&sd);
     const UINT w = std::max(64u, sd.Width / 2), h = std::max(64u, sd.Height / 2);
     const DXGI_FORMAT f = Blitter::ViewFormat(sd.Format, DXGI_FORMAT_UNKNOWN);

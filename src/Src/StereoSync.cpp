@@ -3,6 +3,7 @@
 #include "GameInfo.h"
 #include "Game.h"
 #include "CVars.h"
+#include <algorithm>
 #include "KbmInject.h"
 #include "ScreenMode.h"
 #include "ViewMatrixHook.h"
@@ -251,6 +252,13 @@ namespace
         unsigned long long lefts = 0, rightsSkipped = 0, rightsDirty = 0, rightsDiffer = 0, rightsNoLeft = 0, unreadable = 0;
         unsigned long long tasksSkipped = 0, tasksRun = 0;
         int lastJobs = 0, lastFaces = 0;
+        // why the right frames' faces are new (the log every 15 s): the left frame's faces, to compare with
+        struct Face { const void* light; int face, w, h; const void* entry; bool dirty; };
+        std::vector<Face> leftFaces;
+        unsigned long long leftsDirty = 0, leftDirtyFaces = 0, rightDirtyFaces = 0;
+        unsigned long long rdAlsoLeft = 0, rdCleanLeft = 0, rdNotInLeft = 0, rdBigger = 0, rdSmaller = 0, rdSameEntry = 0;
+        int samples = 0; std::string sampleText;
+        double needMax = 0, needSum = 0; unsigned long long needN = 0;   // a left frame's faces, in 2048 x 2048 cache slices
     } g_Sh;
 
     bool Readable(const void* p, size_t n)
@@ -268,8 +276,9 @@ namespace
         for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001B3ull; }
     }
     //! The frame's spot / omni job lists, hashed; `dirty`: a face is to be drawn into a new cache entry this frame.
-    bool ShadowJobsSig(void* task, unsigned long long& sig, bool& dirty, int& jobs, int& faces)
+    bool ShadowJobsSig(void* task, unsigned long long& sig, bool& dirty, int& jobs, int& faces, std::vector<ShadowState::Face>* list = nullptr)
     {
+        if (list) list->clear();
         const uint8_t* t = (const uint8_t*)task;
         const uint8_t* params = *(const uint8_t* const*)(t + 0xE0);
         const uint32_t np = *(const uint32_t*)(t + 0xE8) & 0xFFFFFF;
@@ -315,6 +324,11 @@ namespace
                     Mix(sig, r + 0xE0, 8);                      // its cache entry
                     if (r[0xF0]) dirty = true;
                     faces++;
+                    if (list && list->size() < 256)
+                    {
+                        const int* rc = (const int*)(r + 8);
+                        list->push_back({ light, f, rc[2] - rc[0], rc[3] - rc[1], *(const void* const*)(r + 0xE0), r[0xF0] != 0 });
+                    }
                 }
             }
         }
@@ -346,7 +360,18 @@ namespace
                 if (g_Sh.leftSerial != p.pair)
                 {   // the first spot / omni task of this left frame: its job lists
                     unsigned long long sig = 0; bool dirty = false; int jobs = 0, faces = 0;
-                    if (ShadowJobsSig(task, sig, dirty, jobs, faces)) { g_Sh.leftSerial = p.pair; g_Sh.leftSig = sig; g_Sh.lefts++; g_Sh.lastJobs = jobs; g_Sh.lastFaces = faces; }
+                    if (ShadowJobsSig(task, sig, dirty, jobs, faces, &g_Sh.leftFaces))
+                    {
+                        g_Sh.leftSerial = p.pair; g_Sh.leftSig = sig; g_Sh.lefts++; g_Sh.lastJobs = jobs; g_Sh.lastFaces = faces;
+                        if (dirty) g_Sh.leftsDirty++;
+                        double need = 0;
+                        for (const auto& fc : g_Sh.leftFaces)
+                        {
+                            if (fc.dirty) g_Sh.leftDirtyFaces++;
+                            if (fc.w > 0 && fc.h > 0) need += (double)(fc.w + 1) * (double)(fc.h + 1) / (2048.0 * 2048.0);
+                        }
+                        g_Sh.needMax = std::max(g_Sh.needMax, need); g_Sh.needSum += need; g_Sh.needN++;
+                    }
                     else { g_Sh.leftSerial = 0; g_Sh.unreadable++; }
                 }
             }
@@ -356,9 +381,30 @@ namespace
                 {   // the first spot / omni task of this right frame decides for all of them
                     g_Sh.decided = s; g_Sh.skip = false;
                     unsigned long long sig = 0; bool dirty = false; int jobs = 0, faces = 0;
-                    if (!ShadowJobsSig(task, sig, dirty, jobs, faces)) g_Sh.unreadable++;
+                    static std::vector<ShadowState::Face> mine;   // (under g_Sh.m)
+                    if (!ShadowJobsSig(task, sig, dirty, jobs, faces, &mine)) g_Sh.unreadable++;
                     else if (g_Sh.leftSerial != p.pair) g_Sh.rightsNoLeft++;
-                    else if (dirty) g_Sh.rightsDirty++;
+                    else if (dirty)
+                    {   // each new face of this right frame against the same light's face in its left frame
+                        g_Sh.rightsDirty++;
+                        for (const auto& fc : mine)
+                        {
+                            if (!fc.dirty) continue;
+                            g_Sh.rightDirtyFaces++;
+                            const ShadowState::Face* l = nullptr;
+                            for (const auto& lf : g_Sh.leftFaces) if (lf.light == fc.light && lf.face == fc.face) { l = &lf; break; }
+                            if (!l) { g_Sh.rdNotInLeft++; continue; }
+                            if (l->dirty) g_Sh.rdAlsoLeft++; else g_Sh.rdCleanLeft++;
+                            if (fc.w * fc.h > l->w * l->h) g_Sh.rdBigger++; else if (fc.w * fc.h < l->w * l->h) g_Sh.rdSmaller++;
+                            if (fc.entry == l->entry) g_Sh.rdSameEntry++;
+                            if (g_Sh.samples < 8)
+                            {
+                                g_Sh.samples++;
+                                g_Sh.sampleText += fmt::format(" | light {} face {}: left {}x{} {} entry {}, right {}x{} entry {}", fc.light, fc.face, l->w, l->h,
+                                                               l->dirty ? "new" : "cached", l->entry, fc.w, fc.h, fc.entry);
+                            }
+                        }
+                    }
                     else if (sig != g_Sh.leftSig) g_Sh.rightsDiffer++;
                     else { g_Sh.skip = true; g_Sh.rightsSkipped++; }
                 }
@@ -576,6 +622,16 @@ void StereoSync::OnPresent()
                  "the jobs differed {} / no left frame to compare {} / unreadable {}; tasks skipped {} run {}; last frame {} jobs {} faces",
                  g_Sh.lefts, g_Sh.rightsSkipped, g_Sh.rightsDirty, g_Sh.rightsDiffer, g_Sh.rightsNoLeft, g_Sh.unreadable,
                  g_Sh.tasksSkipped, g_Sh.tasksRun, g_Sh.lastJobs, g_Sh.lastFaces);
+            // why: a face new in the right frame -- new in its left frame too (the light's cache entry does not last: it
+            // moved / flickers, or the cache is full), or cached there and asked for again at another size (the eyes
+            // ask for different shadow resolutions: the cache's lookup exe+0x2CD500 wants one at least as large)
+            LOGI("StereoSync: lamp shadows' new faces: left frames with one {} ({} faces); right frames' {} faces: new in the left frame too {}, "
+                 "cached there {}, not in it {}; larger than the left's {}, smaller {}; the same cache entry {}; a frame's faces fill {:.1f} cache slices "
+                 "on average, {:.1f} at most in the last 15 s (r_shadowCacheSliceCnt {}){}",
+                 g_Sh.leftsDirty, g_Sh.leftDirtyFaces, g_Sh.rightDirtyFaces, g_Sh.rdAlsoLeft, g_Sh.rdCleanLeft, g_Sh.rdNotInLeft,
+                 g_Sh.rdBigger, g_Sh.rdSmaller, g_Sh.rdSameEntry, g_Sh.needN ? g_Sh.needSum / (double)g_Sh.needN : 0.0, g_Sh.needMax,
+                 CVars::GetInt("r_shadowCacheSliceCnt", -1), g_Sh.sampleText.empty() ? "" : "; e.g." + g_Sh.sampleText);
+            g_Sh.samples = 0; g_Sh.sampleText.clear(); g_Sh.needMax = g_Sh.needSum = 0; g_Sh.needN = 0;
         }
     }
     UiStackTick();

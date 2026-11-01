@@ -65,10 +65,13 @@ static void OnPresent(IDXGISwapChain* sc)
         PlayerState::Install();  // counting stubs on the player-state vtables (what the player is doing)
     }
     if (!BinkVideo::Installed()) BinkVideo::Install();   // (normally done at init: the exe imports it)
+    PassProfile::BeginSection(PassProfile::kSecGpuTrace);
     GpuTrace::OnPresent();
+    PassProfile::EndSection(PassProfile::kSecGpuTrace);
     PassProfile::BeginSection(1);
     StereoTaa::OnPresent(sc);
     PassProfile::EndSection(1);
+    PassProfile::BeginSection(PassProfile::kSecTicks);
     StereoSync::OnPresent();
     PlayerState::OnPresent();
     MeleeAim::OnPresent();
@@ -78,16 +81,23 @@ static void OnPresent(IDXGISwapChain* sc)
     Commands::OnPresent();
     BodyView::OnPresent();        // vr fov auto: applied as soon as the headset gives its fov
     RenderRes::OnPresent(sc);
+    PassProfile::EndSection(PassProfile::kSecTicks);
+    PassProfile::BeginSection(PassProfile::kSecProfiler);
     PassProfile::OnPresent(sc);   // [Advanced] ProfileRenderPasses: GPU ms per render pass
+    PassProfile::EndSection(PassProfile::kSecProfiler);
     Fog::OnPresent(sc);           // [Display] CheapFog: its colour and the frame's distances, to the log every 10 s
     Reticle::Tick();              // the game's crosshair off while the hand reticles are on
     VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
     PassProfile::BeginSection(2);
+    PassProfile::BeginSection(PassProfile::kSecOverlay);
     Overlay::OnPresent(sc);       // draws onto the backbuffer first...
+    PassProfile::EndSection(PassProfile::kSecOverlay);
     VRRuntime::OnPresent(sc);     // ...so the flat VR frame includes the overlay (debug aid)
     PassProfile::EndSection(2);
+    PassProfile::BeginSection(PassProfile::kSecAfter);
     KbmInject::Tick();            // controllers -> keyboard/mouse (uses this frame's synced input)
     WristHud::EndPresent();       // cleared for the next frame's interface
+    PassProfile::EndSection(PassProfile::kSecAfter);
     PassProfile::EndSection(0);
 }
 
@@ -136,6 +146,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     VrTweaks::SetFog(Settings::Fog());
     VrTweaks::SetFogMaps(Settings::FogMaps());
+    VrTweaks::SetLodZoom(Settings::StaticLodZoom());
     Fog::SetParams(Settings::CheapFog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
@@ -171,6 +182,14 @@ static DWORD WINAPI InitThread(LPVOID)
     FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
     ScreenShadows::SetParams(Settings::ScreenSpaceShadows(), Settings::ScreenSpaceShadowLength(), Settings::ScreenSpaceShadowSteps(),
                              Settings::ScreenSpaceShadowStrength());
+    ScreenShadows::SetObjects(Settings::ScreenSpaceShadowCharacters(), Settings::ShadowMapCharacters(), Settings::ScreenSpaceShadowContact());
+    ScreenShadows::SetSmallObjects(Settings::ScreenSpaceShadowSmallObjects());
+    ScreenShadows::SetShadowMapMinSize(Settings::ShadowMapMinObjectSize());
+    ScreenShadows::SetSunUpdateEvery(Settings::ShadowSunUpdateEvery());
+    ScreenShadows::SetCullDistance(Settings::ShadowCullDistance());
+    ScreenShadows::SetUltraTrim(Settings::ShadowUltraTrim());
+    ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
+    ScreenShadows::SetLampCacheSlices(Settings::ShadowLampCacheSlices());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects
@@ -201,6 +220,9 @@ static DWORD WINAPI InitThread(LPVOID)
     PlayerViewHook::SetEnabled(false);   // the local player never goes through that builder
     ViewMatrixHook::Install();
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
+    ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s
+    ScreenShadows::InstallSmallObjects();   // ScreenSpaceShadowSmallObjects: small moving objects out of the sun's maps
+    ScreenShadows::InstallSunUpdateRate();  // ShadowSunUpdateEvery: the sun's far cascades redrawn less often
     PassProfile::Install();          // [Advanced] ProfileRenderPasses only
     XInputHook::Install();
     XInputHook::SetEnabled(false);       // pad emulation reaches the engine's event queue but not the player yet (see ENGINE.md)

@@ -67,10 +67,21 @@ namespace
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
         { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr },
-        { "display.screenspaceshadows", Kind::Bool,   "1", 0, 0, nullptr },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
+        { "display.screenspaceshadows", Kind::Bool,   "0", 0, 0, nullptr },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
         { "display.screenspaceshadowlength", Kind::Float, "3", 0.2f, 20, nullptr },   // m towards the sun
-        { "display.screenspaceshadowsteps", Kind::Float, "16", 4, 64, nullptr },
+        { "display.screenspaceshadowsteps", Kind::Float, "24", 4, 64, nullptr },
         { "display.screenspaceshadowstrength", Kind::Float, "1", 0, 1, nullptr },
+        { "display.screenspaceshadowcharacters", Kind::Bool, "1", 0, 0, nullptr },   // ScreenShadows: characters cast them
+        { "display.shadowmapcharacters", Kind::Bool, "0", 0, 0, nullptr },           // ... and stay in the sun's shadow maps too
+        { "display.screenspaceshadowcontact", Kind::Float, "0", 0, 2, nullptr },      // m: everything's contact shadows (0 = off)
+        { "display.screenspaceshadowsmallobjects", Kind::Float, "1", 0, 4, nullptr }, // m across: smaller moving objects screen-space only (0 = none)
+        { "display.shadowculldistance", Kind::Float, "0", 0, 200, nullptr },
+        { "display.shadowmapminobjectsize", Kind::Float, "0.3", 0, 2, nullptr },
+        { "display.shadowsunupdateevery", Kind::Float, "2", 1, 4, nullptr },   // frame pairs: the sun's far cascades' redraw interval   // m across: smaller moving objects leave the sun's maps (0 = none)   // ScreenShadows: r_shadowCullDistance held at this (0 = the game's)
+        { "display.shadowultratrim",    Kind::Bool,   "1", 0, 0, nullptr },   // ScreenShadows: Ultra's costly non-sharpening settings held at High's
+        { "display.shadowlampfewerupdates", Kind::Bool, "1", 0, 0, nullptr }, // ScreenShadows: the lamps' moving-caster updates at Low's thresholds
+        { "display.shadowlampcacheslices", Kind::Float, "32", 0, 128, nullptr }, // ScreenShadows: r_shadowCacheSliceCnt (0 = the game's 12)
+        { "display.staticlodzoom",      Kind::Float,  "1", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
@@ -326,6 +337,17 @@ bool Settings::ScreenSpaceShadows() { return B("display.screenspaceshadows"); }
 float Settings::ScreenSpaceShadowLength() { return F("display.screenspaceshadowlength"); }
 int Settings::ScreenSpaceShadowSteps() { return (int)std::lround(F("display.screenspaceshadowsteps")); }
 float Settings::ScreenSpaceShadowStrength() { return F("display.screenspaceshadowstrength"); }
+bool Settings::ScreenSpaceShadowCharacters() { return B("display.screenspaceshadowcharacters"); }
+bool Settings::ShadowMapCharacters() { return B("display.shadowmapcharacters"); }
+float Settings::ScreenSpaceShadowContact() { return F("display.screenspaceshadowcontact"); }
+float Settings::ScreenSpaceShadowSmallObjects() { return F("display.screenspaceshadowsmallobjects"); }
+float Settings::ShadowCullDistance() { return F("display.shadowculldistance"); }
+bool Settings::ShadowUltraTrim() { return B("display.shadowultratrim"); }
+bool Settings::ShadowLampFewerUpdates() { return B("display.shadowlampfewerupdates"); }
+int Settings::ShadowLampCacheSlices() { return (int)std::lround(F("display.shadowlampcacheslices")); }
+float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
+float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjectsize"); }
+int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }

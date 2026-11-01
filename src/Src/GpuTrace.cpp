@@ -28,6 +28,7 @@
 #include "BodyHide.h"
 #include "XRSession.h"
 #include "Fog.h"
+#include "ScreenShadows.h"
 
 namespace
 {
@@ -361,6 +362,22 @@ namespace
         }
         fastVs[slot] = vs;
         return &fastL[slot];
+    }
+
+    //! ScreenShadows' characters (skinned draws: their vertex shader reads a joint palette, ro_matrices): 1 = a sun
+    //! cascade's shadow task, the draw is left out of the sun's shadow map; 2 = an eye's main depth pass, the draw is
+    //! drawn once more into the characters' mask; 0 = neither
+    int CharMode(ID3D11DeviceContext* c)
+    {
+        const int task = PassProfile::CharTask();
+        if (!task) return 0;
+        ID3D11VertexShader* vs = nullptr; c->VSGetShader(&vs, nullptr, nullptr);
+        if (!vs) return 0;
+        vs->Release();
+        const InstLayout* L = LayoutFor(vs);
+        if (!L || L->matSlot < 0) return 0;
+        if (task == 1) { ScreenShadows::NoteCharacterShadowDraw(); return ScreenShadows::CharactersInShadowMaps() ? 0 : 1; }
+        return 2;
     }
 
     // ---- rigid transforms (row-major rotation, p' = R*p + t) ----
@@ -4104,7 +4121,7 @@ namespace
 
         static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext* c, UINT x, UINT y, UINT z)
         {
-            PassProfile::NoteDispatch(x, y, z, false);
+            PassProfile::NoteDispatch(c, x, y, z, false);
             if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, x, y, z, false, p);
             realDispatch(c, x, y, z);
@@ -4112,7 +4129,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DispatchInd(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            PassProfile::NoteDispatch(0, 0, 0, true);
+            PassProfile::NoteDispatch(c, 0, 0, 0, true);
             if (Fog::ExposureSearching()) Fog::AtWork(c, true);
             StereoTaa::Pass p; StereoTaa::OnDispatch(c, KIND, 0, 0, 0, true, p);
             realDispatchInd(c, b, o);
@@ -4121,11 +4138,13 @@ namespace
         static void STDMETHODCALLTYPE CopyRegion(ID3D11DeviceContext* c, ID3D11Resource* d, UINT ds, UINT x, UINT y, UINT z,
                                                  ID3D11Resource* s, UINT ss, const D3D11_BOX* box)
         {
+            PassProfile::NoteCopy();
             StereoTaa::OnCopy(c, KIND, d, s, true);
             realCopyRegion(c, d, ds, x, y, z, s, ss, box);
         }
         static void STDMETHODCALLTYPE Copy(ID3D11DeviceContext* c, ID3D11Resource* d, ID3D11Resource* s)
         {
+            PassProfile::NoteCopy();
             StereoTaa::OnCopy(c, KIND, d, s, false);
             realCopy(c, d, s);
         }
@@ -4135,6 +4154,7 @@ namespace
         static HRESULT STDMETHODCALLTYPE Map(ID3D11DeviceContext* c, ID3D11Resource* r, UINT sub, D3D11_MAP type,
                                              UINT flags, D3D11_MAPPED_SUBRESOURCE* out)
         {
+            PassProfile::NoteMap((int)type);
             HRESULT hr = realMap(c, r, sub, type, flags, out);
             if (SUCCEEDED(hr) && !sub && out && out->pData)
             {
@@ -4161,6 +4181,7 @@ namespace
         {
             // t_InSwap: our own rewrite goes through this very hook and would cache OUR buffer, evicting the game's
             // entry from the same slot and starving the next draw.
+            PassProfile::NoteUpdate();
             if (!sub && !box && data && !t_InSwap)
             {
                 StereoTaa::OnUpdate(c, r, data);
@@ -4173,68 +4194,92 @@ namespace
         static void STDMETHODCALLTYPE DrawIndexed(ID3D11DeviceContext* c, UINT n, UINT s, INT b)
         {
             Record(c, KIND, eDrawIndexed, n);
-            PassProfile::NoteDraw(n, 1, false);
+            PassProfile::NoteDraw(c, n, 1, false);
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
             { WristHud::Mirror wm; if (WristHud::MirrorBegin(c, KIND, wm)) { realDrawIndexed(c, n, s, b); WristHud::MirrorEnd(c, wm); if (wm.lift) return; } }
+            const int cm = CharMode(c);
+            if (cm == 1) return;                          // a character, kept out of the sun's shadow map
             TargetSwap t; BeginTarget(c, n, t);
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawIndexed, n, sp);
             realDrawIndexed(c, n, s, b);
             StereoTaa::AfterPass(c, KIND, sp);
             EndTarget(c, t);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDrawIndexed(c, n, s, b); ScreenShadows::MarkEnd(c, m); } }
         }
         static void STDMETHODCALLTYPE Draw(ID3D11DeviceContext* c, UINT n, UINT s)
         {   // proximity targeting works off the constants, not the count, so the non-indexed paths qualify too --
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
-            PassProfile::NoteDraw(n, 1, false);
+            PassProfile::NoteDraw(c, n, 1, false);
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
             { WristHud::Mirror wm; if (WristHud::MirrorBegin(c, KIND, wm)) { realDraw(c, n, s); WristHud::MirrorEnd(c, wm); if (wm.lift) return; } }
+            const int cm = CharMode(c);
+            if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDraw, n, sp);
             realDraw(c, n, s);
             StereoTaa::AfterPass(c, KIND, sp);
             EndTarget(c, t);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDraw(c, n, s); ScreenShadows::MarkEnd(c, m); } }
         }
         static void STDMETHODCALLTYPE DrawIdxInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, INT b, UINT si)
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
-            PassProfile::NoteDraw(n, i, false);
+            PassProfile::NoteDraw(c, n, i, false);
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
             if (Skipped(n) || SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
             { WristHud::Mirror wm; if (WristHud::MirrorBegin(c, KIND, wm)) { realDrawIdxInst(c, n, i, s, b, si); WristHud::MirrorEnd(c, wm); if (wm.lift) return; } }
+            const int cm = CharMode(c);
+            if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawIndexedInstanced, n, sp);
             realDrawIdxInst(c, n, i, s, b, si);
             StereoTaa::AfterPass(c, KIND, sp);
             EndTarget(c, t);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDrawIdxInst(c, n, i, s, b, si); ScreenShadows::MarkEnd(c, m); } }
         }
         static void STDMETHODCALLTYPE DrawInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, UINT si)
         {
             Record(c, KIND, eDrawInstanced, n);
-            PassProfile::NoteDraw(n, i, false);
+            PassProfile::NoteDraw(c, n, i, false);
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
             if (SkippedVs(c)) return;
             if (WristHud::DropDraw(c, KIND)) return;      // a cutscene's letterbox bar
             { WristHud::Mirror wm; if (WristHud::MirrorBegin(c, KIND, wm)) { realDrawInst(c, n, i, s, si); WristHud::MirrorEnd(c, wm); if (wm.lift) return; } }
+            const int cm = CharMode(c);
+            if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawInstanced, n, sp);
             realDrawInst(c, n, i, s, si);
             StereoTaa::AfterPass(c, KIND, sp);
             EndTarget(c, t);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDrawInst(c, n, i, s, si); ScreenShadows::MarkEnd(c, m); } }
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
-        { Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(0, 0, true); if (SkippedVs(c)) return; realDrawIdxInstIndirect(c, b, o); }
+        {
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (SkippedVs(c)) return;
+            const int cm = CharMode(c);
+            if (cm == 1) return;
+            realDrawIdxInstIndirect(c, b, o);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDrawIdxInstIndirect(c, b, o); ScreenShadows::MarkEnd(c, m); } }
+        }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
-        { Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(0, 0, true); if (SkippedVs(c)) return; realDrawInstIndirect(c, b, o); }
+        {
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (SkippedVs(c)) return;
+            const int cm = CharMode(c);
+            if (cm == 1) return;
+            realDrawInstIndirect(c, b, o);
+            if (cm == 2) { ScreenShadows::Mark m; if (ScreenShadows::MarkBegin(c, m)) { realDrawInstIndirect(c, b, o); ScreenShadows::MarkEnd(c, m); } }
+        }
 
         //! Attach to one vtable. Entries already detoured for the other kind (shared implementation) are skipped.
         static int Attach(void** vt, void** taken, int nTaken)
@@ -4751,7 +4796,7 @@ namespace
     HRESULT STDMETHODCALLTYPE HkCreatePixelShader(ID3D11Device* dev, const void* code, SIZE_T len, ID3D11ClassLinkage* l, ID3D11PixelShader** out)
     {
         HRESULT hr = g_RealCreatePS(dev, code, len, l, out);
-        if (SUCCEEDED(hr) && out && *out && code && len) { KeepShader(*out, code, len); Fog::OnShader(*out, code, len, false); }
+        if (SUCCEEDED(hr) && out && *out && code && len) { KeepShader(*out, code, len); Fog::OnShader(*out, code, len, false); ScreenShadows::OnShader(*out, code, len); }
         return hr;
     }
     HRESULT STDMETHODCALLTYPE HkCreateComputeShader(ID3D11Device* dev, const void* code, SIZE_T len, ID3D11ClassLinkage* l, ID3D11ComputeShader** out)
@@ -5576,6 +5621,14 @@ uint64_t GpuTrace::ShaderHashOf(const void* sh)
     if (auto it = g_VsHash.find((void*)sh); it != g_VsHash.end()) return it->second;
     if (auto it = g_PsCsHash.find((void*)sh); it != g_PsCsHash.end()) return it->second;
     return 0;
+}
+bool GpuTrace::ShaderBytecode(const void* sh, std::vector<uint8_t>& out)
+{
+    std::lock_guard lk(g_ShaderM);
+    auto it = g_ShaderCode.find((void*)sh);
+    if (it == g_ShaderCode.end()) return false;
+    out = it->second;
+    return true;
 }
 uint64_t GpuTrace::VsHashOf(const void* vs)
 { std::lock_guard lk(g_ShaderM); auto it = g_VsHash.find((void*)vs); return it == g_VsHash.end() ? 0 : it->second; }

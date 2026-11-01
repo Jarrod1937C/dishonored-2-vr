@@ -17,7 +17,11 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <unordered_map>
+#include <map>
 #include <thread>
+#include <d3d11shader.h>
+#include "GpuTrace.h"
 
 namespace
 {
@@ -30,8 +34,8 @@ namespace
         { 0x31AD30, "GATHER_DYN_MODELS" }, { 0x31A150, "GATHER_DYN_MODELS_FINALIZE" }, { 0x33D320, "SORT" },
         { 0x333550, "SHADOWS_PREPARE" }, { 0x330020, "COLLECT_DYNAMIC_CASTERS" }, { 0x330C10, "GATHER_CASTERS" },
         { 0x310230, "IL_UPDATE_DYNAMIC_MODELS" }, { 0x310200, "IL_UPDATE_WORLD_STATE_AND_OCCLUDERS" }, { 0x2FC030, "GPUCULLING" },
-        { 0x2FD8D0, "DEPTHPASS" }, { 0x2FC130, "DEPTHMINMAX" }, { 0x305BE0, "SSAO" }, { 0x32F390, "SHADOWS_WORLD" },
-        { 0x32F380, "SHADOWS_DYNAMIC" }, { 0x310190, "IL_ACCUMULATE_FINAL_SH" }, { 0x3102A0, "IL_UPDATE_IBL" },
+        { 0x2FD8D0, "DEPTHPASS" }, { 0x2FC130, "DEPTHMINMAX" }, { 0x305BE0, "SSAO" }, { 0x32F390, "SHADOWS_WORLD lamps" },
+        { 0x32F380, "SHADOWS_DYNAMIC lamps" }, { 0x310190, "IL_ACCUMULATE_FINAL_SH" }, { 0x3102A0, "IL_UPDATE_IBL" },
         { 0x310260, "IL_UPDATE_PROBES" }, { 0x32C7F0, "SCREENSHADOWS" }, { 0x2F7260, "TLFLIGHTCULL" }, { 0x3133D0, "FORWARD_WORLD" },
         { 0x3133B0, "FORWARD_DYNAMIC" }, { 0x309430, "FOG" }, { 0x3053B0, "UPDATE_OCEAN_FFT" }, { 0x305370, "UPDATE_OCEAN" },
         { 0x3045A0, "RENDER_WATER" }, { 0x3222A0, "DEPTHALPHA_LIT" }, { 0x3150D0, "DOF_AUTOFOCUS" }, { 0x314B10, "DOF_ALPHA" },
@@ -40,12 +44,19 @@ namespace
         { 0x34FD00, "TEXTURE_STREAMER" }, { 0x31A690, "IGGY_MANAGE_TEXTURES_PACKS" }, { 0x31A710, "IGGY_3D" },
         { 0x31A8E0, "IGGY_FULLSCREEN" }, { 0x31AC40, "IGGY_TEXTURES_SUBSTITUTIONS" }, { 0x31AB10, "POST_IGGY" },
         { 0x31D7E0, "OCCLUSION_QUERIES" },
+        // the shadow passes' sun-cascade tasks, counted apart from their spot / omni (lamp) tasks: no function of their
+        // own (both run exe+0x32D4B0, which takes task+0xF8 < r_shadowParallelSliceCnt as a cascade)
+        { 0, "SHADOWS_WORLD sun" }, { 0, "SHADOWS_DYNAMIC sun" },
     };
     constexpr int kKnown = (int)(sizeof kPasses / sizeof kPasses[0]);
     // after the passes: a task whose function is not in the table, then the mod's own work at Present
     constexpr int kOtherPass = kKnown;
     constexpr int kSecBase = kKnown + 1;
-    const char* kSecName[PassProfile::kSections] = { "mod: Present hook (all of it)", "mod: StereoTaa at Present", "mod: overlay + VR submit" };
+    const char* kSecName[PassProfile::kSections] = { "mod: Present hook (all of it)", "mod: StereoTaa at Present", "mod: overlay + VR submit",
+        "mod:   overlay draw", "mod:   VR stage left eye (copy)", "mod:   VR BeginFrame (all)", "mod:     xrBeginFrame + views", "mod:   VR wrist HUD",
+        "mod:   VR screen mode / game HUD", "mod:   VR eye blits (DrawEye, all)", "mod:     swapchain acquire + wait", "mod:   VR layers + EndFrame (all)", "mod:     xrEndFrame call",
+        "mod:   VR mirror copy", "mod:   VR menu backdrop copy", "mod: GpuTrace at Present", "mod: game-state ticks at Present",
+        "mod: this profiler at Present", "mod: input / HUD after the submit" };
     constexpr int kRows = kSecBase + PassProfile::kSections;
     const char* RowName(int r) { return r < kKnown ? kPasses[r].name : r == kOtherPass ? "(other function)" : kSecName[r - kSecBase]; }
 
@@ -63,6 +74,14 @@ namespace
     // the DEPTHPASS task running on this thread, until its first draw into the scene's depth buffer (FovMask)
     struct MaskT { ID3D11DeviceContext* c = nullptr; const void* view = nullptr; int eye = -1, tries = 0; bool on = false; };
     thread_local MaskT t_Mask;
+    // ScreenShadows: a SCREENSHADOWS task of a main view running on this thread (its draws looked at)
+    thread_local ID3D11DeviceContext* t_SssCtx = nullptr;
+    thread_local const void* t_SssView = nullptr;
+    thread_local int t_SssEye = -1;
+    int g_RowShWorld = -1, g_RowShDyn = -1, g_RowShWorldSun = -1, g_RowShDynSun = -1;
+    // ScreenShadows' characters: 1 = a sun cascade's shadow task runs on this thread, 2 = an eye's main depth pass
+    std::atomic<bool> g_CharHook{ false };
+    thread_local int t_CharTask = 0, t_CharEye = -1;
     bool g_FovRow[64] = {};
     // [Advanced] SkipDisabledEffects (experimental): with the view's own "no SSAO" / "no DOF" flags set (VrTweaks), the
     // game's SSAO pass still fills its targets with a neutral value (two full-screen draws, exe+0x305C06..: 0.1 ms per
@@ -101,7 +120,8 @@ namespace
     thread_local TaskFn t_Real = nullptr;
     thread_local int t_Pass = -1;
     // what the task now running on this thread submits (GpuTrace's draw / dispatch hooks report here)
-    struct Acc { bool on = false; uint32_t draws = 0, dispatches = 0, indirect = 0; uint64_t elems = 0, groups = 0; };
+    struct Acc { bool on = false; uint32_t draws = 0, dispatches = 0, indirect = 0; uint64_t elems = 0, groups = 0;
+                 uint32_t mapDiscard = 0, mapNoOver = 0, mapRead = 0, mapOther = 0, updates = 0, copies = 0; };
     thread_local Acc t_Acc;
 
     // ---- one record per timed task ----
@@ -140,6 +160,11 @@ namespace
     {
         __try { return *(void* const*)p; }
         __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    bool ReadInt(const void* p, int& v)
+    {
+        __try { v = *(const int*)p; return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     ID3D11DeviceContext* ContextOf(void* task)
     {
@@ -475,6 +500,123 @@ namespace
         __try { uint8_t* w = *(uint8_t**)((uint8_t*)task + 0x108); if (w) w[0x12AD4] = 1; }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
+    // ---- draw by draw (ProfileRenderPasses): one left-eye frame of a few passes, every draw timed with its own queries,
+    // 40 s after the profile starts and every 2 minutes. DEPTHPASS is summed by shader pair (what makes it shade 8x the
+    // screen); the full-screen passes (POSTPROC, EMISSIVE_ONLY, ...) are listed draw by draw with the textures they read.
+    struct DRec
+    {
+        std::atomic<int> state{ 0 };                       // 0 free, 1 open, 2 issued
+        ID3D11Query* b = nullptr; ID3D11Query* e = nullptr; ID3D11Query* ps = nullptr;
+        unsigned long long frame = 0; int row = 0, idx = 0; DWORD tid = 0;
+        uint64_t psHash = 0, vsHash = 0; const void* psPtr = nullptr; const void* cs = nullptr;
+        uint32_t elems = 0, inst = 0, rtW = 0, rtH = 0, rtFmt = 0, rtN = 0; bool depth = false, indirect = false, dispatch = false;
+    };
+    constexpr int kDSlots = 8192;
+    DRec g_D[kDSlots];
+    std::atomic<unsigned long long> g_DNext{ 0 };
+    std::atomic<unsigned long long> g_DescFrame{ 0 };       // the frame being described (0 none)
+    std::atomic<int> g_DescDrops{ 0 };
+    int g_RowPost = -1, g_RowEmissive = -1, g_RowTonemap = -1, g_RowClear = -1;
+    struct Desc { bool on = false; ID3D11DeviceContext* c = nullptr; int row = -1, open = -1, idx = 0; unsigned long long frame = 0; };
+    thread_local Desc t_Desc;
+    bool DescRow(int row)
+    {
+        return row >= 0 && (row == g_RowDepth || row == g_RowPost || row == g_RowEmissive || row == g_RowTonemap || row == g_RowSsao
+                            || row == g_RowDof || row == g_RowClear);
+    }
+    void DescClose()
+    {
+        if (t_Desc.open < 0) return;
+        DRec& d = g_D[t_Desc.open];
+        if (d.ps) t_Desc.c->End(d.ps);
+        t_Desc.c->End(d.e);
+        d.state = 2; t_Desc.open = -1;
+    }
+    //! at a draw or dispatch of a described task: the previous one's queries end, this one's begin
+    void DescDraw(ID3D11DeviceContext* c, uint32_t elems, uint32_t inst, bool indirect, bool dispatch)
+    {
+        if (!c || c != t_Desc.c) return;
+        DescClose();
+        const int i = (int)(g_DNext.fetch_add(1) % kDSlots);
+        DRec& d = g_D[i];
+        int expect = 0;
+        if (!d.state.compare_exchange_strong(expect, 1)) { g_DescDrops++; return; }
+        if (!d.b)
+        {
+            D3D11_QUERY_DESC qd = { D3D11_QUERY_TIMESTAMP, 0 }, sd = { D3D11_QUERY_PIPELINE_STATISTICS, 0 };
+            if (FAILED(g_Dev->CreateQuery(&qd, &d.b)) || FAILED(g_Dev->CreateQuery(&qd, &d.e))) { if (d.b) { d.b->Release(); d.b = nullptr; } d.state = 0; g_DescDrops++; return; }
+            if (FAILED(g_Dev->CreateQuery(&sd, &d.ps))) d.ps = nullptr;
+        }
+        d.frame = t_Desc.frame; d.row = t_Desc.row; d.idx = t_Desc.idx++; d.tid = GetCurrentThreadId();
+        d.elems = elems; d.inst = inst; d.indirect = indirect; d.dispatch = dispatch;
+        d.psHash = d.vsHash = 0; d.psPtr = d.cs = nullptr; d.rtW = d.rtH = d.rtFmt = d.rtN = 0; d.depth = false;
+        if (dispatch)
+        {
+            ID3D11ComputeShader* cs = nullptr; c->CSGetShader(&cs, nullptr, nullptr);
+            if (cs) { d.cs = cs; d.psHash = GpuTrace::ShaderHashOf(cs); cs->Release(); }
+        }
+        else
+        {
+            ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+            if (ps) { d.psPtr = ps; d.psHash = GpuTrace::ShaderHashOf(ps); ps->Release(); }
+            ID3D11VertexShader* vs = nullptr; c->VSGetShader(&vs, nullptr, nullptr);
+            if (vs) { d.vsHash = GpuTrace::ShaderHashOf(vs); vs->Release(); }
+            ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
+            c->OMGetRenderTargets(8, rtv, &dsv);
+            for (int k = 0; k < 8; k++)
+                if (rtv[k])
+                {
+                    if (!d.rtN++)
+                    {
+                        ID3D11Resource* r = nullptr; rtv[k]->GetResource(&r);
+                        d.rtW = TexSize(r, &d.rtH, &d.rtFmt, nullptr, nullptr);
+                        if (r) r->Release();
+                    }
+                    rtv[k]->Release();
+                }
+            if (dsv) { d.depth = true; dsv->Release(); }
+        }
+        c->End(d.b);
+        if (d.ps) c->Begin(d.ps);
+        t_Desc.open = i;
+    }
+    //! the textures a pixel / compute shader reads, by name (its reflection), cached by hash
+    std::string ShaderReads(const void* sh, uint64_t hash)
+    {
+        static std::unordered_map<uint64_t, std::string> cache;
+        if (!sh || !hash) return "?";
+        if (auto it = cache.find(hash); it != cache.end()) return it->second;
+        std::string out;
+        std::vector<uint8_t> code;
+        if (GpuTrace::ShaderHashOf(sh) == hash && GpuTrace::ShaderBytecode(sh, code) && code.size() > 32)
+        {
+            using Reflect_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
+            static Reflect_t reflect = nullptr; static bool tried = false;
+            if (!tried) { tried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) reflect = (Reflect_t)GetProcAddress(d, "D3DReflect"); }
+            ID3D11ShaderReflection* r = nullptr;
+            if (reflect && SUCCEEDED(reflect(code.data(), code.size(), __uuidof(ID3D11ShaderReflection), (void**)&r)) && r)
+            {
+                D3D11_SHADER_DESC sd{};
+                if (SUCCEEDED(r->GetDesc(&sd)))
+                {
+                    int n = 0;
+                    for (UINT i = 0; i < sd.BoundResources && n < 10; i++)
+                    {
+                        D3D11_SHADER_INPUT_BIND_DESC b{};
+                        if (FAILED(r->GetResourceBindingDesc(i, &b)) || !b.Name || b.Type == D3D_SIT_SAMPLER || b.Type == D3D_SIT_CBUFFER) continue;
+                        const bool uav = b.Type >= D3D_SIT_UAV_RWTYPED && b.Type != D3D_SIT_TBUFFER && b.Type != D3D_SIT_TEXTURE && b.Type != D3D_SIT_STRUCTURED && b.Type != D3D_SIT_BYTEADDRESS;
+                        out += fmt::format("{}{}{}", n++ ? " " : "", uav ? "w:" : "", b.Name);
+                    }
+                    out += fmt::format(" [{} instr]", sd.InstructionCount);
+                }
+                r->Release();
+            }
+        }
+        if (out.empty()) out = "?";
+        if (cache.size() < 4096) cache[hash] = out;
+        return out;
+    }
+
     uintptr_t Thunk(void* task)
     {
         const TaskFn real = t_Real; const int row = t_Pass;
@@ -498,6 +640,14 @@ namespace
         }
         const bool learn = (eff == kEffSample || eff == kEffCheck) && c;
         const MaskT savedMask = t_Mask;
+        ID3D11DeviceContext* const savedSss = t_SssCtx; const void* const savedSssView = t_SssView; const int savedSssEye = t_SssEye;
+        t_SssCtx = c && (kind == kLeft || kind == kRight) && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed) ? c : nullptr;
+        t_SssView = view; t_SssEye = eye;
+        const int savedCharTask = t_CharTask, savedCharEye = t_CharEye;
+        t_CharTask = !c || !g_CharHook.load(std::memory_order_relaxed) ? 0
+                   : (row == g_RowShWorldSun || row == g_RowShDynSun) ? 1
+                   : (row == g_RowDepth && (kind == kLeft || kind == kRight)) ? 2 : 0;
+        t_CharEye = eye;
         if (c && eye >= 0 && row == g_RowDepth && g_MaskHook.load(std::memory_order_relaxed)) { t_Mask = MaskT{}; t_Mask.c = c; t_Mask.view = view; t_Mask.eye = eye; t_Mask.on = true; }
         else t_Mask.on = false;
         if (learn) { t_Caps = Caps{}; t_Caps.c = c; t_Caps.on = true; }
@@ -510,16 +660,27 @@ namespace
         const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
         const Acc saved = t_Acc;
         t_Acc = Acc{}; t_Acc.on = prof;
+        const Desc savedDesc = t_Desc;
+        t_Desc = Desc{};
+        if (slot >= 0 && kind == kLeft && DescRow(row))
+        {
+            const unsigned long long df = g_DescFrame.load(std::memory_order_relaxed);
+            if (df && g_Frame.load() == df) { t_Desc.on = true; t_Desc.c = c; t_Desc.row = row; t_Desc.frame = df; }
+        }
         LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
         const uintptr_t ret = real(task);
         LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
         const Acc mine = t_Acc;
         t_Acc = saved;
+        if (t_Desc.on) DescClose();
+        t_Desc = savedDesc;
         t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
+        t_SssCtx = savedSss; t_SssView = savedSssView; t_SssEye = savedSssEye;
+        t_CharTask = savedCharTask; t_CharEye = savedCharEye;
         if (c && mainView && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed)) ScreenShadows::AfterMask(c, view, eye);
         if (slot >= 0)
         {
@@ -547,14 +708,22 @@ namespace
         const bool prof = g_On.load(std::memory_order_relaxed);
         const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
         const bool mask = g_MaskHook.load(std::memory_order_relaxed);
-        if (!task || (!prof && !fog && !fov && !eff && !mask)) return real(task);
+        const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
+        if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
         if (!fn || fn == (uintptr_t)&Thunk) return real(task);
-        const int pass = PassOf(fn);
+        int pass = PassOf(fn);
+        if ((prof || chars) && (pass == g_RowShWorld || pass == g_RowShDyn))
+        {   // a sun cascade's task or a lamp's
+            int idx = -1, slices = 0;
+            if (ReadInt((uint8_t*)task + 0xF8, idx) && ReadInt((const void*)(g_Base + 0x397A2F8), slices) && idx >= 0 && idx < slices)
+                pass = pass == g_RowShWorld ? g_RowShWorldSun : g_RowShDynSun;
+        }
         const bool wanted = prof || (fog && (pass == g_RowOpaque || pass == g_RowTransparent)) || (fov && pass >= 0 && pass < 64 && g_FovRow[pass])
                          || (eff && (pass == g_RowSsao || (pass == g_RowDof && g_SkipDof.load(std::memory_order_relaxed))))
-                         || (mask && pass == g_RowDepth);
+                         || (mask && pass == g_RowDepth) || (sss && pass == g_RowScreenShadows)
+                         || (chars && (pass == g_RowDepth || pass == g_RowShWorldSun || pass == g_RowShDynSun));
         if (!wanted) return real(task);
         const TaskFn savedReal = t_Real; const int savedPass = t_Pass;
         t_Real = (TaskFn)fn; t_Pass = pass;
@@ -576,12 +745,19 @@ namespace
     UINT64 g_Freq = 0;
     ID3D11DeviceContext* g_Imm = nullptr;
     int g_SecOpen[PassProfile::kSections];                    // record slot of an open section, -1 none
+    LARGE_INTEGER g_SecT0[PassProfile::kSections];            // its CPU start
+    double g_SecCpuLast[PassProfile::kSections];              // this Present's CPU ms per section, so far
+    double g_SecCpuPrev[PassProfile::kSections];              // the last whole Present's (the CPU hitch lines)
+    DWORD g_RenderTid = 0;                                    // the thread the Present hook runs on (sections only there)
+    double g_RowAvg[256];                                     // per row: the running GPU ms of one task (the hitch lines)
+    unsigned g_HitchLines = 0, g_CpuHitchLines = 0;           // this report window's
+    double g_CpuAvg = 0;                                      // running Present-to-Present CPU ms
     LARGE_INTEGER g_PresentT0{}, g_LastPresent{};
 
     // ---- accumulated over the report window (render thread only) ----
     struct Cell
     {
-        double gpu = 0, gpuMax = 0, cpuUs = 0; unsigned long long n = 0;
+        double gpu = 0, gpuMax = 0, cpuUs = 0, cpuMaxUs = 0; unsigned long long n = 0;
         unsigned long long draws = 0, dispatches = 0, indirect = 0, elems = 0, groups = 0;
         unsigned long long iaPrims = 0, vsInv = 0, cPrims = 0, psInv = 0, csInv = 0, statsN = 0;
         bool rt = false; uint32_t rtW = 0, rtH = 0, rtFmt = 0, rtN = 0, rtSamples = 0, rtArray = 0, dsW = 0, dsH = 0, uavW = 0, uavH = 0;
@@ -659,8 +835,9 @@ namespace
         for (int p = 0; p < kRows; p++)
         {
             double t = 0;
-            for (int k = 0; k < kKinds; k++) { t += g_Cell[p][k].gpu; all[k] += g_Cell[p][k].gpu; }
-            if (t > 0 || g_Cell[p][0].n || g_Cell[p][1].n) rows.push_back({ p, t });
+            const bool sec = p >= kSecBase;
+            for (int k = 0; k < kKinds; k++) { t += g_Cell[p][k].gpu; if (!sec || p == kSecBase) all[k] += g_Cell[p][k].gpu; }
+            if (!sec && (t > 0 || g_Cell[p][0].n || g_Cell[p][1].n)) rows.push_back({ p, t });
         }
         std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.total > b.total; });
         const double fL = (double)std::max<unsigned long long>(1, g_FramesKind[kLeft]), fR = (double)std::max<unsigned long long>(1, g_FramesKind[kRight]);
@@ -680,7 +857,7 @@ namespace
         int shown = 0;
         for (const Row& r : rows)
         {
-            if (shown++ >= 40) break;
+            if (shown++ >= 48) break;
             for (int k = 0; k < kKinds; k++)
             {
                 const Cell& c = g_Cell[r.row][k];
@@ -702,6 +879,17 @@ namespace
                      target.empty() ? "-" : target, c.threads.size());
             }
         }
+        // the mod's own work at Present, step by step, in order (GPU: the timestamps' span on the immediate context, so
+        // a step that waits on the CPU -- the headset's pacing in BeginFrame -- counts the GPU's idle time behind it too)
+        LOGI("PassProfile: the mod's work at Present, per Present: GPU ms avg (max) | CPU ms avg (max) | times per Present");
+        for (int sct = 0; sct < PassProfile::kSections; sct++)
+        {
+            const Cell& c = g_Cell[kSecBase + sct][kNoView];
+            if (!c.n) continue;
+            LOGI("PassProfile:   {:<36} {:7.3f} ({:6.3f}) | {:6.3f} ({:6.3f}) | {:4.2f}", kSecName[sct], c.gpu / fAll, c.gpuMax,
+                 c.cpuUs / 1000.0 / fAll, c.cpuMaxUs / 1000.0, c.n / fAll);
+        }
+        if (g_HitchLines || g_CpuHitchLines) LOGI("PassProfile: {} slow tasks and {} slow Presents in this window (the 'hitch' lines above)", g_HitchLines, g_CpuHitchLines);
         // the worst frame of the window, pass by pass
         int worst = -1; double worstMs = 0;
         for (int i = 0; i < kFrames; i++)
@@ -744,19 +932,133 @@ namespace
         LOGI("PassProfile: ----- end of frame #{} ({} tasks) -----", g_DumpFrame, g_Dump.size());
         g_Dump.clear();
     }
+    // ---- the draw-by-draw frame: armed, then read and written to the log a few frames later ----
+    std::atomic<int> g_DescCount{ 0 };                       // draws described in the armed frame
+    unsigned long long g_DescPrintAt = 0, g_DescPrinted = 0; int g_DescTries = 0; ULONGLONG g_NextDescAt = 0;
+    void DescReport(unsigned long long frame)
+    {
+        struct Out { int row, idx; DWORD tid; double ms; D3D11_QUERY_DATA_PIPELINE_STATISTICS st; bool stats; uint64_t ps, vs; const void* psPtr; const void* cs;
+                     uint32_t elems, inst, rtW, rtH, rtFmt, rtN; bool depth, indirect, dispatch; };
+        std::vector<Out> out; int notReady = 0;
+        for (int i = 0; i < kDSlots; i++)
+        {
+            DRec& d = g_D[i];
+            const int st = d.state.load(std::memory_order_acquire);
+            if (st != 2) continue;
+            if (d.frame != frame) { if (d.frame + 64 < frame || d.frame > frame + 64) d.state = 0; continue; }
+            UINT64 tb = 0, te = 0; D3D11_QUERY_DATA_PIPELINE_STATISTICS ps{};
+            const bool in = g_Imm->GetData(d.b, &tb, sizeof tb, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK && g_Imm->GetData(d.e, &te, sizeof te, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
+            const bool stats = in && d.ps && g_Imm->GetData(d.ps, &ps, sizeof ps, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
+            if (in && te >= tb && g_Freq)
+                out.push_back({ d.row, d.idx, d.tid, (double)(te - tb) * 1000.0 / (double)g_Freq, ps, stats, d.psHash, d.vsHash, d.psPtr, d.cs,
+                                d.elems, d.inst, d.rtW, d.rtH, d.rtFmt, d.rtN, d.depth, d.indirect, d.dispatch });
+            else notReady++;
+            d.state = 0;
+        }
+        LOGI("PassProfile: ===== draw by draw, left eye, frame #{}: {} draws / dispatches timed ({} not read, {} dropped); "
+             "each one's GPU time runs from its start to the next one's (its state changes included) =====", frame, out.size(), notReady, g_DescDrops.exchange(0));
+        std::sort(out.begin(), out.end(), [](const Out& a, const Out& b) { return a.row != b.row ? a.row < b.row : a.tid != b.tid ? a.tid < b.tid : a.idx < b.idx; });
+        // DEPTHPASS: summed by its shader pair, the costliest first
+        {
+            struct Agg { uint64_t vs, ps; const void* psPtr; int n = 0; double ms = 0; unsigned long long elems = 0, ia = 0, cp = 0, px = 0; uint32_t rtN = 0; bool depth = false; };
+            std::map<std::pair<uint64_t, uint64_t>, Agg> agg;
+            double total = 0; unsigned long long px = 0, cp = 0, ia = 0; int n = 0, noPs = 0;
+            for (const Out& o : out)
+            {
+                if (o.row != g_RowDepth) continue;
+                Agg& a = agg[{ o.vs, o.ps }];
+                a.vs = o.vs; a.ps = o.ps; a.psPtr = o.psPtr; a.n++; a.ms += o.ms; a.elems += (unsigned long long)o.elems * (o.inst ? o.inst : 1);
+                a.rtN = o.rtN; a.depth = o.depth;
+                if (o.stats) { a.ia += o.st.IAPrimitives; a.cp += o.st.CPrimitives; a.px += o.st.PSInvocations; }
+                total += o.ms; n++; if (!o.ps) noPs++;
+                if (o.stats) { px += o.st.PSInvocations; cp += o.st.CPrimitives; ia += o.st.IAPrimitives; }
+            }
+            if (n)
+            {
+                std::vector<Agg> v; for (auto& kv : agg) v.push_back(kv.second);
+                std::sort(v.begin(), v.end(), [](const Agg& a, const Agg& b) { return a.ms > b.ms; });
+                LOGI("PassProfile: DEPTHPASS: {} draws in {} shader pairs, {:.3f} ms GPU, {:.2f} M primitives in, {:.2f} M rasterised, {:.2f} M pixels shaded; "
+                     "{} draws with no pixel shader. By shader pair, the costliest first: draws | GPU ms | M prims in / rasterised | M pixels | pixels per rasterised prim | targets | what the pixel shader reads",
+                     n, v.size(), total, ia / 1e6, cp / 1e6, px / 1e6, noPs);
+                for (size_t i = 0; i < v.size() && i < 24; i++)
+                {
+                    const Agg& a = v[i];
+                    LOGI("PassProfile:   VS {:016x} PS {:016x} | {:4d} | {:6.3f} | {:6.3f} / {:6.3f} | {:7.2f} | {:6.1f} | {} rt{} | {}", a.vs, a.ps, a.n, a.ms, a.ia / 1e6, a.cp / 1e6,
+                         a.px / 1e6, a.cp ? (double)a.px / (double)a.cp : 0.0, a.rtN, a.depth ? " + depth" : "", a.ps ? ShaderReads(a.psPtr, a.ps) : std::string("(no pixel shader)"));
+                }
+                // the draws that shade the most pixels, one by one (overdraw: big surfaces drawn behind others)
+                std::vector<const Out*> big;
+                for (const Out& o : out) if (o.row == g_RowDepth && o.stats) big.push_back(&o);
+                std::sort(big.begin(), big.end(), [](const Out* a, const Out* b) { return a->st.PSInvocations > b->st.PSInvocations; });
+                std::string s;
+                for (size_t i = 0; i < big.size() && i < 12; i++)
+                    s += fmt::format(" | #{} {:.2f} Mpx {} prims {:.3f} ms PS {:016x}", big[i]->idx, big[i]->st.PSInvocations / 1e6, big[i]->st.CPrimitives, big[i]->ms, big[i]->ps);
+                LOGI("PassProfile: DEPTHPASS: the draws that shade the most pixels:{}", s);
+            }
+        }
+        // the full-screen passes, draw by draw
+        int lines = 0;
+        for (const Out& o : out)
+        {
+            if (o.row == g_RowDepth || lines >= 120) continue;
+            lines++;
+            LOGI("PassProfile:   {:<14} #{:<3} {:6.3f} ms | {} {:016x} {} | {} | M pixels {:.2f} | -> {}x {}x{} {}{} | reads {}", RowName(o.row), o.idx, o.ms,
+                 o.dispatch ? "CS" : "PS", o.ps, o.dispatch ? fmt::format("{} groups", o.elems) : fmt::format("VS {:016x}", o.vs),
+                 o.dispatch ? (o.indirect ? "indirect" : "") : fmt::format("{} x{}", o.elems, o.inst), o.stats ? (o.dispatch ? o.st.CSInvocations : o.st.PSInvocations) / 1e6 : -1.0,
+                 o.rtN, o.rtW, o.rtH, Fmt(o.rtFmt), o.depth ? " + depth" : "", ShaderReads(o.dispatch ? o.cs : o.psPtr, o.ps));
+        }
+        LOGI("PassProfile: ===== end of the draw-by-draw frame #{} =====", frame);
+    }
     void ResetWindow()
     {
         for (auto& row : g_Cell) for (auto& c : row) c = Cell{};
         for (int k = 0; k < kKinds; k++) { g_FramesKind[k] = 0; g_Views[k].clear(); }
         g_FrameGpuSum = g_FrameGpuMax = g_FrameCpuSum = g_FrameCpuMax = g_HookCpuSum = 0; g_FrameGpuN = g_FrameCpuN = g_Presents = 0;
+        g_HitchLines = g_CpuHitchLines = 0;
         for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
+    }
+    //! A task far slower than its pass usually is (GPU): what it did, to the log (at most 12 per report window). The
+    //! uploads say whether it waited on data (a Map that reads stalls the CPU; many discards / updates are streaming);
+    //! a slow task with ordinary draws and pixels is the GPU being taken away (the compositor) or a shader being built.
+    void Hitch(const Rec& r, UINT64 tb, UINT64 te, const D3D11_QUERY_DATA_PIPELINE_STATISTICS* ps)
+    {
+        const double ms = (double)(te - tb) * 1000.0 / (double)g_Freq;
+        if (r.row < 0 || r.row >= kRows || r.row >= 256) return;
+        double& avg = g_RowAvg[r.row];
+        const double before = avg;
+        avg = avg <= 0 ? ms : avg + (ms - avg) * 0.02;
+        if (r.row >= kSecBase || before <= 0 || ms < 2.0 || ms < before * 4.0 || g_HitchLines >= 12) return;
+        // not a task's own time: one that draws and dispatches nothing (IGGY_3D: the GPU time between its two
+        // timestamps is other command lists' work -- its "pixels" are theirs), or the draw-by-draw frame (its queries)
+        if (!r.acc.draws && !r.acc.dispatches) return;
+        if (r.frame == g_DescPrinted || r.frame == g_DescFrame.load()) return;
+        g_HitchLines++;
+        const Acc& a = r.acc;
+        LOGI("PassProfile: hitch: frame #{} {} {} took {:.2f} ms GPU (usually {:.3f}), recorded in {:.2f} ms CPU on thread {} | draws {} dispatches {} "
+             "M elements {:.2f} | maps: discard {} no-overwrite {} read {} other {}, updates {}, copies {}{}",
+             r.frame, RowName(r.row), kKindName[r.kind], ms, before, r.cpuUs / 1000.0, r.tid, a.draws, a.dispatches, a.elems / 1e6,
+             a.mapDiscard, a.mapNoOver, a.mapRead, a.mapOther, a.updates, a.copies,
+             ps ? fmt::format(" | M prims in {:.3f} rasterised {:.3f} pixels {:.3f} compute {:.3f}", ps->IAPrimitives / 1e6, ps->CPrimitives / 1e6,
+                              ps->PSInvocations / 1e6, ps->CSInvocations / 1e6) : std::string(" | no statistics"));
+    }
+    //! A Present far later than usual (CPU): how long the mod's own steps took in the last one (at most 8 per window)
+    void CpuHitch(unsigned long long f, double ms)
+    {
+        const double before = g_CpuAvg;
+        g_CpuAvg = g_CpuAvg <= 0 ? ms : g_CpuAvg + (ms - g_CpuAvg) * 0.02;
+        if (before <= 0 || ms < 20.0 || ms < before * 1.8 || g_CpuHitchLines >= 8) return;
+        g_CpuHitchLines++;
+        std::string s;
+        for (int i = 0; i < PassProfile::kSections; i++) if (g_SecCpuPrev[i] >= 0.5) s += fmt::format(" {} {:.2f}", kSecName[i], g_SecCpuPrev[i]);
+        LOGI("PassProfile: hitch: Present #{} came {:.1f} ms after the last one (usually {:.1f}); the mod's steps over 0.5 ms CPU in the last Present:{}",
+             f, ms, before, s.empty() ? " none" : s);
     }
     void Take(Rec& r, UINT64 tb, UINT64 te)
     {
         const double ms = (double)(te - tb) * 1000.0 / (double)g_Freq;
         if (ms >= 100.0) return;
         Cell& c = g_Cell[r.row][r.kind];
-        c.gpu += ms; c.gpuMax = std::max(c.gpuMax, ms); c.n++; c.cpuUs += r.cpuUs;
+        c.gpu += ms; c.gpuMax = std::max(c.gpuMax, ms); c.n++; c.cpuUs += r.cpuUs; c.cpuMaxUs = std::max(c.cpuMaxUs, r.cpuUs);
         c.draws += r.acc.draws; c.dispatches += r.acc.dispatches; c.indirect += r.acc.indirect; c.elems += r.acc.elems; c.groups += r.acc.groups;
         if (c.threads.size() < 64) c.threads.insert(r.tid);
         if (r.rtSampled && !c.rt)
@@ -791,7 +1093,15 @@ void PassProfile::Install()
         if (!strcmp(kPasses[i].name, "SSAO")) g_RowSsao = i;
         if (!strcmp(kPasses[i].name, "DOF")) g_RowDof = i;
         if (!strcmp(kPasses[i].name, "DEPTHPASS")) g_RowDepth = i;
+        if (!strcmp(kPasses[i].name, "POSTPROC")) g_RowPost = i;
+        if (!strcmp(kPasses[i].name, "EMISSIVE_ONLY")) g_RowEmissive = i;
+        if (!strcmp(kPasses[i].name, "POST_TONEMAP")) g_RowTonemap = i;
+        if (!strcmp(kPasses[i].name, "CLEAR")) g_RowClear = i;
         if (!strcmp(kPasses[i].name, "SCREENSHADOWS")) g_RowScreenShadows = i;
+        if (!strcmp(kPasses[i].name, "SHADOWS_WORLD lamps")) g_RowShWorld = i;
+        if (!strcmp(kPasses[i].name, "SHADOWS_DYNAMIC lamps")) g_RowShDyn = i;
+        if (!strcmp(kPasses[i].name, "SHADOWS_WORLD sun")) g_RowShWorldSun = i;
+        if (!strcmp(kPasses[i].name, "SHADOWS_DYNAMIC sun")) g_RowShDynSun = i;
         // Foveation: what shades the scene at the eye's resolution
         static const char* fov[] = { "DEPTHPASS", "DEPTHALPHA_LIT", "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY" };
         for (const char* n : fov) if (!strcmp(kPasses[i].name, n) && i < 64) g_FovRow[i] = true;
@@ -800,7 +1110,8 @@ void PassProfile::Install()
     g_FovHook = Foveation::Wanted();
     g_MaskHook = FovMask::Wanted();
     g_SssHook = ScreenShadows::Wanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load()) || g_Exec) return;
+    g_CharHook = ScreenShadows::CharactersWanted();
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -812,7 +1123,7 @@ void PassProfile::Install()
     DetourAttach(&(PVOID&)g_ExecImm, (PVOID)&HkExec<1>);
     const LONG e = DetourTransactionCommit();
     LOGI("PassProfile: task executors exe+0x2C5D50 / exe+0x2C5F60 hooked (detour={})", e);
-    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; g_MaskHook = false; g_SssHook = false; }
+    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; g_MaskHook = false; g_SssHook = false; g_CharHook = false; }
 }
 
 void PassProfile::SetSkipEffects(int mode)
@@ -824,7 +1135,10 @@ void PassProfile::SetSkipEffects(int mode)
 
 bool PassProfile::On() { return g_On.load(std::memory_order_relaxed); }
 
-void PassProfile::NoteDraw(unsigned elements, unsigned instances, bool indirect)
+int PassProfile::CharTask() { return t_CharTask; }
+int PassProfile::CharEye() { return t_CharEye; }
+
+void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect)
 {
     if (t_Mask.on)
     {   // FovMask: before the depth pass's first draw into the scene's depth (its own draw comes back through here: off first)
@@ -832,32 +1146,49 @@ void PassProfile::NoteDraw(unsigned elements, unsigned instances, bool indirect)
         if (!FovMask::AtDraw(t_Mask.c, t_Mask.view, t_Mask.eye) && ++t_Mask.tries < 64) t_Mask.on = true;
     }
     if (t_Caps.on) CaptureTargets();
+    if (t_SssCtx) ScreenShadows::AtTaskDraw(t_SssCtx, t_SssView, t_SssEye);
+    if (t_Desc.on) DescDraw(c, elements, instances, indirect, false);   // (after the mod's own draws above)
     if (!t_Acc.on) return;
     t_Acc.draws++; if (indirect) t_Acc.indirect++;
     t_Acc.elems += (uint64_t)elements * (instances ? instances : 1);
 }
-void PassProfile::NoteDispatch(unsigned x, unsigned y, unsigned z, bool indirect)
+void PassProfile::NoteMap(int type)
 {
+    if (!t_Acc.on) return;
+    if (type == 4) t_Acc.mapDiscard++; else if (type == 5) t_Acc.mapNoOver++; else if (type == 1 || type == 3) t_Acc.mapRead++; else t_Acc.mapOther++;
+}
+void PassProfile::NoteUpdate() { if (t_Acc.on) t_Acc.updates++; }
+void PassProfile::NoteCopy() { if (t_Acc.on) t_Acc.copies++; }
+void PassProfile::NoteDispatch(ID3D11DeviceContext* c, unsigned x, unsigned y, unsigned z, bool indirect)
+{
+    if (t_Desc.on) DescDraw(c, x * y * z, 0, indirect, true);
     if (!t_Acc.on) return;
     t_Acc.dispatches++; if (indirect) t_Acc.indirect++;
     t_Acc.groups += (uint64_t)x * y * z;
 }
 
-void PassProfile::BeginSection(int s)
+bool PassProfile::BeginSection(int s)
 {   // the mod's own GPU work at Present, on the immediate context (render thread)
-    if (!g_On.load() || !g_Imm || s < 0 || s >= kSections || g_SecOpen[s] >= 0) return;
+    if (!g_On.load() || !g_Imm || s < 0 || s >= kSections || g_SecOpen[s] >= 0) return false;
+    if (s == 0) g_RenderTid = GetCurrentThreadId();
+    else if (GetCurrentThreadId() != g_RenderTid) return false;   // (a step reached from another thread: not timed)
     g_SecOpen[s] = Open(g_Imm, kSecBase + s, kNoView, nullptr);
-    if (s == 0) QueryPerformanceCounter(&g_PresentT0);
+    if (g_SecOpen[s] < 0) { g_SecOpen[s] = -1; return false; }
+    if (s == 0) for (int i = 0; i < kSections; i++) g_SecCpuLast[i] = 0;
+    QueryPerformanceCounter(&g_SecT0[s]);
+    if (s == 0) g_PresentT0 = g_SecT0[s];
+    return true;
 }
 void PassProfile::EndSection(int s)
 {
     if (!g_On.load() || !g_Imm || s < 0 || s >= kSections || g_SecOpen[s] < 0) return;
+    if (GetCurrentThreadId() != g_RenderTid) return;
     Rec& r = g_Rec[g_SecOpen[s]];
-    if (s == 0)
     {
         LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
-        r.cpuUs = (double)(t1.QuadPart - g_PresentT0.QuadPart) * 1e6 / (double)g_QpcF.QuadPart;
-        g_HookCpuSum += r.cpuUs / 1000.0;
+        r.cpuUs = (double)(t1.QuadPart - g_SecT0[s].QuadPart) * 1e6 / (double)g_QpcF.QuadPart;
+        g_SecCpuLast[s] += r.cpuUs / 1000.0;
+        if (s == 0) { g_HookCpuSum += r.cpuUs / 1000.0; for (int i = 0; i < kSections; i++) g_SecCpuPrev[i] = g_SecCpuLast[i]; }
     }
     if (r.ps) g_Imm->End(r.ps);
     g_Imm->End(r.e);
@@ -888,6 +1219,7 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
         {
             const double ms = (double)(now.QuadPart - g_LastPresent.QuadPart) * 1000.0 / (double)g_QpcF.QuadPart;
             if (ms < 500) { g_FrameCpuSum += ms; g_FrameCpuN++; g_FrameCpuMax = std::max(g_FrameCpuMax, ms); g_CpuMs[f % kFrames] = ms; g_CpuFrame[f % kFrames] = f; }
+            CpuHitch(f, ms);
         }
         g_LastPresent = now;
     }
@@ -957,6 +1289,7 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
                     Cell& c = g_Cell[r.row][r.kind];
                     if (stats) { c.iaPrims += ps.IAPrimitives; c.vsInv += ps.VSInvocations; c.cPrims += ps.CPrimitives; c.psInv += ps.PSInvocations; c.csInv += ps.CSInvocations; c.statsN++; }
                     else g_NoStats++;
+                    Hitch(r, tb, te, stats ? &ps : nullptr);
                 }
                 r.state = 0;
             }
@@ -964,6 +1297,20 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
         }
     }
     if (g_DumpFrame && f >= g_DumpUntil) { DumpFrame(); g_DumpFrame = 0; g_NextDumpAt = nowMs + 30000; }
+    // draw by draw: 40 s in, then every 2 minutes; the armed frame moves on until one with left-eye tasks is met
+    {
+        if (!g_NextDescAt) g_NextDescAt = nowMs + 40000;
+        const unsigned long long df = g_DescFrame.load();
+        if (!df && !g_DescPrintAt && nowMs >= g_NextDescAt) { g_DescCount = 0; g_DescTries = 0; g_DescFrame = f + 1; }
+        else if (df && f > df)
+        {
+            bool seen = false;
+            for (int i = 0; i < kDSlots && !seen; i++) if (g_D[i].state.load(std::memory_order_relaxed) == 2 && g_D[i].frame == df) seen = true;
+            if (!seen && ++g_DescTries < 40) g_DescFrame = f + 1;
+            else { g_DescFrame = 0; g_DescPrinted = df; g_DescPrintAt = f + 10; }
+        }
+        if (g_DescPrintAt && f >= g_DescPrintAt) { DescReport(g_DescPrinted); g_DescPrintAt = 0; g_NextDescAt = nowMs + 120000; }
+    }
 
     if (!g_WindowStart) g_WindowStart = nowMs;
     if (nowMs - g_WindowStart >= 5000)

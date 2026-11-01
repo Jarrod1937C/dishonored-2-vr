@@ -23,6 +23,9 @@ namespace VrTweaks
     //! [Display] Fog (default 1): 0 = no fog while the headset shows the game (r_skipFog, live value only).
     void SetFog(bool on);
     void SetFogMaps(const std::string& words);   //!< [Display] FogMaps, from the ini
+    //! [Display] StaticLodZoom (experimental, default 1 = untouched): the game's r_lodZoomMultiplicator ("zoom
+    //! multiplicator for static LODs") held at this, checked every second
+    void SetLodZoom(float z);
     std::string MapName();                  //!< the loaded map's name as the game has it ("" between maps)
     void OnPresent();                       //!< follows whether the headset shows the game (render thread)
     void OnMainView(void* view);            //!< the main view being set up (ViewMatrixHook): its render flags

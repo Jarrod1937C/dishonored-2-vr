@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ScreenMode.h"
+#include "PassProfile.h"
 #include "XRSession.h"
 #include "KbmInject.h"
 #include "WristHud.h"
@@ -217,6 +218,7 @@ void ScreenMode::RequestRecenter(const char* why) { if (g_Flat.load()) { g_Recen
 
 bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, bool imageKnown)
 {
+    PassProfile::Scope prof(PassProfile::kSecScreen);   // ([Advanced] ProfileRenderPasses)
     std::lock_guard lk(g_M);
     const double now = Now();
     const float dt = g_Last > 0.0 ? (float)std::clamp(now - g_Last, 0.0, 0.1) : 0.f;
@@ -382,6 +384,7 @@ bool ScreenMode::OnXrFrame(XRSession& xr, ID3D11Texture2D* bb, bool imageFlat, b
 
 void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3], const float tan[4], unsigned long long serial)
 {
+    PassProfile::Scope prof(PassProfile::kSecScreen);   // ([Advanced] ProfileRenderPasses)
     std::lock_guard lk(g_M);
     if (!g_Lift.load() || g_Kind != kPlay) return;
     unsigned tw = 0, th = 0; bool gamma = false;

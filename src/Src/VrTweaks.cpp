@@ -6,6 +6,7 @@
 #include "Fog.h"
 #include <vector>
 #include <mutex>
+#include <cmath>
 
 namespace
 {
@@ -21,6 +22,7 @@ namespace
     std::vector<std::string> g_FogMaps;
     std::mutex g_MapM; std::string g_Map;   // the current map's name, lower case (written on the render thread)
     std::atomic<bool> g_MapFog{ false };   // the current map is one of FogMaps
+    std::atomic<float> g_LodZoom{ 1.f };   // StaticLodZoom (1 = the game's own, never written)
     // The map's name: idGameLocal's vtable +0x88 (exe+0x8A89E0) returns gameLocal+0x337128, the map's file record,
     // whose idStr at +0x10 is the map file name -- what the game's own crash report prints as "Map:" (exe+0x427BD).
     constexpr size_t kMapNameStr = 0x337128 + 0x10;
@@ -70,6 +72,11 @@ void VrTweaks::SetAmbientOcclusion(bool on)
     if (!on) LOGI("VrTweaks: ambient occlusion off in VR (AmbientOcclusion = 0)");
 }
 
+void VrTweaks::SetLodZoom(float z)
+{
+    g_LodZoom = z;
+    if (fabsf(z - 1.f) > 1e-3f) LOGI("VrTweaks: StaticLodZoom {:g}: the game's r_lodZoomMultiplicator held at it (the static models' level of detail; experimental)", z);
+}
 void VrTweaks::SetFog(bool on)
 {
     g_Fog = on;
@@ -114,6 +121,17 @@ void VrTweaks::OnPresent()
                     if (g_MapFog) LOGI("VrTweaks: map '{}': its name holds '{}' (FogMaps): the game's fog stays on here", buf, hit);
                     else LOGI("VrTweaks: map '{}'", buf);
                 }
+            }
+        }
+        {   // StaticLodZoom: r_lodZoomMultiplicator, the zoom the static models' level of detail is chosen for (fewer, larger
+            // triangles in the depth pass when the models' coarser levels are picked sooner). Held while it differs.
+            const float z = g_LodZoom.load();
+            static int told = 0;
+            if (fabsf(z - 1.f) > 1e-3f)
+            {
+                const float now = CVars::GetFloat("r_lodZoomMultiplicator", -1.f);
+                if (now > 0.f && fabsf(now - z) > 1e-3f && CVars::SetFloat("r_lodZoomMultiplicator", z) && told++ < 8)
+                    LOGI("VrTweaks: r_lodZoomMultiplicator {:g} -> {:g} (StaticLodZoom)", now, z);
             }
         }
         const bool want = active && !g_Fog.load() && !g_MapFog;

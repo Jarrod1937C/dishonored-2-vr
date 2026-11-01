@@ -2,6 +2,7 @@
 #include <string>
 
 struct IDXGISwapChain;
+struct ID3D11DeviceContext;
 
 //! The frame's cost, pass by pass ([Advanced] ProfileRenderPasses, off by default), written to the log every 5 s:
 //! for each of the engine's named render passes (ARK_RENDERPASS_*, ENGINE.md "Render passes"), separately for the left
@@ -18,16 +19,37 @@ struct IDXGISwapChain;
 //! back a few frames later; GpuTrace's draw / dispatch hooks count into the task running on their thread.
 namespace PassProfile
 {
-    constexpr int kSections = 3;    //!< the mod's own work at Present: 0 the whole hook, 1 StereoTaa, 2 overlay + VR submit
+    //! the mod's own work at Present, GPU and CPU time each: the whole hook, StereoTaa, overlay + VR submit, and that last
+    //! one step by step (some nest: the wait is BeginFrame without xrBeginFrame, the layers are EndFrame without xrEndFrame)
+    enum Section
+    {
+        kSecHook, kSecTaa, kSecSubmit, kSecOverlay, kSecStage, kSecBegin, kSecXrBegin, kSecWrist, kSecScreen, kSecEyes,
+        kSecAcquire, kSecEnd, kSecXrEnd, kSecMirror, kSecSnapshot, kSecGpuTrace, kSecTicks, kSecProfiler, kSecAfter, kSections
+    };
     void SetEnabled(bool on);       //!< from the ini, before Install
     void SetSkipEffects(int mode);  //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF; before Install
     void Install();                 //!< hooks only when enabled
     bool On();
     void OnPresent(IDXGISwapChain* sc);
-    void BeginSection(int s);       //!< render thread, around the mod's own work at Present (immediate context)
+    bool BeginSection(int s);       //!< render thread, around the mod's own work at Present (immediate context)
     void EndSection(int s);
+    struct Scope                    //!< a section for the rest of a block (early returns included)
+    {
+        int s; bool on;
+        explicit Scope(int sec) : s(sec), on(BeginSection(sec)) {}
+        ~Scope() { if (on) EndSection(s); }
+        Scope(const Scope&) = delete; Scope& operator=(const Scope&) = delete;
+    };
+    //! ScreenShadows' characters, for the draw hooks: 1 = a sun cascade's shadow task runs on this thread, 2 = an
+    //! eye's main depth pass (CharEye 0 / 1), 0 = neither
+    int CharTask();
+    int CharEye();
     //! GpuTrace's draw / dispatch hooks: counted into the render task running on this thread, if any
-    void NoteDraw(unsigned elements, unsigned instances, bool indirect);
-    void NoteDispatch(unsigned x, unsigned y, unsigned z, bool indirect);
+    void NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect);
+    void NoteDispatch(ID3D11DeviceContext* c, unsigned x, unsigned y, unsigned z, bool indirect);
+    //! ... and the uploads / copies: what a slow task did (the hitch lines)
+    void NoteMap(int type);         //!< D3D11_MAP: 1 read, 3 read-write, 4 discard, 5 no-overwrite, 2 write
+    void NoteUpdate();
+    void NoteCopy();
     std::string Status();
 }

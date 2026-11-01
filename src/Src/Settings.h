@@ -37,6 +37,17 @@ namespace Settings
     float ScreenSpaceShadowLength();
     int ScreenSpaceShadowSteps();
     float ScreenSpaceShadowStrength();
+    bool ScreenSpaceShadowCharacters();           //!< [Display] (ScreenShadows)
+    bool ShadowMapCharacters();                   //!< [Display] (ScreenShadows)
+    float ScreenSpaceShadowContact();             //!< [Display] (ScreenShadows)
+    float ScreenSpaceShadowSmallObjects();        //!< [Display] (ScreenShadows), m across
+    float ShadowCullDistance();                   //!< [Display] ShadowCullDistance: r_shadowCullDistance held (ScreenShadows)
+    bool ShadowUltraTrim();                       //!< [Display] ShadowUltraTrim (ScreenShadows)
+    bool ShadowLampFewerUpdates();                //!< [Display] ShadowLampFewerUpdates (ScreenShadows)
+    int ShadowLampCacheSlices();                  //!< [Display] ShadowLampCacheSlices (ScreenShadows)
+    float StaticLodZoom();                        //!< [Display] StaticLodZoom (VrTweaks, experimental)
+    float ShadowMapMinObjectSize();               //!< [Display] (ScreenShadows), m across
+    int ShadowSunUpdateEvery();                   //!< [Display] (ScreenShadows), frame pairs 1 / 2 / 4
     float HudMarkerSize();                        //!< [Display] HudMarkerSize: the HUD square around a marker put at its character's distance (ScreenMode)                             //!< [Display] HudScale: the stereo HUD panel's share of the view (ScreenMode)
     bool HudMarkers();                            //!< [Display] HudMarkers: the game's markers over characters placed for the headset (ScreenMode)                        //!< [Gameplay] KnockoutSpeed: m/s a knockout blow needs (MeleeAim)
     bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)

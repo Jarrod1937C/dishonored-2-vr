@@ -265,8 +265,18 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CheapFogMinBrightness = 0.35 (never darker than this, in the game's light units)
                CheapFogFollowExposure = 1 (the fog changes with the eye adaptation as the scene does)
                CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
-               ScreenSpaceShadows = 1 (sharp sun shadows of what is on screen, traced through the depth buffer)
-               ScreenSpaceShadowLength = 3 (m)   ScreenSpaceShadowSteps = 16   ScreenSpaceShadowStrength = 1
+               ScreenSpaceShadows = 0 (experimental: sharp sun shadows of characters / small objects on screen)
+               ScreenSpaceShadowCharacters = 1 (characters cast them)   ShadowMapCharacters = 0 (and leave the sun's shadow maps; needs ScreenSpaceShadows = 1)
+               ScreenSpaceShadowSmallObjects = 1 (m across: smaller moving objects too, out of the shadow maps)
+               ScreenSpaceShadowLength = 3 (m)   ScreenSpaceShadowContact = 0 (m, everything's contact shadows)
+               ScreenSpaceShadowSteps = 24   ScreenSpaceShadowStrength = 1
+               ShadowCullDistance = 0 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
+               ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
+               ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
+               ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
+               StaticLodZoom = 1 (experimental: >1 = static models switch to simpler versions sooner; 1 = the game's)
+               ShadowMapMinObjectSize = 0.3 (m across: smaller moving objects cast no sun shadow-map shadow)
+               ShadowSunUpdateEvery = 2 (frame pairs between redraws of the sun's shadows beyond the nearest)
                OutOfViewMask = 0 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
                OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
                OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime)
@@ -290,7 +300,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
-               ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s)
+               ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
+                                      the mod's own steps, hitches and a frame draw by draw)
                SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
 

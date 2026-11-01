@@ -14,6 +14,7 @@
 #include "ScreenMode.h"
 #include "StereoSync.h"
 #include "StereoTaa.h"
+#include "PassProfile.h"
 #include "VRMath.h"
 #include <cmath>
 
@@ -448,7 +449,9 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                 g_Session.SyncInput();
                 { std::lock_guard lk(g_PoseMutex); g_Input = g_Session.Input(); g_InputValid = true; g_InputAt = GetTickCount64(); }
                 // the watch on the left wrist: decided on this frame's poses, drawn into this frame's layers
+                PassProfile::BeginSection(PassProfile::kSecWrist);
                 WristHud::OnXrFrame(g_Session, KbmInject::GetStats().mode == 1);
+                PassProfile::EndSection(PassProfile::kSecWrist);
                 // Menus, loading screens and cutscenes on a screen in the room (ScreenMode): it submits the frame
                 // itself. Which kind of picture this is comes from its own view record (a flat view, or not).
                 bool imageFlat = false, imageKnown = false;
@@ -740,6 +743,10 @@ unsigned long long VRRuntime::HapticPulses() { return g_Session.HapticPulses(); 
 
 void VRRuntime::Shutdown(bool processExit)
 {
+    // At process exit (the game quitting) the runtime is not called: its own threads are already gone by then, and
+    // tearing the session down then faulted inside it (vrclient_x64.dll, reading 0, under the loader lock: seen in
+    // several logs at quit). The runtime sees the process end by itself.
+    if (processExit) return;
     if (g_Session.IsInitialized()) g_Session.Shutdown(processExit);
 }
 void VRRuntime::SetKeepAlive(int m) { g_Session.SetKeepAlive(m); LOGI("cmd vr keepalive {} ({})", m, m ? "the headset gets the last picture while the game sends none" : "off: the headset waits (the hourglass)"); }
