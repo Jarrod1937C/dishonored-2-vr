@@ -35,6 +35,8 @@ namespace SwordContact
     //! [Gameplay] SwordBodyDepth (cm): with WeaponCollision, how far the drawn blade sinks into a body before it stops
     //! (at most 80% of the bone's own radius, so it never comes out the other side).
     void SetBodySink(float metres);
+    //! [Gameplay] SwordBloodflyReach: how much further from a bloodfly the blade still touches it (m)
+    void SetBloodflyReach(float metres);
     bool Set(const std::string& key, float v);
     std::string Config();
     std::string Stats();                     //!< heartbeat

@@ -159,6 +159,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  ends (the right one grows when it is on something you can take or use); ReticleOpacity sets how
  see-through they are. When you can take a guard down from behind, the right one turns RED inside a
  thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button). With
+ SwordBloodflyReach (0.3 m) makes bloodflies easier to hit with the blade; bloodfly nests can be struck too.
  KnockoutBlow = 1, hitting the back of his head hard (fist, the sword's pommel, the pistol) knocks him
  out at once instead. KnockoutSpeed sets how hard (in m/s; 4.5 by default), KnockoutAngle how squarely
  behind him you must be (degrees off straight behind; 60), KnockoutRadius how close to his head (m; 0.3).

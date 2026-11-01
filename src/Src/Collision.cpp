@@ -992,6 +992,7 @@ void Collision::NoteInteract(uint32_t id)
     LOGI("Collision: cabinet front '{}' (id {:#x}) interacted with: counted {} now", EntityName(e), id, now ? "OPEN" : "closed");
 }
 std::string Collision::Describe(void* ent) { return DescribeEnt(ent); }
+std::string Collision::Name(void* ent) { return ent ? EntityName(ent) : std::string(); }
 bool Collision::IsWindow(uint32_t id)
 {
     if (!id || id == 0x3FFF0010u) return false;

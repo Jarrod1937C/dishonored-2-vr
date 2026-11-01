@@ -47,6 +47,7 @@ namespace
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
         { "gameplay.knockoutspeed",     Kind::Float,  "4.5", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
+        { "gameplay.swordbloodflyreach", Kind::Float, "0.3", 0, 1, nullptr },   // SwordContact: how much further from a bloodfly the blade touches it
         { "gameplay.knockoutangle",     Kind::Float,  "60", 10, 120, nullptr },  // MeleeAim: deg off straight behind the target a knockout is possible from
         { "gameplay.knockoutradius",    Kind::Float,  "0.3", 0.1f, 0.8f, nullptr },   // MeleeAim: m around the head's centre a blow must land
         { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
@@ -298,6 +299,7 @@ bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
 float Settings::KnockoutSoundVolume() { return F("gameplay.knockoutsoundvolume"); }
 float Settings::KnockoutSpeed() { return F("gameplay.knockoutspeed"); }
 float Settings::KnockoutAngle() { return F("gameplay.knockoutangle"); }
+float Settings::SwordBloodflyReach() { return F("gameplay.swordbloodflyreach"); }
 float Settings::KnockoutRadius() { return F("gameplay.knockoutradius"); }
 bool Settings::SkipIntroVideos() { return B("advanced.skipintrovideos"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }

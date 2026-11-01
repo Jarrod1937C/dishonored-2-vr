@@ -153,6 +153,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetHands(Settings::HandCollision());
     Collision::SetWeapons(Settings::WeaponCollision());
     SwordContact::SetBodySink(Settings::SwordBodyDepth());
+    SwordContact::SetBloodflyReach(Settings::SwordBloodflyReach());
     Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     Collision::SetDoors(Settings::PushDoors());
     Collision::SetOpenables(Settings::PullToOpen());

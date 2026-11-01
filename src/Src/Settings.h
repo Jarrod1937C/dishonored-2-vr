@@ -30,6 +30,7 @@ namespace Settings
     float KnockoutSoundVolume();
     float KnockoutSpeed();
     float KnockoutAngle();                        //!< [Gameplay] KnockoutAngle: deg off straight behind the target (MeleeAim)
+    float SwordBloodflyReach();                   //!< [Gameplay] SwordBloodflyReach: m further from a bloodfly the blade touches it (SwordContact)
     float KnockoutRadius();                       //!< [Gameplay] KnockoutRadius: m around the head's centre (MeleeAim)
     float HudScale();
     bool ScreenSpaceShadows();                    //!< [Display] ScreenSpaceShadows (ScreenShadows)

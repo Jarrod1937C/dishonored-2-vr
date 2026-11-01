@@ -62,6 +62,7 @@ namespace Collision
     std::string PointerDescribe();
     //! Any entity in words (level name, C++ class and class id, door / window / openable / item / character...), for logs.
     std::string Describe(void* ent);
+    std::string Name(void* ent);                  //!< the entity's name ('bloodfly_9543'), "" if none
     //! The game's interact was sent on this entity (KbmInject: the trigger, a pull, a hand's push): a cabinet front's
     //! open / closed count flips.
     void NoteInteract(uint32_t id);

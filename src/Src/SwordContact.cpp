@@ -41,7 +41,11 @@ namespace
         // One strike per swing: the next needs the hand to have slowed below this (the swing is over, or it turned back).
         float rearmHand = 0.7f;
         float rearm = 0.35f;                  // and the same entity is not struck again before this
-        float maxDim = 2.4f, maxVol = 1.2f;   // a box bigger than this is furniture / architecture, not a target
+        // A box bigger than this is furniture / architecture: still a target (2026-10-31, asked: "the original game let you
+        // hit everything, including furniture"; the blade's speed and a real swing already keep touches from striking),
+        // but it does not pass a strike on to a character standing at it (`attach`). Bigger than `worldDim`: a piece of
+        // the level (its box is mostly air), not a target.
+        float maxDim = 2.4f, maxVol = 1.2f, worldDim = 30.f;
         float radius = 3.0f, scanSec = 0.10f; // targets: entities within this of the eye, refreshed this often
         float skelMin = 20;                   // a skinned model with at least this many joints is struck by its skeleton
         float attach = 0.30f;                 // a box touched this close to a character's body (his sword, hat) strikes him too
@@ -70,7 +74,7 @@ namespace
         { "guard", &C.guard }, { "tip", &C.tip }, { "samples", &C.samples }, { "blader", &C.bladeR },
         { "hithand", &C.hitHand }, { "hitwin", &C.hitWin }, { "hitpath", &C.hitPath }, { "pathwin", &C.pathWin },
         { "minspeed", &C.minSpeed }, { "rearmhand", &C.rearmHand }, { "rearm", &C.rearm },
-        { "maxdim", &C.maxDim }, { "maxvol", &C.maxVol }, { "radius", &C.radius }, { "scan", &C.scanSec }, { "skelmin", &C.skelMin },
+        { "maxdim", &C.maxDim }, { "maxvol", &C.maxVol }, { "worlddim", &C.worldDim }, { "radius", &C.radius }, { "scan", &C.scanSec }, { "skelmin", &C.skelMin },
         { "attach", &C.attach }, { "teleport", &C.teleport }, { "handjump", &C.handJump }, { "losthold", &C.lostHold },
         { "haptic", &C.haptic }, { "touchbuzz", &C.touchBuzz }, { "airdefer", &C.airDefer }, { "airmax", &C.airMax },
         { "early", &C.early }, { "pendmax", &C.pendMax }, { "strikewait", &C.strikeWait }, { "reclick", &C.reclick },
@@ -82,6 +86,13 @@ namespace
 
     std::atomic<int> g_On{ 1 };
     std::atomic<float> g_BodySink{ 0.04f };      // m: how far the drawn blade sinks into a body (WeaponCollision)
+    // [Gameplay] SwordBloodflyReach (2026-10-31, reported: the flies are small, the game's own swing reaches them from
+    // further): a bloodfly (arkSwarmAgentEntity) is touched this much further from its box, and a strike on one lets the
+    // game's attack hit the others within it of the contact as well. And the nests (reported: never touched): an entity
+    // named "...nest..." is a target whatever its size, by its box.
+    std::atomic<float> g_FlyReach{ 0.3f };
+    constexpr uint32_t kSwarmAgentVt = 0x1C44CE8;   // arkSwarmAgentEntity
+    std::unordered_map<void*, int> g_NestCache;    // entity -> 1 a nest by its name, 0 not (names are read once)
 
     // ---- reading the game's entities from the Present thread: everything through SEH, nothing trusted ----
     bool SafeCopy(void* dst, const void* src, size_t n)
@@ -112,11 +123,39 @@ namespace
         float mn[3] = {}, mx[3] = {}, vol = 0;   // local box (scaled)
         float org[3] = {}, axis[9] = {};          // the entity's pose, refreshed every frame
         bool skel = false;                        // struck by its skeleton (sk, refreshed every frame), not the box
+        int kind = 0;                             // 1 a bloodfly (a swarm agent: struck within SwordBloodflyReach), 2 a bloodfly nest
         int sk = -1;                              // index in g_Skels
     };
     struct BoundsCache { void* model; bool ok; float mn[3], mx[3]; };
     std::unordered_map<void*, BoundsCache> g_Bounds;
     std::vector<Target> g_Targets;
+    // The entities near the eye that are NOT targets, with why (2026-10-31: for a swing that met nothing -- what was
+    // actually there, so a nest or anything else the blade passes through without striking shows in the log)
+    struct Skipped { void* ent = nullptr; float org[3] = {}, axis[9] = {}, mn[3] = {}, mx[3] = {}; bool box = false; const char* why = ""; };
+    std::vector<Skipped> g_Skipped;
+    void NoteSkipped(const Target& t, bool box, const char* why, const float* eye, float reach)
+    {
+        if (g_Skipped.size() >= 64) return;
+        const float d[3] = { t.org[0] - eye[0], t.org[1] - eye[1], t.org[2] - eye[2] };
+        if (!box && d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > reach * reach) return;
+        Skipped s; s.ent = t.ent; memcpy(s.org, t.org, 12); memcpy(s.axis, t.axis, 36); s.box = box; s.why = why;
+        if (box) { memcpy(s.mn, t.mn, 12); memcpy(s.mx, t.mx, 12); }
+        g_Skipped.push_back(s);
+    }
+    //! squared distance from p to a box (local frame org / axis, extents mn..mx); no box: to the origin
+    float BoxDist2(const float* org, const float* axis, const float* mn, const float* mx, bool box, const float* p)
+    {
+        const float d[3] = { p[0] - org[0], p[1] - org[1], p[2] - org[2] };
+        if (!box) return d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        float s = 0;
+        for (int r = 0; r < 3; r++)
+        {
+            const float l = d[0] * axis[3 * r] + d[1] * axis[3 * r + 1] + d[2] * axis[3 * r + 2];
+            const float o = l < mn[r] ? mn[r] - l : l > mx[r] ? l - mx[r] : 0.f;
+            s += o * o;
+        }
+        return s;
+    }
     std::vector<NpcSkel::Skel> g_Skels;           // this frame's skeletons, Target::sk indexes them
     double g_LastScan = -1;
 
@@ -187,7 +226,7 @@ namespace
     //! is furniture-sized or the player stands in it (the body's own models).
     void ScanTargets(const float eye[3], bool log)
     {
-        g_Targets.clear();
+        g_Targets.clear(); g_Skipped.clear();
         uint8_t* game = nullptr;
         if (!SafeCopy(&game, (void*)(GameInfo::Base() + kGamePtr), 8) || !game) return;
         uint8_t** table = (uint8_t**)(game + kEntTable);
@@ -206,9 +245,10 @@ namespace
             if (own) continue;
             Target t; t.ent = e;
             if (!SafeCopy(&t.vt, e, 8)) continue;
+            if (t.vt == GameInfo::Base() + kSwarmAgentVt) t.kind = 1;
             uint8_t hidden = 0; SafeCopy(&hidden, e + kEntHidden, 1);
-            if (hidden & 1) continue;
             if (!RefreshPose(t)) continue;
+            if (hidden & 1) { NoteSkipped(t, false, "hidden", eye, C.radius); continue; }
             if (const int wc = GpuTrace::WeaponClaim(t.org); wc >= 0)
             {   // drawn as part of a held weapon (its upgrades, the cartridge): the player's own
                 if (log) SafeCopy(&t.id, e + kEntId, 4);
@@ -216,13 +256,27 @@ namespace
                 continue;
             }
             const float d[3] = { t.org[0] - eye[0], t.org[1] - eye[1], t.org[2] - eye[2] };
-            if (Dot(d, d) > (C.radius + C.maxDim) * (C.radius + C.maxDim)) continue;
-            if (!EntityBox(e, t.mn, t.mx)) continue;
+            if (Dot(d, d) > (C.radius + C.worldDim) * (C.radius + C.worldDim)) continue;
+            if (!EntityBox(e, t.mn, t.mx)) { NoteSkipped(t, false, "no box (no render model bounds)", eye, C.radius); continue; }
             const float sx = t.mx[0] - t.mn[0], sy = t.mx[1] - t.mn[1], sz = t.mx[2] - t.mn[2];
             t.vol = sx * sy * sz;
             const float big = fmaxf(sx, fmaxf(sy, sz));
             SafeCopy(&t.id, e + kEntId, 4);
-            t.skel = NpcSkel::Get(e, g_Tmp) && g_Tmp.n >= (int)C.skelMin;
+            if (t.kind == 0)
+            {   // a bloodfly nest, by its name (not a nest keeper: a character)
+                auto nc = g_NestCache.find(e);
+                if (nc == g_NestCache.end())
+                {
+                    if (g_NestCache.size() > 4096) g_NestCache.clear();
+                    std::string nm = Collision::Name(e);
+                    for (char& ch : nm) ch = (char)tolower((unsigned char)ch);
+                    const int nest = nm.find("nest") != std::string::npos && nm.find("keeper") == std::string::npos ? 1 : 0;
+                    nc = g_NestCache.emplace(e, nest).first;
+                    if (nest) LOGI("SwordContact: a bloodfly nest in reach: {} {:.2f} x {:.2f} x {:.2f} m -- struck by its box", Collision::Describe(e), sx, sy, sz);
+                }
+                if (nc->second) t.kind = 2;
+            }
+            t.skel = t.kind == 0 && NpcSkel::Get(e, g_Tmp) && g_Tmp.n >= (int)C.skelMin;
             const char* why = nullptr;
             float w[3];
             if (t.skel)
@@ -239,12 +293,22 @@ namespace
             else
             {
                 if (big < 0.02f) why = "tiny";
-                else if (big > C.maxDim || t.vol > C.maxVol) why = "too big";
+                else if (big > C.worldDim) why = "a piece of the level";
                 else if (InBox(t, eye, 0.05f) || InBox(t, player, 0.05f)) why = "the player is inside it";
                 const float c[3] = { 0.5f * (t.mn[0] + t.mx[0]), 0.5f * (t.mn[1] + t.mx[1]), 0.5f * (t.mn[2] + t.mx[2]) };
                 for (int k = 0; k < 3; k++) w[k] = t.org[k] + c[0] * t.axis[k] + c[1] * t.axis[3 + k] + c[2] * t.axis[6 + k];
-                const float dc[3] = { w[0] - eye[0], w[1] - eye[1], w[2] - eye[2] };
-                if (!why && Dot(dc, dc) > C.radius * C.radius) continue;
+                // reach: the box's nearest point to the eye (a big one's centre can be far while its side is at hand)
+                float near2 = 0;
+                {
+                    const float de[3] = { eye[0] - t.org[0], eye[1] - t.org[1], eye[2] - t.org[2] };
+                    for (int r = 0; r < 3; r++)
+                    {
+                        const float l = Dot(de, t.axis + 3 * r);
+                        const float o = l < t.mn[r] ? t.mn[r] - l : l > t.mx[r] ? l - t.mx[r] : 0.f;
+                        near2 += o * o;
+                    }
+                }
+                if (!why && near2 > C.radius * C.radius) continue;
             }
             if (log)
             {
@@ -256,6 +320,7 @@ namespace
                      t.vol, okx, xr[0], xr[1], xr[2], why ? " -- skipped: " : "", why ? why : "");
             }
             if (!why) g_Targets.push_back(t);
+            else if (strcmp(why, "the player is inside it") != 0) NoteSkipped(t, true, why, eye, C.radius);
             if (g_Targets.size() >= 256) break;
         }
         if (log) LOGI("swordscan: {} entities in the table, {} targets within {:.1f} m", seen, g_Targets.size(), C.radius);
@@ -606,6 +671,11 @@ void SwordContact::SetBodySink(float m)
     g_BodySink = fminf(0.15f, fmaxf(0.f, m));
     LOGI("SwordContact: with WeaponCollision the blade sinks {:.0f} cm into a body before it stops", g_BodySink.load() * 100.f);
 }
+void SwordContact::SetBloodflyReach(float m)
+{
+    g_FlyReach = fminf(1.f, fmaxf(0.f, m));
+    LOGI("SwordContact: the blade touches a bloodfly from {:.0f} cm away, and a strike on one lets the attack hit the others near it", g_FlyReach.load() * 100.f);
+}
 void SwordContact::SetEnabled(int on) { g_On = on; Reset(); LOGI("SwordContact: {}", on ? "on (the blade strikes what it touches)" : "off"); }
 int SwordContact::Enabled() { return g_On.load(); }
 
@@ -728,7 +798,7 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             for (int i = 0; i < n; i++)
             {
                 const float e = tg.skel && tg.sk >= 0 ? SkelEntry(g_Skels[tg.sk], g_Prev[i], cur[i], C.bladeR, nullptr)
-                                                      : SegEntry(tg, g_Prev[i], cur[i], C.bladeR);
+                                                      : SegEntry(tg, g_Prev[i], cur[i], C.bladeR + (tg.kind == 1 ? g_FlyReach.load() : 0.f));
                 if (e < 0.f) continue;
                 float d[3]; Sub(cur[i], g_Prev[i], d);
                 const float rel[3] = { d[0] - pd[0], d[1] - pd[1], d[2] - pd[2] };
@@ -775,10 +845,23 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             MeleeAim::HitBox hb; HitBoxOf(tg, hb); MeleeAim::AddHitBox(hb);
             // ...and the character whose sword, hat or arm guard the blade met first
             uint32_t ownerId = 0;
-            if (!tg.skel)
+            const bool small = tg.mx[0] - tg.mn[0] <= C.maxDim && tg.mx[1] - tg.mn[1] <= C.maxDim && tg.mx[2] - tg.mn[2] <= C.maxDim && tg.vol <= C.maxVol;
+            if (!tg.skel && small)
                 for (const Target& ch : g_Targets)
                     if (ch.skel && ch.sk >= 0 && SkelDist(g_Skels[ch.sk], bestPt) < C.attach)
                     { MeleeAim::HitBox h2; HitBoxOf(ch, h2); MeleeAim::AddHitBox(h2); ownerId = ch.id; g_Attach++; break; }
+            int flies = 0;
+            if (tg.kind == 1)
+            {   // a bloodfly: the game's attack may hit the others near the contact too (its own swing reaches them)
+                const float r = g_FlyReach.load() + 0.5f;
+                for (const Target& fl : g_Targets)
+                {
+                    if (fl.kind != 1 || fl.ent == tg.ent) continue;
+                    const float d[3] = { fl.org[0] - bestPt[0], fl.org[1] - bestPt[1], fl.org[2] - bestPt[2] };
+                    if (Dot(d, d) > r * r) continue;
+                    MeleeAim::HitBox h3; HitBoxOf(fl, h3); MeleeAim::AddHitBox(h3); flies++;
+                }
+            }
             MeleeAim::SetContactSweep(bestPt, bestVel);
             const float f[3] = { bestPt[0] - eye[0], bestPt[1] - eye[1], bestPt[2] - eye[2] };
             const float fl = Len(f);
@@ -810,9 +893,50 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
             else if (MeleeAim::SlashRunning()) { g_TapUntil = t + 0.9; g_Queued++; how = MeleeAim::HitThisSlash() ? "queued: the running Slash already hit" : "queued: the running Slash's window has closed"; }
             else { if (C.early > 0.5f && !kill) MeleeAim::RequestOpen(C.pendMax); o.tap = true; g_Taps++; awaitSlash(); how = kill ? "clicks the attack: the STEALTH KILL on offer" : "clicks a Slash"; }
             LOGI("SwordContact: CONTACT {} {}{} at ({:.2f},{:.2f},{:.2f}), {:.2f} m from the eye, blade {:.2f} m/s (hand peak {:.2f} m/s over {:.2f} m) at {:.0f}% of the frame: {}",
-                 tg.skel ? "BODY" : fmt::format("box {:.2f}x{:.2f}x{:.2f}", tg.mx[0] - tg.mn[0], tg.mx[1] - tg.mn[1], tg.mx[2] - tg.mn[2]), Collision::Describe(tg.ent),
-                 ownerId ? fmt::format(" (held by / on the body of {:#x}: it too)", ownerId) : std::string(),
+                 tg.skel ? "BODY" : fmt::format("{} {:.2f}x{:.2f}x{:.2f}", tg.kind == 1 ? "bloodfly" : tg.kind == 2 ? "NEST" : "box", tg.mx[0] - tg.mn[0], tg.mx[1] - tg.mn[1], tg.mx[2] - tg.mn[2]),
+                 Collision::Describe(tg.ent),
+                 ownerId ? fmt::format(" (held by / on the body of {:#x}: it too)", ownerId) : flies ? fmt::format(" (and {} more bloodflies near it)", flies) : std::string(),
                  bestPt[0], bestPt[1], bestPt[2], fl, bestSpeed, g_HandPeak, g_HandPath, bestT * 100.f, how);
+        }
+    }
+
+    // A swing that touched nothing: what the blade passed closest to, targets and not (with why), for the log -- so what
+    // the blade meets without striking (a nest, a piece of the level...) can be told
+    {
+        static bool active = false, touched = false; static int ns = 0; static float pts[48][3][3];
+        static double logAt = -10; static int logs = 0;
+        if (g_SwingOk && g_HandSpeed >= C.hitHand * 0.8f)
+        {
+            if (!active) { active = true; touched = false; ns = 0; }
+            if (ns < 48) { memcpy(pts[ns][0], cur[0], 12); memcpy(pts[ns][1], cur[n / 2], 12); memcpy(pts[ns][2], cur[n - 1], 12); ns++; }
+        }
+        if (active && best >= 0) touched = true;
+        if (active && g_HandSpeed < C.rearmHand)
+        {
+            active = false;
+            if (!touched && ns > 0 && logs < 300 && t - logAt > 1.5)
+            {
+                std::vector<std::pair<float, std::string>> found;
+                auto minDist = [&](auto&& d2) { float m = 1e9f; for (int s = 0; s < ns; s++) for (int k = 0; k < 3; k++) m = fminf(m, d2(pts[s][k])); return sqrtf(m); };
+                for (const Target& tg : g_Targets)
+                {
+                    const float d = tg.skel && tg.sk >= 0 ? minDist([&](const float* p) { const float sd = SkelDist(g_Skels[tg.sk], p); return sd * sd; })
+                                                          : minDist([&](const float* p) { return BoxDist2(tg.org, tg.axis, tg.mn, tg.mx, true, p); });
+                    if (d < 0.6f) found.push_back({ d, fmt::format("{} -- a target ({}), missed by {:.0f} cm", Collision::Describe(tg.ent), tg.skel ? "its bones" : "its box", d * 100.f) });
+                }
+                for (const Skipped& sk : g_Skipped)
+                {
+                    const float d = minDist([&](const float* p) { return BoxDist2(sk.org, sk.axis, sk.mn, sk.mx, sk.box, p); });
+                    if (d < 0.6f) found.push_back({ d, fmt::format("{} -- NOT a target: {}, {:.0f} cm from the blade{}", Collision::Describe(sk.ent), sk.why, d * 100.f,
+                                                                 sk.box ? fmt::format(" (box {:.2f} x {:.2f} x {:.2f})", sk.mx[0] - sk.mn[0], sk.mx[1] - sk.mn[1], sk.mx[2] - sk.mn[2]) : std::string(" (its origin)")) });
+                }
+                std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                std::string s;
+                for (size_t i = 0; i < found.size() && i < 4; i++) s += fmt::format("{}[{}] {}", i ? "  " : "", i + 1, found[i].second);
+                logAt = t; logs++;
+                LOGI("SwordContact: a swing (hand peak {:.2f} m/s over {:.2f} m) touched nothing: {}", g_HandPeak, g_HandPath,
+                     found.empty() ? std::string("no entity within 60 cm of the blade (the level's own walls and floors are not entities)") : s);
+            }
         }
     }
 
