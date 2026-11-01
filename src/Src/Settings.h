@@ -34,6 +34,7 @@ namespace Settings
     float KnockoutRadius();                       //!< [Gameplay] KnockoutRadius: m around the head's centre (MeleeAim)
     float HudScale();
     float HudResolution();                        //!< [Performance] HudResolution: the HUD panel's resolution, 0.25..1 of the picture's per side (ScreenMode)
+    bool HudSkipEmpty();                          //!< [Performance] HudSkipEmpty: the HUD panel only where it shows something (ScreenMode)
     bool ScreenSpaceShadows();                    //!< [Display] ScreenSpaceShadows (ScreenShadows)
     float ScreenSpaceShadowLength();
     int ScreenSpaceShadowSteps();

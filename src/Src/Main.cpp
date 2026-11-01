@@ -186,6 +186,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     }
     if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     if (has({ "hudresolution" })) ScreenMode::SetHudResolution(Settings::HudResolution());
+    if (has({ "hudskipempty" })) ScreenMode::SetHudSkipEmpty(Settings::HudSkipEmpty());
     if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
     if (has({ "outofviewmask" })) FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
@@ -256,6 +257,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     ScreenMode::SetHudResolution(Settings::HudResolution());
+    ScreenMode::SetHudSkipEmpty(Settings::HudSkipEmpty());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     StereoSync::SetReuse(Settings::StereoReuse());   // before StereoSync::Install (experimental)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install

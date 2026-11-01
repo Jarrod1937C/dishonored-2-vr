@@ -35,6 +35,8 @@ namespace
     // [Performance] HudResolution (2026-11-01): the HUD panel's swapchain at this share of the picture's size per side
     // (the panel shader averages the source pixels each one covers); same place, same size in the view
     std::atomic<float> g_HudRes{ 1.f };
+    // [Performance] HudSkipEmpty (2026-11-01): the panel trimmed to what it shows (XRPanelLayer::trim)
+    std::atomic<bool> g_HudTrim{ true };
     // [Display] HudMarkers 1 (2026-10-31, reported: the alert markers in the right direction but at the HUD's depth, not
     // over the guards' heads): the markers the game placed this tick (MarkerProjHook: their HUD pixels and distance),
     // in batches -- one game tick's calls come together -- tagged with the newest main view then. PlayHud lifts each
@@ -705,6 +707,12 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
         p.nHoles = used;
         if (used) g_MarkPanels++;
     }
+    p.trim = g_HudTrim.load();
+    if (p.trim && p.nHoles < 8)
+    {   // the cluster the watch shows (and keeps on against the player's HUD setting): not on the panel as well
+        float r[4];
+        if (WristHud::ClusterHole(tw, th, r)) { for (int k = 0; k < 4; k++) p.holes[p.nHoles][k] = r[k]; p.nHoles++; }
+    }
     xr.SetPanelLayer(1, p);
     g_HudPanels++;
 }
@@ -797,6 +805,11 @@ void ScreenMode::SetHud(bool on, float dist, float scale, float markerSize)
     g_HudOn = on; g_HudDist = std::clamp(dist, 0.5f, 10.f); g_HudScale = std::clamp(scale, 0.3f, 1.f); g_MarkBox = std::clamp(markerSize, 0.f, 0.25f);
     LOGI("ScreenMode: stereo HUD {} ({:.1f} m, {:.0f} % of the view's width: HudScale)", on ? "on one panel for both eyes (StereoHud = 1)" : "in each eye's picture (StereoHud = 0)",
          g_HudDist.load(), g_HudScale.load() * 100.f);
+}
+void ScreenMode::SetHudSkipEmpty(bool on)
+{
+    g_HudTrim = on;
+    LOGI("ScreenMode: the HUD panel {} (HudSkipEmpty)", on ? "only where it shows something, none when empty" : "always whole");
 }
 void ScreenMode::SetHudResolution(float share)
 {

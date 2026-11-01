@@ -741,6 +741,132 @@ struct FpsPanel
     void Release() { ReleaseD3d(); ReleaseGdi(); failed = false; }
 } g_Fps;
 
+// ---- the HUD panel trimmed to what it shows ([Performance] HudSkipEmpty; XRPanelLayer::trim) ----
+// Each frame the panel's source is reduced on the GPU to a 64 x 64 grid: a cell is 1 when any pixel in it (every
+// second one each way, holes left out) has alpha. The grid is read back a few frames later (staging ring, never
+// waited for). Cells seen in the last 0.3 s make the area shown: nothing = no layer at all (no draw, nothing for the
+// compositor to blend), else only that rectangle of the panel (plus a cell round it) is submitted, at the same place.
+// Until the first grid arrives (or after the source changes size) the whole panel is shown. A new element shows a
+// few frames late (the read-back's delay); nothing is ever cut that has alpha.
+const char* kOccHlsl = R"(
+struct V { float4 p : SV_Position; float2 uv : TEXCOORD0; };
+V vs(uint id : SV_VertexID)
+{
+    V o; float2 t = float2((id << 1) & 2, id & 2);
+    o.uv = t; o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
+    return o;
+}
+cbuffer C : register(b0) { float4 crop; float4 grid; float4 holes[8]; };   // crop: x y w h (px); grid: cells x, y, step (px)
+Texture2D tx : register(t0);
+float4 ps(V i) : SV_Target
+{
+    float2 cell = crop.zw / grid.xy;
+    float2 o = crop.xy + floor(i.p.xy) * cell;
+    int nx = (int)ceil(cell.x / grid.z), ny = (int)ceil(cell.y / grid.z);
+    float m = 0;
+    [loop] for (int y = 0; y < ny; y++)
+    {
+        [loop] for (int x = 0; x < nx; x++)
+        {
+            float2 px = o + float2(x, y) * grid.z;
+            bool hole = false;
+            [unroll] for (int k = 0; k < 8; k++)
+                if (px.x >= holes[k].x && px.y >= holes[k].y && px.x < holes[k].z && px.y < holes[k].w) hole = true;
+            if (!hole) m = max(m, tx.Load(int3(px, 0)).a);
+        }
+    }
+    return float4(m > 0.5 / 255 ? 1 : 0, 0, 0, 1);
+}
+)";
+struct PanelOccupancy
+{
+    static constexpr UINT kGrid = 64, kRing = 3;
+    Pass pass;
+    ID3D11Device* dev = nullptr;
+    ID3D11Texture2D* rt = nullptr; ID3D11Texture2D* stage[kRing] = {}; bool pending[kRing] = {}; UINT next = 0;
+    double seen[kGrid * kGrid] = {};       // when each cell last had something (NowSec), 0 = never
+    bool known = false;                    // a grid has been read for this source size
+    unsigned srcW = 0, srcH = 0;
+    unsigned long long frames = 0, skipped = 0, cropped = 0; double areaSum = 0, lastLog = 0;
+
+    void Reset() { memset(seen, 0, sizeof seen); known = false; for (bool& p : pending) p = false; }
+    void Release()
+    {
+        pass.Release();
+        if (rt) rt->Release(); rt = nullptr;
+        for (auto& s : stage) { if (s) s->Release(); s = nullptr; }
+        dev = nullptr; Reset();
+    }
+    bool Ensure(ID3D11Device* d)
+    {
+        if (dev != d) { Release(); dev = d; }
+        if (rt) return true;
+        D3D11_TEXTURE2D_DESC td = {}; td.Width = kGrid; td.Height = kGrid; td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8_UNORM; td.SampleDesc = { 1, 0 }; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET;
+        if (FAILED(d->CreateTexture2D(&td, nullptr, &rt))) { rt = nullptr; return false; }
+        td.Usage = D3D11_USAGE_STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        for (auto& s : stage) if (FAILED(d->CreateTexture2D(&td, nullptr, &s))) { s = nullptr; Release(); dev = d; return false; }
+        return true;
+    }
+    //! this frame's grid made and queued; the grids that are ready read. False = not available (show the whole panel).
+    bool Update(ID3D11Device* d, ID3D11DeviceContext* ctx, const XRPanelLayer& l)
+    {
+        if (!l.srv || !Ensure(d) || !pass.Init(d, kOccHlsl, "panel occupancy", 160)) return false;
+        if (l.srcW != srcW || l.srcH != srcH) { srcW = l.srcW; srcH = l.srcH; Reset(); }
+        float k[40] = { l.crop[0], l.crop[1], l.crop[2], l.crop[3], (float)kGrid, (float)kGrid, 2.f, 0.f };
+        for (int i = 0; i < std::min(l.nHoles, 8); i++) for (int j = 0; j < 4; j++) k[8 + i * 4 + j] = l.holes[i][j];
+        if (!pass.Run(d, ctx, rt, kGrid, kGrid, DXGI_FORMAT_UNKNOWN, k, l.srv, "panel occupancy")) return false;
+        if (pending[next]) Read(ctx, next, true);            // the ring is full: this one is read (or dropped) first
+        ctx->CopyResource(stage[next], rt); pending[next] = true;
+        next = (next + 1) % kRing;
+        for (UINT i = 0; i < kRing; i++) { const UINT s = (next + i) % kRing; if (pending[s] && !Read(ctx, s, false)) break; }   // oldest first
+        return true;
+    }
+    bool Read(ID3D11DeviceContext* ctx, UINT s, bool drop)
+    {
+        D3D11_MAPPED_SUBRESOURCE m = {};
+        const HRESULT hr = ctx->Map(stage[s], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+        if (hr == DXGI_ERROR_WAS_STILL_DRAWING) { if (drop) pending[s] = false; return false; }
+        pending[s] = false;
+        if (FAILED(hr)) return false;
+        const double now = NowSec();
+        for (UINT y = 0; y < kGrid; y++)
+        {
+            const uint8_t* row = (const uint8_t*)m.pData + (size_t)y * m.RowPitch;
+            for (UINT x = 0; x < kGrid; x++) if (row[x] > 127) seen[y * kGrid + x] = now;
+        }
+        ctx->Unmap(stage[s], 0);
+        if (!known) LOGI("XRSession: HUD panel: its occupied area is known (HudSkipEmpty): empty frames are skipped, others cropped to it");
+        known = true;
+        return true;
+    }
+    //! the cells to show: false = none (no layer); x0..x1, y0..y1 in cells (exclusive end), a cell round them added
+    bool Area(int& x0, int& y0, int& x1, int& y1) const
+    {
+        const double now = NowSec();
+        x0 = y0 = (int)kGrid; x1 = y1 = 0;
+        for (int y = 0; y < (int)kGrid; y++)
+            for (int x = 0; x < (int)kGrid; x++)
+                if (seen[y * kGrid + x] > 0 && now - seen[y * kGrid + x] < 0.3)
+                { x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x + 1); y1 = std::max(y1, y + 1); }
+        if (x1 <= x0 || y1 <= y0) return false;
+        x0 = std::max(0, x0 - 1); y0 = std::max(0, y0 - 1); x1 = std::min((int)kGrid, x1 + 1); y1 = std::min((int)kGrid, y1 + 1);
+        return true;
+    }
+    void Note(bool skip, double area)
+    {
+        frames++; if (skip) skipped++; else if (area < 0.999) { cropped++; areaSum += area; }
+        const double now = NowSec();
+        if (lastLog <= 0) lastLog = now;
+        if (now - lastLog >= 60.0 && frames)
+        {
+            LOGI("XRSession: HUD panel over the last minute (HudSkipEmpty): {:.0f} % of frames empty (no layer), {:.0f} % cropped (to {:.0f} % of its area on average), {:.0f} % whole",
+                 100.0 * skipped / frames, 100.0 * cropped / frames, cropped ? 100.0 * areaSum / cropped : 0.0, 100.0 * (frames - skipped - cropped) / frames);
+            frames = skipped = cropped = 0; areaSum = 0; lastLog = now;
+        }
+    }
+} g_Occ;
+
 // ---- the menu screen's surroundings (XRBackdrop) ----
 // Each eye's pixel is a direction in the room (its fov's tangents turned by its pose right now): a dark room-locked
 // environment by that direction (a faint horizon, the screen's light spilling round it), and where the frozen picture
@@ -2642,6 +2768,18 @@ bool XRSession::AppendPanelLayer(int slot, XrCompositionLayerQuad& quad)
     m_Panel[slot].alpha = 0;                // one frame: set again every frame it is wanted
     if ((!l.tex && !l.srv) || l.alpha <= 0.f || !g.context || !g.device || l.outW < 16 || l.outH < 16 || l.width <= 0.f || l.height <= 0.f)
         return false;
+    // the part of the panel submitted: all of it, but for a trimmed one (the HUD: HudSkipEmpty) only where it shows
+    // something -- or no layer at all when it shows nothing
+    int rx = 0, ry = 0, rw = (int)l.outW, rh = (int)l.outH;
+    if (l.trim && l.srv && g_Occ.Update(g.device, g.context, l) && g_Occ.known)
+    {
+        int x0, y0, x1, y1;
+        if (!g_Occ.Area(x0, y0, x1, y1)) { g_Occ.Note(true, 0); return false; }
+        const float sx = (float)l.outW / PanelOccupancy::kGrid, sy = (float)l.outH / PanelOccupancy::kGrid;
+        rx = (int)floorf(x0 * sx); ry = (int)floorf(y0 * sy);
+        rw = std::max(1, std::min((int)l.outW, (int)ceilf(x1 * sx)) - rx); rh = std::max(1, std::min((int)l.outH, (int)ceilf(y1 * sy)) - ry);
+        g_Occ.Note(false, (double)rw * rh / ((double)l.outW * l.outH));
+    }
     if (g.panelSwapchain[slot] && (g.panelW[slot] != l.outW || g.panelH[slot] != l.outH))
     {
         DestroySwapchain(g.panelSwapchain[slot]); g.panelImages[slot].clear();
@@ -2678,11 +2816,18 @@ bool XRSession::AppendPanelLayer(int slot, XrCompositionLayerQuad& quad)
     quad.space = l.head && g.viewSpace ? g.viewSpace : g.space;
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     quad.subImage.swapchain = g.panelSwapchain[slot];
-    quad.subImage.imageRect.offset = { 0, 0 };
-    quad.subImage.imageRect.extent = { (int)l.outW, (int)l.outH };
+    quad.subImage.imageRect.offset = { rx, ry };
+    quad.subImage.imageRect.extent = { rw, rh };
     quad.pose.orientation = { l.quat[0], l.quat[1], l.quat[2], l.quat[3] };
-    quad.pose.position = { l.pos[0], l.pos[1], l.pos[2] };
-    quad.size = { l.width, l.height };
+    {   // a part of the panel: its centre moved in the panel's plane (image y runs down, the quad's y up), same size per pixel
+        const float fw = (float)rw / (float)l.outW, fh = (float)rh / (float)l.outH;
+        const float v[3] = { (((float)rx + 0.5f * rw) / (float)l.outW - 0.5f) * l.width, -(((float)ry + 0.5f * rh) / (float)l.outH - 0.5f) * l.height, 0.f };
+        const float* q = l.quat;
+        const float t[3] = { q[1] * v[2] - q[2] * v[1] + q[3] * v[0], q[2] * v[0] - q[0] * v[2] + q[3] * v[1], q[0] * v[1] - q[1] * v[0] + q[3] * v[2] };
+        const float c[3] = { q[1] * t[2] - q[2] * t[1], q[2] * t[0] - q[0] * t[2], q[0] * t[1] - q[1] * t[0] };   // v + 2 q x (q x v + w v)
+        quad.pose.position = { l.pos[0] + v[0] + 2.f * c[0], l.pos[1] + v[1] + 2.f * c[1], l.pos[2] + v[2] + 2.f * c[2] };
+        quad.size = { l.width * fw, l.height * fh };
+    }
     m_PanelFrames[slot]++;
     return true;
 }
@@ -3186,6 +3331,7 @@ bool XRSession::Shutdown(bool processExit)
     g_Wrist.Release();
     g_PanelR.Release();
     g_Fps.Release();
+    g_Occ.Release();
     g_BackdropR.Release();
     ReleaseSnaps();
     for (Snap& s : m_Snap) s.valid = false;

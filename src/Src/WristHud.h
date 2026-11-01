@@ -67,6 +67,10 @@ namespace WristHud
     //! `inMenu`: the controls are in menu mode (nothing to show; the game's own menus are full-screen).
     void OnXrFrame(XRSession& xr, bool inMenu);
     void SetWatch(int on);                    //!< `vr wristhud 0|1`
+    //! The health / mana / item cluster's square in the HUD texture (tw x th, px: x0 y0 x1 y1) while the watch holds the
+    //! game's HUD on against the player's own setting (contextual / off): the watch shows it, so the HUD's panel leaves
+    //! it out (ScreenMode, HudSkipEmpty). False when the player's own HUD setting is always-on, or the watch is off.
+    bool ClusterHole(unsigned tw, unsigned th, float r[4]);
     int Watch();
     bool Set(const std::string& key, float v);   //!< `vr wristcfg <key> <value>`
     std::string Config();

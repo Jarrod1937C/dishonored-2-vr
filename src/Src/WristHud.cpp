@@ -692,3 +692,13 @@ std::string WristHud::WatchStatus()
                        g_WristOn.load(), g_Shown ? 1 : 0, g_Alpha, kWhy[g_WS.why], g_WS.facing, g_WS.gaze, g_WS.dist, g_WS.frames,
                        g_WS.shown, g_WS.submitted, g_UserHud, drawn, -g_W.back, g_W.side, g_W.along);
 }
+
+bool WristHud::ClusterHole(unsigned tw, unsigned th, float r[4])
+{
+    std::lock_guard lk(g_WM);
+    if (g_UserHud < 0 || g_UserHud == 2 || !tw || !th) return false;   // not held on by the watch: the HUD is as the player has it
+    float cx, cy, hs; ClusterCentre(tw, th, cx, cy, hs);
+    const float h = 0.5f * g_W.cropScale * hs;
+    r[0] = cx - h; r[1] = cy - h; r[2] = cx + h; r[3] = cy + h;
+    return true;
+}

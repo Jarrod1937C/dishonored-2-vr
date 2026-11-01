@@ -105,6 +105,7 @@ namespace
         { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr, true }, // GpuTrace: a depth copy that changes nothing is not made
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudresolution",      Kind::Float,  "1", 0.25f, 1, nullptr },   // ScreenMode: the HUD panel's resolution, share of the picture's per side
+        { "display.hudskipempty",       Kind::Bool,   "1", 0, 0, nullptr, true },     // ScreenMode / XRSession: the HUD panel only where it shows something
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr, true },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr, true },   // ViewMatrixHook: no game neck on top of the real one
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr, true },
@@ -456,6 +457,7 @@ float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjects
 int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
 float Settings::HudResolution() { return F("display.hudresolution"); }
+bool Settings::HudSkipEmpty() { return B("display.hudskipempty"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }

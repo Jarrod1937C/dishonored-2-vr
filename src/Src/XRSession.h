@@ -71,6 +71,8 @@ struct XRPanelLayer
     float holes[8][4] = {};                    //!< up to 8 source rectangles left out (x0, y0, x1, y1 px): shown on panels of their own
     int nHoles = 0;
     bool head = false;                         //!< quat / pos are in VIEW space (head-locked) instead of LOCAL
+    bool trim = false;                         //!< only the part with something in it is submitted, none when empty (one
+                                               //!< panel at a time: the HUD's; [Performance] HudSkipEmpty)
 };
 
 //! What surrounds the menu screen (XRSession::SubmitScreen): the projection layer, drawn for each eye from its pose

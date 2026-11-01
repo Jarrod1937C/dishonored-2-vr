@@ -53,6 +53,9 @@ namespace ScreenMode
     //! [Performance] HudResolution: the HUD panel's own resolution, a share of the picture's (0.25 / 0.5 / 0.75 / 1 per
     //! side). Where it sits and how big it looks do not change; the compositor gets a smaller image to draw. Any thread.
     void SetHudResolution(float share);
+    //! [Performance] HudSkipEmpty: the HUD's panel submitted only where it shows something (none when empty), and the
+    //! cluster the watch shows left out of it while the watch holds the HUD on (XRPanelLayer::trim). Any thread.
+    void SetHudSkipEmpty(bool on);
     //! [Display] HudMarkers: the game's markers over characters and objectives (a guard's awareness, objectives) placed
     //! for the headset's view instead of the flat game camera's (exe+0x6DDA50 hooked; installed once, from Main)
     void InstallMarkers(bool on);
