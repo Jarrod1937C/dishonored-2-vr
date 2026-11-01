@@ -8,6 +8,7 @@
 #include "Game.h"
 #include <cmath>
 #include <sstream>
+#include <detours/detours.h>
 
 namespace
 {
@@ -33,14 +34,19 @@ namespace
         // drawn grenade stays in the drawn hand until then. 3 = the hand where it is at the launch: the grenade is seen
         // in the hand until it leaves, no jump. 1 = the hand where it was at the release (it jumps back), 2 = as if it had
         // left at the release (it jumps ahead, through any wall in between), 0 = the game's (0.46 m ahead of the hand).
-        float peakWin = 0.10f, span = 0.02f, maxAge = 1.5f, inherit = 1.f, spawn = 3.f, teleport = 12.f;
+        float peakWin = 0.15f, span = 0.02f, maxAge = 1.5f, inherit = 1.f, spawn = 3.f, teleport = 20.f;
         float haptic = 1.f;
+        // 1 = a real throw (2026-11-01): the grenade leaves AT the trigger's release, from the hand, with the hand's
+        // velocity then -- the mod fires the throwable itself (ARK_MSG_WEAPON_FIRE) instead of waiting for the game's
+        // throw animation, which launched it 0.4-0.7 s later (in the user's logs) from wherever the hand had got to;
+        // the animation's own launch is then dropped. 0 = the game's timing (the velocity still the hand's).
+        float instant = 1.f;
     } C;
     struct Named { const char* name; float* v; };
     const Named kCfg[] = {
         { "gain", &C.gain }, { "maxspeed", &C.maxSpeed }, { "peakwin", &C.peakWin }, { "span", &C.span },
         { "maxage", &C.maxAge }, { "inherit", &C.inherit }, { "spawn", &C.spawn }, { "teleport", &C.teleport },
-        { "haptic", &C.haptic },
+        { "haptic", &C.haptic }, { "instant", &C.instant },
     };
 
     std::atomic<bool> g_On{ true };
@@ -65,12 +71,12 @@ namespace
 
     // ---- each hand's motion (render thread): [0] left (the grenade's), [1] right (GrabHand's throw) ----
     struct Sample { double t; float p[3]; };
-    constexpr int kHist = 32;
+    constexpr int kHist = 256;   // ~2 s at 120 Hz: the whole throw from the trigger's press (32 was ~0.3 s)
     struct History { Sample s[kHist]; int n = 0, head = -1; };
     History g_Hand[2];
     std::mutex g_HM;                // the samples: written by Tick (render thread), read by HandVelocity too
     unsigned g_Gen = 0;
-    bool g_PrevTrig = false; double g_TrigDownAt = -1;
+    bool g_PrevTrig = false; double g_TrigDownAt = -1, g_TrigDownXr = -1;
     // the player's own velocity, from its view origin (world, m/s)
     struct PSample { double t; float o[3]; };
     PSample g_P[16]; int g_PN = 0, g_PHead = -1;
@@ -78,7 +84,8 @@ namespace
 
     // ---- a release waiting for the game's throw (render thread -> game thread) ----
     std::mutex g_M;
-    struct Pending { bool valid = false; double t = 0; float vHand[3] = {}, vPlayer[3] = {}, pos[3] = {}; float speedXr = 0; bool havePos = false; double cook = 0; };
+    struct Pending { bool valid = false; double t = 0; float vHand[3] = {}, vPlayer[3] = {}, pos[3] = {}; float speedXr = 0; bool havePos = false; double cook = 0;
+                     double pressXr = -1; /*!< the trigger's press, XR time (the throw's window starts there) */ };
     Pending g_Pending;
     unsigned long long g_Releases = 0, g_Calls = 0, g_Applied = 0, g_NotGrenade = 0, g_NoRelease = 0, g_Stale = 0, g_Capped = 0;
     float g_LastGame[3] = {}, g_LastOut[3] = {}, g_LastDelay = 0, g_LastHand = 0;
@@ -89,8 +96,8 @@ namespace
     float g_TrackSpawn[3] = {}, g_TrackV[3] = {};
     std::atomic<float> g_TrackArm{ 4.f };
 
-    //! Fastest velocity (XR m/s) of a hand over the `peakWin` before `tEnd`, differences over >= `span`.
-    bool ReleaseVelocity(const History& h, double tEnd, float out[3], float& speed)
+    //! Fastest velocity (XR m/s) of a hand between `tStart` and `tEnd` (XR s), differences over >= `span`.
+    bool PeakVelocity(const History& h, double tStart, double tEnd, float out[3], float& speed)
     {
         speed = 0; out[0] = out[1] = out[2] = 0;
         if (h.n < 2) return false;
@@ -98,7 +105,8 @@ namespace
         for (int k = 0; k < h.n; k++)
         {
             const Sample& s = h.s[(h.head - k + kHist) % kHist];
-            if (s.t < tEnd - C.peakWin) break;
+            if (s.t > tEnd) continue;
+            if (s.t < tStart) break;
             for (int j = k + 1; j < h.n; j++)
             {
                 const Sample& o = h.s[(h.head - j + kHist) % kHist];
@@ -113,6 +121,8 @@ namespace
         }
         return any;
     }
+    //! ...over the `peakWin` before `tEnd`
+    bool ReleaseVelocity(const History& h, double tEnd, float out[3], float& speed) { return PeakVelocity(h, tEnd - C.peakWin, tEnd, out, speed); }
 
     // Called from the thunk at exe+0x63333C (game thread), before the real setter runs with the same arguments.
     void OnSetVelocity(void* ent, float* vel)
@@ -167,6 +177,86 @@ namespace
         track(spawn, v);
     }
     extern "C" void ThrowGestureOnSetVelocity(void* ent, float* vel) { OnSetVelocity(ent, vel); }
+
+    // ---- the real throw: the grenade fired at the trigger's release (C.instant) ----
+    // arkCpntWeaponThrowable::Throw exe+0x632F70 is the throwable's handler of ARK_MSG_WEAPON_FIRE (0xC8; registered
+    // by exe+0x633580 on the component's owner entity, through the thunk exe+0x633A60). Each call spawns a NEW
+    // projectile from the throwable's entity def (exe+0x63B5F0: [this+0x98]+0x10), so it can be fired at any moment.
+    // The game fires it from an animation event of the throw (the player state's event dispatcher exe+0x84BCA0 posts
+    // the event's message, here 0xC8, to the weapon) 0.3 s or more after the release. The mod posts the same message
+    // at the release (exe+0x8103F0(exe+0x810240(), 0xC8, the weapon entity's id): the queue the events use) and drops
+    // the animation's launch that follows (Throw hooked); the left hand's weapon models are hidden in between
+    // (BodyHide), so the grenade is not seen both in the hand and in the air.
+    constexpr uint32_t kThrow = 0x632F70, kMsgSystem = 0x810240, kMsgPostEmpty = 0x8103F0, kMsgWeaponFire = 0xC8;
+    constexpr uint32_t kInvLeftItem = 0x70, kItemCpnt = 0x10, kCpntOwner = 0x10, kEntId = 0xA8;
+    using FnThrow = uintptr_t (*)(void*, void*, void*, void*);
+    FnThrow g_RealThrow = nullptr;
+    std::mutex g_FireM;
+    bool g_FireWanted = false; double g_FireWantedAt = 0;   // render thread -> game thread
+    void* g_PostCpnt = nullptr; double g_PostedAt = -1; bool g_PostTaken = true;
+    double g_SkipUntil = 0, g_UnhideAt = 0; bool g_Hidden = false;
+    unsigned long long g_Instant = 0, g_AnimDropped = 0, g_PostFails = 0;
+
+    //! The left hand's throwable component (an arkCpntWeaponThrowable), or null. No C++ objects (__try).
+    uint8_t* LeftThrowable()
+    {
+        __try
+        {
+            const uintptr_t base = GameInfo::Base();
+            void* player = Game::LocalPlayer();
+            if (!player) return nullptr;
+            using Fn = uint8_t* (*)(void*, void*, int);
+            uint8_t* eq = ((Fn)(base + BodyHide::kGetComponent))(player, (void*)(base + BodyHide::kEquipCpntTypeInfo), 2);
+            if (!eq) return nullptr;
+            uint8_t* item = *(uint8_t**)(eq + kInvLeftItem);
+            if (!item) return nullptr;
+            uint8_t* c = *(uint8_t**)(item + kItemCpnt);
+            if (!c || *(uintptr_t*)c != base + BodyHide::kThrowableCpntVtable) return nullptr;
+            return c;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    bool PostFire(uint8_t* cpnt)
+    {
+        __try
+        {
+            const uintptr_t base = GameInfo::Base();
+            const uint8_t* owner = *(uint8_t**)(cpnt + kCpntOwner);
+            if (!owner) return false;
+            const uint32_t id = *(const uint32_t*)(owner + kEntId);
+            using FnSys = void* (*)();
+            void* sys = ((FnSys)(base + kMsgSystem))();
+            if (!sys) return false;
+            using FnPost = void (*)(void*, uint32_t, uint32_t);
+            ((FnPost)(base + kMsgPostEmpty))(sys, kMsgWeaponFire, id);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    uintptr_t ThrowHook(void* self, void* a, void* b, void* c)
+    {
+        const double now = QpcSec();
+        bool ours = false, drop = false;
+        {
+            std::lock_guard lk(g_FireM);
+            if (self == g_PostCpnt && !g_PostTaken && now - g_PostedAt < 0.5) { ours = true; g_PostTaken = true; g_SkipUntil = now + 2.0; }
+            else if (self == g_PostCpnt && now < g_SkipUntil) { drop = true; g_SkipUntil = 0; g_UnhideAt = now + 0.15; }
+        }
+        if (drop)
+        {
+            g_AnimDropped++;
+            LOGI("Throw: the throw animation's own launch dropped (the grenade left at the release)");
+            return 0;
+        }
+        if (ours)
+        {
+            g_Instant++;
+            if (!g_Hidden) { BodyHide::SetHideWeapon(0, true); g_Hidden = true; }
+            { std::lock_guard lk(g_FireM); g_UnhideAt = now + 1.5; }   // (the animation's launch shows it back sooner)
+            LOGI("Throw: fired at the release ({:.0f} ms after it)", (now - g_FireWantedAt) * 1000.0);
+        }
+        return g_RealThrow(self, a, b, c);
+    }
 
     //! Saves everything volatile (the caller was compiled against a three-store leaf), calls the C++ side with the
     //! same (rcx, rdx), restores, and jumps on to the real setter.
@@ -224,7 +314,40 @@ bool ThrowGesture::Install()
     FlushInstructionCache(GetCurrentProcess(), nullptr, 0);
     g_Installed = true;
     LOGI("ThrowGesture: the throw's velocity (exe+0x{:X}) redirected: grenades leave with the hand's velocity", kSite);
+    {   // the real throw (C.instant): Throw hooked, to drop the animation's launch after the mod's own at the release
+        const uint8_t* t = (const uint8_t*)(base + kThrow);
+        static const uint8_t kThrowBytes[] = { 0x40, 0x55, 0x57, 0x48, 0x8D, 0xAC, 0x24, 0x68 };
+        static const uint8_t kPostBytes[] = { 0x48, 0x83, 0xEC, 0x28, 0x45, 0x8B, 0xC8, 0x48 };
+        if ((t[0] != 0xE9 && memcmp(t, kThrowBytes, sizeof kThrowBytes)) || memcmp((const void*)(base + kMsgPostEmpty), kPostBytes, sizeof kPostBytes))
+            LOGI("ThrowGesture: arkCpntWeaponThrowable::Throw / the message post are not what they were measured to be: grenades keep the game's throw timing");
+        else
+        {
+            g_RealThrow = (FnThrow)(base + kThrow);
+            DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+            DetourAttach(&(PVOID&)g_RealThrow, (PVOID)&ThrowHook);
+            const LONG r = DetourTransactionCommit();
+            if (r != NO_ERROR) g_RealThrow = nullptr;
+            LOGI("ThrowGesture: a grenade leaves at the trigger's release (Throw exe+0x{:X} hooked: detour={})", kThrow, r);
+        }
+    }
     return true;
+}
+
+void ThrowGesture::GameTick()
+{
+    if (!g_RealThrow) return;
+    const double now = QpcSec();
+    bool want = false; double wantAt = 0;
+    {
+        std::lock_guard lk(g_FireM);
+        if (g_FireWanted) { want = true; wantAt = g_FireWantedAt; g_FireWanted = false; }
+        if (g_Hidden && g_UnhideAt > 0 && now > g_UnhideAt) { g_UnhideAt = 0; BodyHide::SetHideWeapon(0, false); g_Hidden = false; }
+    }
+    if (!want || now - wantAt > 0.3) return;
+    uint8_t* cpnt = LeftThrowable();
+    if (!cpnt) { g_PostFails++; LOGI("Throw: the release wanted the grenade fired, but the left hand holds no throwable now: the game's own launch"); return; }
+    { std::lock_guard lk(g_FireM); g_PostCpnt = cpnt; g_PostedAt = now; g_PostTaken = false; }
+    if (!PostFire(cpnt)) { g_PostFails++; std::lock_guard lk(g_FireM); g_PostTaken = true; LOGI("Throw: the fire message could not be posted: the game's own launch"); }
 }
 
 void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
@@ -239,7 +362,10 @@ void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
         {
             const XRHandPose& h = in.hand[i];
             History& H = g_Hand[i];
-            if (recentred || !h.valid || h.held) { H.n = 0; H.head = -1; }
+            if (recentred) { H.n = 0; H.head = -1; }
+            // an untracked or held-over pose adds no sample (it no longer empties the history: a moment's tracking loss
+            // in a fast throw lost the throw); a gap of more than 0.1 s makes no velocity (PeakVelocity)
+            else if (!h.valid || h.held) {}
             else if (H.head < 0 || t > H.s[H.head].t)
             {
                 H.head = (H.head + 1) % kHist; H.s[H.head] = { t, { h.posX, h.posY, h.posZ } }; if (H.n < kHist) H.n++;
@@ -265,10 +391,10 @@ void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
         else { g_PN = 0; g_PHead = -1; memset(g_PlayerVel, 0, 12); }
     }
     const double now = QpcSec();
-    if (triggerHeld && !g_PrevTrig) g_TrigDownAt = now;
+    if (triggerHeld && !g_PrevTrig) { g_TrigDownAt = now; g_TrigDownXr = t; }
     if (!triggerHeld && g_PrevTrig)
     {   // the release: the hand's velocity now, into the world as the hand is drawn
-        Pending p; p.valid = true; p.t = now; p.cook = g_TrigDownAt >= 0 ? now - g_TrigDownAt : 0;
+        Pending p; p.valid = true; p.t = now; p.cook = g_TrigDownAt >= 0 ? now - g_TrigDownAt : 0; p.pressXr = g_TrigDownXr;
         float vXr[3], speed = 0;
         { std::lock_guard lk(g_HM); ReleaseVelocity(g_Hand[0], t, vXr, speed); }
         float co[3], ca[9];
@@ -279,6 +405,9 @@ void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
         if (HandAimHook::ControllerPose(0, o, a)) { memcpy(p.pos, o, 12); p.havePos = true; }
         { std::lock_guard lk(g_M); g_Pending = p; }
         g_Releases++;
+        // a real throw: the grenade leaves now (the game thread fires it: GameTick)
+        if (C.instant >= 0.5f && g_RealThrow && g_On.load() && HandAimHook::Mode() >= 2 && BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable)
+        { std::lock_guard lk(g_FireM); g_FireWanted = true; g_FireWantedAt = now; }
         LOGI("Throw: left trigger released after {:.2f} s: hand {:.2f} m/s (xr {:.2f},{:.2f},{:.2f} -> world {:.2f},{:.2f},{:.2f}), player {:.2f} m/s, {} samples",
              p.cook, speed, vXr[0], vXr[1], vXr[2], p.vHand[0], p.vHand[1], p.vHand[2], Len(g_PlayerVel), g_Hand[0].n);
     }
@@ -350,6 +479,6 @@ std::string ThrowGesture::Stats()
     o << (g_On.load() ? "on" : "off") << " installed " << g_Installed << " releases " << g_Releases << " throws " << g_Calls
       << " byhand " << g_Applied << " notgrenade " << g_NotGrenade << " norelease " << g_NoRelease << " stale " << g_Stale
       << " capped " << g_Capped << " last game " << Len(g_LastGame) << " out " << Len(g_LastOut) << " hand " << g_LastHand
-      << " delay " << g_LastDelay;
+      << " delay " << g_LastDelay << " atrelease " << g_Instant << " animdropped " << g_AnimDropped << " postfails " << g_PostFails;
     return o.str();
 }

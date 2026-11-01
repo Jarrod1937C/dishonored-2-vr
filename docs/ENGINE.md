@@ -913,6 +913,15 @@ must come from the pose array ([NpcSkel.cpp](../src/Src/NpcSkel.cpp)).
   and the launch exe+0x639970 with speed 1.0. Holding the button only COOKS (`m_cookingStages` +0x258).
 - Measured: 17.2 m/s, 6 deg up, spawned 0.46 m ahead, launch 0.30 s after the release; flight has no drag. A grenade at
   your feet kills you even in god mode.
+- **What calls Throw** (2026-11-01): it is the throwable's handler of **ARK_MSG_WEAPON_FIRE (0xC8)**, registered by
+  exe+0x633580 on the component's owner entity (component+0x10) through the thunk exe+0x633A60 (0xC9
+  ARK_MSG_WEAPON_RELOAD -> exe+0x62BFE0 next to it). The throw ANIMATION fires it: the player state's animation-event
+  dispatcher exe+0x84BCA0 posts each event's message id (event+0x28 -> +0x08) to the weapon with exe+0x8103F0(queue
+  system exe+0x810240(), type, entity id) (payload-less post: exe+0x8112C0(sys+0xC8E8, type, 0, id)). Measured in the
+  user's logs: the launch 0.4-0.7 s after a short press's release (the wind-up first). **Each Throw spawns a new
+  projectile** from the throwable's entity def (exe+0x63B5F0: gameLocal vf+0x1C0 with [this+0x98]+0x10), so it can be
+  fired at any moment -- and a second call is a second grenade. The mod's real throw ([ThrowGesture.cpp](../src/Src/ThrowGesture.cpp))
+  posts 0xC8 at the trigger's release and drops the animation's launch that follows.
 
 ### 7.7 Placing mines and spring razors
 Not throwables: item component `arkCpntWeaponPlaceable`, states `PlaceWeapon` / `PlaceWeaponReady`.

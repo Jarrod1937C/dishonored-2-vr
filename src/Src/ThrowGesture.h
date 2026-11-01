@@ -18,14 +18,21 @@ struct XRInputState;
 //! capped at maxSpeed, and the spawn point the hand's position at the release.
 //!
 //! The release velocity is measured in the XR LOCAL space from the left controller's poses (display-time stamped,
-//! like the sword): the fastest velocity over the last `peakWin` seconds before the trigger opened -- people let go a
+//! like the sword): the fastest velocity over the last `peakWin` (0.15 s) before the trigger opened -- people let go a
 //! little after the peak, not at it -- and mapped into the world the way the hand itself is drawn (HandAimHook).
+//!
+//! A REAL throw (2026-11-01, throwcfg `instant` 1): hold the trigger, throw, let go -- the grenade leaves at that
+//! instant, from the hand. The game would launch it from its throw animation's event 0.4-0.7 s after the release
+//! (the user's logs: from wherever the hand had got to, with the hand already stopped); the mod fires it itself at the
+//! release and drops the animation's launch (see ThrowGesture.cpp, "the real throw").
 namespace ThrowGesture
 {
     bool Install();
     //! One tick, from KbmInject::Tick in PLAY mode (render thread). triggerHeld: the left trigger as it goes to the
     //! game (the RMB it holds).
     void Tick(const XRInputState& in, bool triggerHeld);
+    //! Game thread, once a frame (HandAimHook): fires a released grenade (the real throw)
+    void GameTick();
     //! Render thread, once per Present: logs the flight of the last thrown grenade (research / validation).
     void OnPresent();
     void SetEnabled(bool on);

@@ -2,6 +2,7 @@
 #include "HandAimHook.h"
 #include "Collision.h"
 #include "Roomscale.h"
+#include "ThrowGesture.h"
 #include "MeleeAim.h"
 #include "Holster.h"
 #include "GameInfo.h"
@@ -271,6 +272,7 @@ namespace
         BodyHide::Tick();                       // game thread, once per frame
         GunRay::Tick();                         // the gun ray's sweep: where the next shot would land
         Collision::Tick();                      // solid hands and weapons: what they meet this frame
+        ThrowGesture::GameTick();               // a grenade released this frame leaves now (the real throw)
         Roomscale::Tick();                      // the wall fade's ray: the head in a wall the character cannot enter
         MeleeAim::TickTakedown();               // is a stealth kill on offer (the blade then clicks the attack)
         Holster::Tick();                        // a weapon drawn from the hip / the back: the game's equip

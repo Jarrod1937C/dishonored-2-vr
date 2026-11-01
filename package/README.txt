@@ -126,7 +126,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Fist at your left shoulder ........ block (the right grip blocks too)
    Left trigger ...................... power or left-hand weapon (pistol, crossbow) - they fire
                                        where your hand points
-   Grenades / springrazors ........... hold the left trigger, throw with your hand, let go
+   Grenades / springrazors ........... hold the left trigger, throw, and let go: a grenade leaves
+                                       your hand at that moment, the way and as hard as it moved
    Right grip, pointing at something . take / use / open it (hold it to pick up a body).
                                        Holding an object: grip again = drop, right trigger = throw
                                        Carrying a body: grip again = put it down
