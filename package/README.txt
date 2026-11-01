@@ -104,7 +104,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  later, VR switches on by itself. If the connection drops while playing, VR should come back by
  itself when the headset reconnects.
 
- Recenter the view with your headset's own recenter (Quest: hold the Meta button).
+ Recenter the view with your headset's own recenter (Quest: hold the Meta button). Walking around
+ your room walks the character with you (Roomscale), so a recenter is rarely needed: the game's
+ collision stops the character at walls and furniture, and if your head goes on into a wall the
+ headset fades to dark blue (WallFade) until you step back out.
 
 
 ------------------------------------------------------------------------------------------------
@@ -145,6 +148,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        (hidden while the left trigger is held)
    Lean, peek, crouch for real ....... just do it with your body: the view follows your head.
                                        There is no lean button.
+   Walk around your room ............. the character walks with you (Roomscale); small leans
+                                       (under 10 cm) leave it where it is
 
  IN CUTSCENES
    Your head ......................... look around (the scene happens around you; a train or a

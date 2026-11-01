@@ -639,6 +639,18 @@ Player aim component (vtable exe+0x1C52BF8): `m_currentAimLocalDir` +0x20, `m_cu
 
 ---
 
+### 5.8 The player's movement (character proxy)
+- The player moves as a Havok character proxy: `arkCharacterProxy` (vtable exe+0x1AD26A0; a `hknpCharacterProxy`,
+  vtable exe+0x1EC32B0), owned by the player's physics object (`[physics+0x148]`). Each tick the player's physics
+  (exe+0x1B4760, called from exe+0x7FFFD0 in arkCpntPlayerPhysics' update) writes the tick's velocity to
+  **proxy+0xB0** and calls **`arkCharacterProxy::integrate` exe+0x85A40**(proxy, stepInfo, r8 = r13+0x970, r9, a 5th
+  argument on the stack); stepInfo = { start 0, end dt, **delta +0x08**, 1/delta +0x0C }. integrate moves the proxy with
+  collision (steps, slopes, sliding along walls): **position = proxy+0x80** (its transform's translation; += the
+  displacement at exe+0x8665FB), velocity written back at +0xB0. The caller then copies position / velocity to the
+  player's body (`[[physics+0x1F0]+0x60]`) and clamps the height (physics+0x60).
+- exe+0x85A40 has a single caller (exe+0x1B516D): it is the player's alone. The mod's Roomscale hooks it
+  ([Roomscale.cpp](../src/Src/Roomscale.cpp)).
+
 ## 6. Entities, components, models, joints
 
 ### 6.1 Entity layout

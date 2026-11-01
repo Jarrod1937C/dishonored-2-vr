@@ -57,6 +57,11 @@ namespace Settings
     bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
+    bool Roomscale();                             //!< [Controls] Roomscale: walking in the room walks the character (Roomscale)
+    bool WallFade();                              //!< [Controls] WallFade: the headset darkens with the head in a wall (Roomscale)
+    void WallFadeColor(float srgb[3]);            //!< [Controls] WallFadeColor: what it fades to (R,G,B 0-255 in the file)
+    float RoomscaleDeadzone();                    //!< [Controls] RoomscaleDeadzone: m (the ini says cm) before it follows
+    float RoomscaleMaxSpeed();                    //!< [Controls] RoomscaleMaxSpeed: m/s
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool SwipeDials();                            //!< [Gameplay] SwipeDials: slide a hand up / down a safe dial to turn it

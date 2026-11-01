@@ -69,6 +69,10 @@ namespace Collision
     //! The game's impulse message to an entity (only physics-driven ones take it), at a world point.
     void Push(void* ent, const float impulse[3], const float at[3]);
     bool HandsOn();
+    //! The nearest wall, floor, ceiling or moving part of the level (doors, lifts) from a to b -- what the sword's sweep
+    //! takes for the world (layers 0x27, flag 0x100000: no props, characters or invisible clips). true + its distance
+    //! from a. Game thread only (Roomscale's wall fade).
+    bool WorldRay(const float a[3], const float b[3], float& dist);
     bool WeaponsOn();
 
     //! Game thread, once a frame.

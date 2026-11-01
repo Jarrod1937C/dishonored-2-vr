@@ -189,8 +189,8 @@ V vs(uint id : SV_VertexID)
     return o;
 }
 Texture2D tx : register(t0); SamplerState sm : register(s0);
-cbuffer C : register(b0) { float4 k; };   // x: brightness (the fade back in after a menu)
-float4 ps(V i) : SV_Target { return float4(tx.Sample(sm, i.uv).rgb * k.x, 1); }
+cbuffer C : register(b0) { float4 k; };   // x: brightness (the fade back in after a menu); yzw: a colour added (a tinted fade)
+float4 ps(V i) : SV_Target { return float4(tx.Sample(sm, i.uv).rgb * k.x + k.yzw, 1); }
 // The warp: the image was rendered in a frame turned from the eye's (a stereo eye turned to its frustum's centre, a mono
 // image on canted displays). Each eye pixel is a direction in the eye's frame (its native fov, linear in tan), taken into
 // the render frame by the rows r0..r2 and looked up in the image at its own tans; what it does not cover is black.
@@ -203,14 +203,14 @@ float4 psw(V i) : SV_Target
     const float2 s = d.xy / -d.z;
     const float2 uv = float2((s.x - srcT.x) / (srcT.y - srcT.x), (srcT.z - s.y) / (srcT.z - srcT.w));
     if (any(uv < 0) || any(uv > 1)) return float4(0, 0, 0, 1);
-    return float4(tx.SampleLevel(sm, uv, 0).rgb * kw.x, 1);
+    return float4(tx.SampleLevel(sm, uv, 0).rgb * kw.x + kw.yzw, 1);
 }
 )";
 struct Blitter
 {
     bool failed = false, ready = false;
     ID3D11VertexShader* vs = nullptr; ID3D11PixelShader* ps = nullptr; ID3D11SamplerState* smp = nullptr;
-    ID3D11RasterizerState* rs = nullptr; ID3D11Buffer* cb = nullptr; float cbScale = -1.f;
+    ID3D11RasterizerState* rs = nullptr; ID3D11Buffer* cb = nullptr; float cbK[4] = { -1.f, 0, 0, 0 };
     ID3D11PixelShader* psw = nullptr; ID3D11Buffer* cbw = nullptr;   // the warp (psw)
     unsigned long long warps = 0;
     ID3DDeviceContextState* state = nullptr;
@@ -282,10 +282,23 @@ struct Blitter
         return false;
     }
     bool Draw(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Texture2D* source, ID3D11Texture2D* dst, float x, float y, float rw, float rh,
-              DXGI_FORMAT swapFmt = DXGI_FORMAT_UNKNOWN, float scale = 1.f)
+              DXGI_FORMAT swapFmt = DXGI_FORMAT_UNKNOWN, float scale = 1.f, const float* tint = nullptr)
     {
         if (!Copy(dev, ctx, source)) return false;
-        return DrawSrv(dev, ctx, srv, dst, x, y, rw, rh, swapFmt, scale, true);
+        return DrawSrv(dev, ctx, srv, dst, x, y, rw, rh, swapFmt, scale, true, tint);
+    }
+    //! A colour to add (sRGB 0..1, null = none) as the render target needs it: linear for an sRGB view, as is otherwise
+    static void TintFor(DXGI_FORMAT rtv, const float* tint, float out[3])
+    {
+        out[0] = out[1] = out[2] = 0.f;
+        if (!tint) return;
+        const bool srgb = rtv == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || rtv == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || rtv == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
+                       || rtv == DXGI_FORMAT_R16G16B16A16_FLOAT || rtv == DXGI_FORMAT_R11G11B10_FLOAT;   // (float targets hold linear light too)
+        for (int c = 0; c < 3; c++)
+        {
+            const float v = tint[c] < 0.f ? 0.f : tint[c] > 1.f ? 1.f : tint[c];
+            out[c] = srgb ? (v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f)) : v;
+        }
     }
     //! This frame's picture into the blitter's own shader-readable copy (src / srv).
     bool Copy(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Texture2D* source)
@@ -307,15 +320,18 @@ struct Blitter
         ctx->CopyResource(src, source);
         return true;
     }
-    //! Draw `view` into `dst` covering the pixel rect (x, y, w, h) at brightness `scale`; `clear` = black first.
+    //! Draw `view` into `dst` covering the pixel rect (x, y, w, h) at brightness `scale` (+ `tint`, already x the fade's
+    //! share, sRGB); `clear` = black first.
     bool DrawSrv(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* view, ID3D11Texture2D* dst, float x, float y,
-                 float rw, float rh, DXGI_FORMAT swapFmt, float scale, bool clear)
+                 float rw, float rh, DXGI_FORMAT swapFmt, float scale, bool clear, const float* tint = nullptr)
     {
         if (!Init(dev) || !view) return false;
         ID3D11RenderTargetView* rtv = nullptr;
+        float add[3];
         {
             D3D11_TEXTURE2D_DESC dd = {}; dst->GetDesc(&dd);
             D3D11_RENDER_TARGET_VIEW_DESC rd = {}; rd.Format = ViewFormat(dd.Format, swapFmt); rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+            TintFor(rd.Format, tint, add);
             const HRESULT hr = dev->CreateRenderTargetView(dst, &rd, &rtv);
             if (FAILED(hr) || !rtv) return Fail("render target view", hr);
         }
@@ -323,7 +339,7 @@ struct Blitter
         { const HRESULT hr = ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1); if (FAILED(hr) || !c1) { rtv->Release(); return Fail("context1", hr); } }
         ID3DDeviceContextState* prev = nullptr;
         c1->SwapDeviceContextState(state, &prev);
-        if (scale != cbScale) { const float k[4] = { scale, 0, 0, 0 }; c1->UpdateSubresource(cb, 0, nullptr, k, 0, 0); cbScale = scale; }
+        { const float k[4] = { scale, add[0], add[1], add[2] }; if (memcmp(k, cbK, 16)) { c1->UpdateSubresource(cb, 0, nullptr, k, 0, 0); memcpy(cbK, k, 16); } }
         const float black[4] = { 0, 0, 0, 1 };
         if (clear) c1->ClearRenderTargetView(rtv, black);
         c1->OMSetRenderTargets(1, &rtv, nullptr);
@@ -348,13 +364,15 @@ struct Blitter
     //! Draw `view` over the WHOLE of `dst`, warped: dst is an eye's native fov (dstT: tans L R U D), the view an image
     //! rendered at srcT in a frame turned from the eye's; `m` (3x3, rows) takes an eye direction into that frame.
     bool DrawWarp(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* view, ID3D11Texture2D* dst, const float dstT[4],
-                  const float srcT[4], const float m[9], DXGI_FORMAT swapFmt, float scale)
+                  const float srcT[4], const float m[9], DXGI_FORMAT swapFmt, float scale, const float* tint = nullptr)
     {
         if (!Init(dev) || !view) return false;
         ID3D11RenderTargetView* rtv = nullptr;
         D3D11_TEXTURE2D_DESC dd = {}; dst->GetDesc(&dd);
+        float add[3];
         {
             D3D11_RENDER_TARGET_VIEW_DESC rd = {}; rd.Format = ViewFormat(dd.Format, swapFmt); rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+            TintFor(rd.Format, tint, add);
             const HRESULT hr = dev->CreateRenderTargetView(dst, &rd, &rtv);
             if (FAILED(hr) || !rtv) return Fail("render target view (warp)", hr);
         }
@@ -362,7 +380,7 @@ struct Blitter
         { const HRESULT hr = ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1); if (FAILED(hr) || !c1) { rtv->Release(); return Fail("context1", hr); } }
         ID3DDeviceContextState* prev = nullptr;
         c1->SwapDeviceContextState(state, &prev);
-        const float k[24] = { scale, 0, 0, 0, dstT[0], dstT[1], dstT[2], dstT[3], srcT[0], srcT[1], srcT[2], srcT[3],
+        const float k[24] = { scale, add[0], add[1], add[2], dstT[0], dstT[1], dstT[2], dstT[3], srcT[0], srcT[1], srcT[2], srcT[3],
                               m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0 };
         c1->UpdateSubresource(cbw, 0, nullptr, k, 0, 0);
         c1->OMSetRenderTargets(1, &rtv, nullptr);
@@ -388,7 +406,7 @@ struct Blitter
     {
         for (IUnknown* u : std::initializer_list<IUnknown*>{ vs, ps, psw, smp, rs, cb, cbw, state, srv, src }) if (u) u->Release();
         vs = nullptr; ps = nullptr; psw = nullptr; smp = nullptr; rs = nullptr; cb = nullptr; cbw = nullptr; state = nullptr; srv = nullptr; src = nullptr; ready = false;
-        cbScale = -1.f; failed = false;
+        cbK[0] = -1.f; failed = false;
     }
 } g_Blit;
 
@@ -1834,6 +1852,7 @@ void XRSession::SubmitFrame(ID3D11Texture2D* source, int onlyEye)
     if (m_ResyncEyes) { onlyEye = -1; m_ResyncEyes = false; }
     const float fk = m_FrameFade * m_FrameDim;
     const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
+    for (int c = 0; c < 3; c++) { m_DrawTint[c] = m_FrameTint[c] * (1.f - fade); m_FrameTint[c] = 0.f; }   // (DimFrameTo)
     m_FrameFade = 1.f; m_FrameDim = 1.f;
 
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
@@ -2130,7 +2149,7 @@ bool XRSession::DrawInto(int i, ID3D11Texture2D* source, ID3D11ShaderResourceVie
         const float m[9] = { 1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
                              2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
                              2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y) };
-        drawn = v && g_Blit.DrawWarp(g.device, g.context, v, dst, dstT, tan, m, (DXGI_FORMAT)m_SwapFormat, fade);
+        drawn = v && g_Blit.DrawWarp(g.device, g.context, v, dst, dstT, tan, m, (DXGI_FORMAT)m_SwapFormat, fade, m_DrawTint);
         if (drawn)
         {   // claimed at the eye's orientation when it was rendered: render * conj(warp)
             const float* q = pose; const float c[4] = { -warp[0], -warp[1], -warp[2], warp[3] };
@@ -2140,8 +2159,8 @@ bool XRSession::DrawInto(int i, ID3D11Texture2D* source, ID3D11ShaderResourceVie
         }
     }
     else
-        drawn = srv ? g_Blit.DrawSrv(g.device, g.context, srv, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade, true)
-                    : g_Blit.Draw(g.device, g.context, source, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade);
+        drawn = srv ? g_Blit.DrawSrv(g.device, g.context, srv, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade, true, m_DrawTint)
+                    : g_Blit.Draw(g.device, g.context, source, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade, m_DrawTint);
     if (!drawn) return false;
     m_LastEyeTex[i] = dst;
     m_ContentX[i] = (int)lroundf(x0); m_ContentY[i] = (int)lroundf(y0);
@@ -2204,6 +2223,7 @@ bool XRSession::SubmitPair(ID3D11Texture2D* right, const float quat[4], const fl
     if (!m_PairStaged || m_PairId != pair || !m_PairSrv) return false;
     const float fk = m_FrameFade * m_FrameDim;
     const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
+    for (int c = 0; c < 3; c++) { m_DrawTint[c] = m_FrameTint[c] * (1.f - fade); m_FrameTint[c] = 0.f; }   // (DimFrameTo)
     m_FrameFade = 1.f; m_FrameDim = 1.f; m_ResyncEyes = false; m_RenderPoseValid = false;
     const float poseR[7] = { quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2] };
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
@@ -2569,7 +2589,7 @@ void XRSession::SubmitScreen(const XRBackdrop& b)
         m_EyePoseValid[i] = false;          // that eye's last image is no longer a picture of the game
     }
     m_RenderPoseValid = false;
-    m_FrameFade = 1.f; m_FrameDim = 1.f;
+    m_FrameFade = 1.f; m_FrameDim = 1.f; m_FrameTint[0] = m_FrameTint[1] = m_FrameTint[2] = 0.f;
     m_Wrist.alpha = 0;                      // no watch over a menu
     for (int s = 1; s < kXrPanels; s++) m_Panel[s].alpha = 0;   // nor the wheel's panel, nor the HUD's markers
     m_ScreenFrames++;

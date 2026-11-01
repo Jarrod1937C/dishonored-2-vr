@@ -44,6 +44,7 @@
 #include "GunRay.h"
 #include "BinkVideo.h"
 #include "Settings.h"
+#include "Roomscale.h"
 #include "Seeds.h"
 #include "SysInfo.h"
 #include "Version.h"
@@ -157,6 +158,8 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "knockoutsoundvolume" })) MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
     if (has({ "finisheranimations" })) MeleeAim::SetFinishers(Settings::FinisherAnimations());
     if (has({ "physicalcrouch", "physicalcrouchdepth" })) KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
+    if (has({ "roomscale", "roomscaledeadzone", "roomscalemaxspeed" })) Roomscale::SetParams(Settings::Roomscale(), Settings::RoomscaleDeadzone(), Settings::RoomscaleMaxSpeed());
+    if (has({ "wallfade", "wallfadecolor" })) { float c[3]; Settings::WallFadeColor(c); Roomscale::SetWallFade(Settings::WallFade(), c); }
     if (has({ "handcollision" })) Collision::SetHands(Settings::HandCollision());
     if (has({ "weaponcollision" })) Collision::SetWeapons(Settings::WeaponCollision());
     if (has({ "pushobjects" })) Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
@@ -214,6 +217,8 @@ static DWORD WINAPI InitThread(LPVOID)
     BinkVideo::SetSkipIntros(Settings::SkipIntroVideos());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());
     KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
+    Roomscale::SetParams(Settings::Roomscale(), Settings::RoomscaleDeadzone(), Settings::RoomscaleMaxSpeed());
+    { float c[3]; Settings::WallFadeColor(c); Roomscale::SetWallFade(Settings::WallFade(), c); }
     Collision::SetHands(Settings::HandCollision());
     Collision::SetWeapons(Settings::WeaponCollision());
     SwordContact::SetBodySink(Settings::SwordBodyDepth());
@@ -275,6 +280,7 @@ static DWORD WINAPI InitThread(LPVOID)
     PlayerViewHook::Install();
     PlayerViewHook::SetEnabled(false);   // the local player never goes through that builder
     ViewMatrixHook::Install();
+    Roomscale::Install();            // walking in the room walks the character: its character proxy follows the head
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
     ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s
     ScreenShadows::InstallSmallObjects();   // ScreenSpaceShadowSmallObjects: small moving objects out of the sun's maps

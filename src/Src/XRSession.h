@@ -274,7 +274,10 @@ public:
     void SetFrameFade(float k) { m_FrameFade = k; }
     //! A further dimming of this frame's game picture, on top of the fade (0 = black): the snap-turn blank
     //! (KbmInject::SnapBlankFade). One frame, the lowest asked wins.
-    void DimFrame(float k) { if (k < m_FrameDim) m_FrameDim = k; }
+    void DimFrame(float k) { if (k < m_FrameDim) { m_FrameDim = k; m_FrameTint[0] = m_FrameTint[1] = m_FrameTint[2] = 0.f; } }
+    //! The same towards a colour instead of black (sRGB 0..1; the wall fade's dark blue, Roomscale::WallFade): the
+    //! picture is `k` of itself plus (1 - k) of the colour. One frame; the lowest asked wins, with its colour.
+    void DimFrameTo(float k, const float srgb[3]) { if (k < m_FrameDim) { m_FrameDim = k; memcpy(m_FrameTint, srgb, 12); } }
     //! The frozen backdrop: every play frame offers its picture (SubmitFrame keeps one every ~0.2 s, half size, with
     //! the pose it was seen from). Freeze picks the newest one at least minAge seconds old (the menu was already
     //! drawn over the last few frames before it was recognised) and at most maxAge; false = none. Unfreeze lets the
@@ -444,6 +447,8 @@ private:
     unsigned long long m_PanelFrames[kXrPanels] = {}, m_ScreenFrames = 0, m_Snapshots = 0;
     bool AppendPanelLayer(int slot, XrCompositionLayerQuad& quad);
     float m_FrameFade = 1.f, m_FrameDim = 1.f;
+    float m_FrameTint[3] = {};     //!< DimFrameTo's colour (sRGB), for this frame
+    float m_DrawTint[3] = {};      //!< what DrawInto adds to the picture: that colour x (1 - the frame's brightness)
     bool m_ResyncEyes = false;
     // the frozen-backdrop ring (FreezeBackdrop): half-size pictures with the pose and tan extents they were seen with
     struct Snap { float quat[4] = { 0, 0, 0, 1 }; float tan[4] = {}; long long qpc = 0; bool valid = false;

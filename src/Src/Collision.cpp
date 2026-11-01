@@ -1003,6 +1003,14 @@ bool Collision::HandsOn() { return g_Hands.load(); }
 bool Collision::WeaponsOn() { return g_Weapons.load(); }
 bool Collision::Touching(int hand) { return g_Touch[hand & 1].load(); }
 
+bool Collision::WorldRay(const float a[3], const float b[3], float& dist)
+{
+    RayHit h;
+    if (!CastRay(a, b, 0x27, 0x100000, nullptr, 0, h)) return false;
+    dist = h.dist;
+    return true;
+}
+
 void Collision::Tick()
 {
     if (!g_Hands.load() && !g_Weapons.load()) return;

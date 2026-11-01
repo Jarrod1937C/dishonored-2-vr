@@ -11,6 +11,7 @@
 #include "XRProbe.h"
 #include "WristHud.h"
 #include "KbmInject.h"
+#include "Roomscale.h"
 #include "ScreenMode.h"
 #include "StereoSync.h"
 #include "StereoTaa.h"
@@ -464,6 +465,8 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                     if (!imageFlat) g_Session.DimFrame(KbmInject::SnapBlankFade(rp.pair ? rp.pair : rp.serial));
                 }
                 else g_Session.DimFrame(KbmInject::SnapBlankFade(0));
+                // the head in a wall the character could not walk into (Roomscale, WallFade): darker, then black
+                if (!imageFlat) { float c[3]; Roomscale::WallFadeColor(c); g_Session.DimFrameTo(Roomscale::WallFade(), c); }
                 if (g_DropThis && !imageFlat)
                 {   // a disagreement of the eye phasing (above): nothing new to the headset this frame
                     g_Session.DropStagedPair(); g_Session.ResubmitLast();

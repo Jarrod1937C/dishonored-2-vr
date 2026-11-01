@@ -24,6 +24,7 @@
 #include "MeleeAim.h"
 #include "Collision.h"
 #include "Holster.h"
+#include "Roomscale.h"
 #include "SwordContact.h"
 #include "NpcSkel.h"
 #include "SwordGesture.h"
@@ -1199,6 +1200,7 @@ namespace
             f << "meleeaim " << MeleeAim::Stats() << "\n";
             f << "sword " << SwordGesture::Stats() << "\n";
             f << "collision " << Collision::Stats() << "\n";
+            f << Roomscale::Stats() << "\n";
             f << "holster " << Holster::Stats() << "\n";
             f << "swordhit " << SwordContact::Stats() << "\n";
             f << "throw " << ThrowGesture::Stats() << "\n";

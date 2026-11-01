@@ -40,6 +40,11 @@ namespace
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr, true },
         { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: crouching for real crouches the character
         { "controls.physicalcrouchdepth", Kind::Float, "30", 10, 80, nullptr }, // cm the head goes under its standing height to crouch
+        { "controls.roomscale",         Kind::Bool,   "1", 0, 0, nullptr },   // Roomscale: walking in the room walks the character
+        { "controls.wallfade",          Kind::Bool,   "1", 0, 0, nullptr },   // Roomscale: the headset darkens with the head in a wall
+        { "controls.wallfadecolor",     Kind::Text,   "20,34,82", 0, 0, nullptr, true },   // its colour, R,G,B 0-255
+        { "controls.roomscaledeadzone", Kind::Float,  "10", 0, 50, nullptr, true },   // cm the head may be off the character before it follows
+        { "controls.roomscalemaxspeed", Kind::Float,  "3", 0.5f, 10, nullptr, true }, // m/s at most
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
         { "gameplay.swordbladedamage",  Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: the blade's contact strikes by itself (experimental)
         { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
@@ -335,6 +340,18 @@ float Settings::SwordBloodflyReach() { return F("gameplay.swordbloodflyreach"); 
 float Settings::KnockoutRadius() { return F("gameplay.knockoutradius"); }
 bool Settings::SkipIntroVideos() { return B("advanced.skipintrovideos"); }
 bool Settings::PhysicalCrouch() { return B("controls.physicalcrouch"); }
+bool Settings::Roomscale() { return B("controls.roomscale"); }
+bool Settings::WallFade() { return B("controls.wallfade"); }
+void Settings::WallFadeColor(float srgb[3])
+{
+    int r = 20, g = 34, b = 82;
+    const std::string v = V("controls.wallfadecolor");
+    if (sscanf_s(v.c_str(), "%d , %d , %d", &r, &g, &b) != 3) { LOGI("Settings: WallFadeColor = '{}' is not R,G,B: 20,34,82", v); r = 20; g = 34; b = 82; }
+    const int c[3] = { r, g, b };
+    for (int i = 0; i < 3; i++) srgb[i] = std::min(255, std::max(0, c[i])) / 255.f;
+}
+float Settings::RoomscaleDeadzone() { return F("controls.roomscaledeadzone") / 100.f; }
+float Settings::RoomscaleMaxSpeed() { return F("controls.roomscalemaxspeed"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
@@ -483,6 +500,8 @@ namespace
         { "controllerpitchoffset", "0" },
         { "physicalcrouch", "1" },
         { "physicalcrouchdepth", "30" },
+        { "roomscale", "1" },
+        { "wallfade", "1" },
         { "swordgestures", "1" },
         { "swordbladedamage", "1" },
         { "sworddamagescale", "1" },

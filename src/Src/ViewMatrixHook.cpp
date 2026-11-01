@@ -14,6 +14,7 @@
 #include "BodyHide.h"
 #include "StereoTaa.h"
 #include "ScreenMode.h"
+#include "Roomscale.h"
 #include <detours/detours.h>
 
 namespace
@@ -720,6 +721,7 @@ namespace
                 {   // reference = eye midpoint, so per-eye offsets stay symmetric around the game camera
                     const VRRuntime::HeadPose& mid = ps.head;
                     memcpy(g_RefPos, mid.valid ? mid.pos : hp.pos, 12); g_RefValid = true;
+                    Roomscale::Reset();
                 }
                 float o[3], a[9]; memcpy(o, org, 12); memcpy(a, axis, 36);
                 if (HandAimHook::FpAnchor() == 2) HandAimHook::RealCamera(o, a);   // scene view carries the controller pose; render from the real camera
@@ -829,7 +831,27 @@ namespace
                             AxisFromAngles(atan2f(a[1], a[0]) * kR2D - hy, 0.f, 0.f, tmpAxis);
                         }
                     }
+                    float uo[3] = {};   // the head's offset from the game's eye (the head midpoint: an eye's own pose is IPD/2 aside)
+                    {
+                        const float sc = g_Scale.load() * hostScale;
+                        float moved[2];
+                        if (Roomscale::Enabled() && Roomscale::TakeMoved(moved) && sc > 1e-3f)
+                        {   // Roomscale: the character was moved under the head by `moved` (world) since the last view; the XR
+                            // reference moves with it, so the view stays where the head is (the eye `o` carries the move)
+                            const float ry = atan2f(tmpAxis[1], tmpAxis[0]), c = cosf(ry), s = sinf(ry);
+                            const float lx = c * moved[0] + s * moved[1], ly = -s * moved[0] + c * moved[1];   // the room's frame (id axes)
+                            g_RefPos[0] += -ly / sc; g_RefPos[2] += -lx / sc;                                   // id -> XR (VRMath::XrToId)
+                        }
+                        float ua[9]; memcpy(ua, tmpAxis, 36);
+                        VRMath::ComposeHead(ps.head.valid ? ps.head.pos : hp.pos, q0, g_RefPos, sc, uo, ua);
+                        // for the character to follow (not in a takedown's view or a host)
+                        if (Roomscale::Enabled()) Roomscale::Publish(uo, !g_AnimViewOn.load() && !KbmInject::Possessing());
+                    }
                     o[2] += CrouchLift(org, snap) * hostScale;     // PhysicalCrouch: the real head's height (see CrouchLift)
+                    {   // the wall fade: the head where the view puts it, against the game's own eye
+                        const float head[3] = { o[0] + uo[0], o[1] + uo[1], o[2] + uo[2] };
+                        Roomscale::PublishHead(org, head);
+                    }
                     if (sync)
                     {
                         g_Pair.keep = true; memcpy(g_Pair.o, o, 12); memcpy(g_Pair.a, a, 36); memcpy(g_Pair.tmpAxis, tmpAxis, 36);
