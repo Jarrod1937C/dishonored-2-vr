@@ -20,7 +20,9 @@ namespace
         bool hidden = false;       //!< @hidden in the ini: most players never need to change it (else @user)
     };
     // The keys the file may hold ("group.key": the group here is only part of the name -- the file's own groups,
-    // [Main.Sub], are found by the key alone). hidden: @hidden in the shipped file, else @user.
+    // [Main.Sub], are found by the key alone). hidden: @hidden in the shipped file, else @user. The core VR features
+    // (physical sword, reticles, roomscale, hand interactions, ...) are hidden too: always on, as for a native VR game;
+    // their other value is left in for troubleshooting and development only. Their defaults here are the VR ones.
     // A missing key takes its default; the shipped DishonoredVR.ini lists them all, with
     // the same defaults, except WriteStatusFile ([Logging.Files]), which defaults to 1 here (a development setup has no ini)
     // and is 0 in the file the players get.
@@ -31,9 +33,9 @@ namespace
         { "controls.snapturnblank",     Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: black during a snap turn
         { "controls.snapturnblankopacity", Kind::Float, "0.5", 0, 1, nullptr, true },   // how dark: 1 = black
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
-        { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index" },
+        { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index", true },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
-        { "controls.fingertracking",    Kind::Bool,   "1", 0, 0, nullptr },   // Index layout: the drawn fingers follow the controller's
+        { "controls.fingertracking",    Kind::Bool,   "1", 0, 0, nullptr, true },   // Index layout: the drawn fingers follow the controller's
         { "controls.gripthresholdleft", Kind::Float,  "0.6", 0.05f, 0.95f, nullptr },   // KbmInject: the left grip's press point
         { "controls.gripthresholdright", Kind::Float, "0.45", 0.05f, 0.95f, nullptr },  // ...the right grip's (more sensitive)
         { "controls.gripthreshold",     Kind::Float,  "0.6", 0.05f, 0.95f, nullptr, true },   // (old: both grips) used when the two above are absent
@@ -45,44 +47,44 @@ namespace
         { "controls.padreleaseforce",   Kind::Float,  "0.3", 0.02f, 1, nullptr, true },
         { "controls.padcenterradius",   Kind::Float,  "0.45", 0.1f, 0.9f, nullptr, true },
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr, true },
-        { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: crouching for real crouches the character
+        { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr, true },   // KbmInject: crouching for real crouches the character
         { "controls.physicalcrouchdepth", Kind::Float, "30", 10, 80, nullptr }, // cm the head goes under its standing height to crouch
-        { "controls.roomscale",         Kind::Bool,   "1", 0, 0, nullptr },   // Roomscale: walking in the room walks the character
+        { "controls.roomscale",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Roomscale: walking in the room walks the character
         { "controls.wallfade",          Kind::Bool,   "1", 0, 0, nullptr },   // Roomscale: the headset darkens with the head in a wall
         { "controls.wallfadecolor",     Kind::Text,   "20,34,82", 0, 0, nullptr, true },   // its colour, R,G,B 0-255
         { "controls.roomscaledeadzone", Kind::Float,  "10", 0, 50, nullptr, true },   // cm the head may be off the character before it follows
         { "controls.roomscalemaxspeed", Kind::Float,  "3", 0.5f, 10, nullptr, true }, // m/s at most
-        { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr },
-        { "gameplay.swordbladedamage",  Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: the blade's contact strikes by itself (experimental)
+        { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr, true },
+        { "gameplay.swordbladedamage",  Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: the blade's contact strikes by itself
         { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
-        { "gameplay.handcollision",     Kind::Bool,   "0", 0, 0, nullptr },   // Collision: the drawn hands stop at the world (experimental)
-        { "gameplay.weaponcollision",   Kind::Bool,   "0", 0, 0, nullptr },   // Collision: the held weapons too, and at characters' bodies
+        { "gameplay.handcollision",     Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: the drawn hands stop at the world
+        { "gameplay.weaponcollision",   Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: the held weapons too, and at characters' bodies
         { "gameplay.swordbodydepth",    Kind::Float,  "4", 0, 15, nullptr, true },  // cm the blade sinks into a body before it stops
-        { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: loose props are pushed
-        { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr },   // Collision: a hand pushing a door opens it
-        { "gameplay.knockoutblow",      Kind::Bool,   "0", 0, 0, nullptr },   // MeleeAim: a blow to the back of the head knocks a guard out (experimental)
+        { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: loose props are pushed
+        { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
+        { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
         { "gameplay.knockoutspeed",     Kind::Float,  "4.5", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
         { "gameplay.swordbloodflyreach", Kind::Float, "0.3", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
         { "gameplay.knockoutangle",     Kind::Float,  "60", 10, 120, nullptr, true },  // MeleeAim: deg off straight behind the target a knockout is possible from
         { "gameplay.knockoutradius",    Kind::Float,  "0.3", 0.1f, 0.8f, nullptr, true },   // MeleeAim: m around the head's centre a blow must land
         { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
         { "advanced.skipintrovideos",   Kind::Bool,   "0", 0, 0, nullptr },   // BinkVideo: the start-up videos end at once
-        { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
-        { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision + KbmInject: grab and pull drawers / cabinets open
-        { "gameplay.physicalpickup",    Kind::Bool,   "0", 0, 0, nullptr },   // items taken by hand, stored behind the back (experimental)
-        { "gameplay.mouthpotions",      Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: a grip at the mouth drinks (left health, right Addermire)
-        { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a safe dial to turn it
-        { "gameplay.slidewindows",      Kind::Bool,   "1", 0, 0, nullptr },   // Collision: slide a hand up / down a window to raise / lower it
-        { "gameplay.holsterweapons",    Kind::Bool,   "1", 0, 0, nullptr },   // Holster: left trigger at the left hip = pistol, behind the back = crossbow
+        { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr, true },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
+        { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision + KbmInject: grab and pull drawers / cabinets open
+        { "gameplay.physicalpickup",    Kind::Bool,   "1", 0, 0, nullptr, true },   // items taken by hand, stored behind the back
+        { "gameplay.mouthpotions",      Kind::Bool,   "1", 0, 0, nullptr, true },   // KbmInject: a grip at the mouth drinks (left health, right Addermire)
+        { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a safe dial to turn it
+        { "gameplay.slidewindows",      Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a window to raise / lower it
+        { "gameplay.holsterweapons",    Kind::Bool,   "1", 0, 0, nullptr, true },   // Holster: left trigger at the left hip = pistol, behind the back = crossbow
         { "gameplay.pushstrength",      Kind::Float,  "1", 0.1f, 10, nullptr, true },   // the hand's effective mass, kg
-        { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr },
-        { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr },
-        { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr },
+        { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr, true },
+        { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },
+        { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.minimalreticle",     Kind::Bool,   "0", 0, 0, nullptr },   // Reticle: only a small dot where each hand points
         { "display.reticleopacity",     Kind::Float,  "0.5", 0.05f, 1, nullptr },
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr, true },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
-        { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.screenspaceshadows", Kind::Bool,   "0", 0, 0, nullptr },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
         { "display.screenspaceshadowlength", Kind::Float, "3", 0.2f, 20, nullptr, true },   // m towards the sun
         { "display.screenspaceshadowsteps", Kind::Float, "24", 4, 64, nullptr, true },
@@ -104,16 +106,16 @@ namespace
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr, true },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr, true },   // ViewMatrixHook: no game neck on top of the real one
-        { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.wristhudsize",       Kind::Float,  "8.5", 4, 15, nullptr },
         // 0 mono, 1 synchronised stereo, 2 the alternating stereo of 1.0 (whose ini had 1 / true for that one: it gets
         // the synchronised one now, which is what 1 meant to the player)
         { "display.stereo3d",           Kind::Choice, "1", 0, 0, "0|1|2|true|false|on|off|yes|no", true },   // hidden: the mod is made for 1
         { "display.renderscale",        Kind::Float,  "1", 0, 2, nullptr },
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
-        { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
-        { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: no depth of field in VR
+        { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: no depth of field in VR
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
         { "display.fog",                Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no fog in VR
         { "display.fogmaps",            Kind::Text,   "void", 0, 0, nullptr, true },   // VrTweaks: ...except in maps named so
@@ -141,12 +143,12 @@ namespace
         { "display.fpscounter",         Kind::Choice, "off", 0, 0, "off|top-left|top-right|bottom-left|bottom-right" },   // XRSession: a frame-rate counter in the headset
         { "display.fpscountersize",     Kind::Float,  "1", 0.5f, 2, nullptr, true },   // ...its size (1 = 20 cm wide at 1 m)
         { "display.fpscounterangle",    Kind::Float,  "15", 5, 30, nullptr, true },    // ...degrees from the view's centre, sideways (0.8 of it up / down)
-        { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
         { "display.menubackground",     Kind::Float,  "0.22", 0, 1, nullptr },
-        { "display.cutsceneletterbox",  Kind::Bool,   "0", 0, 0, nullptr },
-        { "display.cutscenearms",       Kind::Bool,   "0", 0, 0, nullptr },
+        { "display.cutsceneletterbox",  Kind::Bool,   "0", 0, 0, nullptr, true },
+        { "display.cutscenearms",       Kind::Bool,   "0", 0, 0, nullptr, true },
         { "cheats.unlockeverything",    Kind::Bool,   "0", 0, 0, nullptr },
         // the parts of it, each on its own (TestAids::Unlock)
         { "cheats.unlockoutsidersmark", Kind::Bool,   "0", 0, 0, nullptr },
@@ -560,55 +562,27 @@ namespace
         { "smoothturnspeed", "120" },
         { "snapturnangle", "20" },
         { "snapturnblank", "1" },
-        { "layout", "index" },
         { "quickslotholdtime", "0.5" },
         { "haptics", "1" },
         { "gripthresholdleft", "0.6" },
         { "gripthresholdright", "0.45" },
-        { "fingertracking", "1" },
         { "controllerpitchoffset", "0" },
-        { "physicalcrouch", "1" },
         { "physicalcrouchdepth", "30" },
-        { "roomscale", "1" },
         { "wallfade", "1" },
-        { "swordgestures", "1" },
-        { "swordbladedamage", "1" },
         { "sworddamagescale", "1" },
-        { "finisheranimations", "0" },
-        { "knockoutblow", "1" },
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
-        { "handcollision", "1" },
-        { "weaponcollision", "1" },
-        { "pushobjects", "1" },
-        { "pushdoors", "1" },
-        { "grabobjects", "1" },
-        { "pulltoopen", "1" },
-        { "physicalpickup", "1" },
-        { "mouthpotions", "1" },
-        { "swipedials", "1" },
-        { "slidewindows", "1" },
-        { "throwgestures", "1" },
-        { "holsterweapons", "1" },
         { "renderscale", "1" },
         { "disablemetaasw", "1" },
-        { "disablemotionblur", "1" },
-        { "vrgraphicstweaks", "1" },
         { "ambientocclusion", "0" },
-        { "reticle", "1" },
         { "minimalreticle", "1" },
         { "reticleopacity", "0.4" },
         { "huddistance", "2" },
         { "hudscale", "0.8" },
-        { "hudmarkers", "1" },
-        { "wristhud", "1" },
         { "wristhudsize", "8.5" },
-        { "menuscreen", "1" },
         { "menuscreensize", "62" },
         { "menuscreendistance", "2.4" },
         { "menubackground", "0.22" },
-        { "cutsceneletterbox", "0" },
-        { "cutscenearms", "0" },
         { "fog", "0" },
         { "cheapfog", "1" },
         { "cheapfogstart", "160" },

@@ -250,7 +250,14 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  The file is in main groups ([Display]) and subgroups
  ([Display.Fog]), and every setting is marked @user (for everyone) or @hidden (tuning, experiments
  and troubleshooting most players never need; last in each subgroup). A setting is found by its
- name in any group, so an older file still reads. The defaults, by main group:
+ name in any group, so an older file still reads.
+ The core VR features are always on, as in a game made for VR, and are not in the VR tabs: the physical
+ sword, knockout blows, the hands' and weapons' collision and pushing, grabbing, pulling, taking, throwing,
+ holstering and drinking by hand, physical crouching, roomscale, the hand reticles, the wrist watch, the
+ HUD markers over characters, the menu screen, cutscenes without black bars and with your own hands, no
+ finishing-move animations, no motion blur or depth of field, the controller layout and finger tracking.
+ Their switches stay in the file (@hidden, marked "Core VR") for troubleshooting only. The defaults,
+ by main group:
 
    [Controls]  TurnMode = smooth (or snap)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 45
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
