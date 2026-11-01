@@ -748,6 +748,7 @@ void VRRuntime::SetControllerOptions(float pitchOffsetDeg, bool fingerTracking)
     g_Session.SetPitchOffset(pitchOffsetDeg);
     g_Session.SetFingerTracking(fingerTracking);
 }
+void VRRuntime::SetFpsCounter(int position, float size, float angleDeg) { XRSession::SetFpsCounter(position, size, angleDeg); }
 
 void VRRuntime::Shutdown(bool processExit)
 {

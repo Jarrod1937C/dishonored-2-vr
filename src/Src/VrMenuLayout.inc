@@ -62,6 +62,7 @@ static const VrRow kVrRows[] = {
     { "Display", "Fog", "CheapFogOpacity" },
     { "Display", "Fog", "CheapFogColor" },
     { "Display", "ScreenSpaceShadows", "ScreenSpaceShadows" },
+    { "Performance", "FrameRate", "FpsCounter" },
     { "Performance", "Shadows", "ShadowCullDistance" },
     { "Performance", "Shadows", "ShadowSunUpdateEvery" },
     { "Performance", "Shadows", "ShadowUltraTrim" },

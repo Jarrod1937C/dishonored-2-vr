@@ -128,7 +128,7 @@ target_precompile_headers(DishonoredVR PRIVATE Src/pch.h)
 target_link_libraries(DishonoredVR PRIVATE
     fmt::fmt imgui::imgui OpenXR::openxr_loader
     Detours::Detours
-    d3d11 dxgi version windowscodecs shell32 ole32)
+    d3d11 dxgi version windowscodecs shell32 ole32 gdi32)
 set_target_properties(DishonoredVR PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${OUT_DIR}" RUNTIME_OUTPUT_DIRECTORY_RELEASE "${OUT_DIR}")
 target_link_options(DishonoredVR PRIVATE "/PDBALTPATH:DishonoredVR.pdb")   # (see dinput8 above)

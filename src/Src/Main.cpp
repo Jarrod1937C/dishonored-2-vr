@@ -149,6 +149,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "ambientocclusion" })) VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     if (has({ "fog" })) VrTweaks::SetFog(Settings::Fog());
     if (has({ "staticlodzoom" })) VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    if (has({ "fpscounter", "fpscountersize", "fpscounterangle" })) VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     if (fog) Fog::SetParams(Settings::CheapFog());
     if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
@@ -218,6 +219,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetFog(Settings::Fog());
     VrTweaks::SetFogMaps(Settings::FogMaps());
     VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     VrTweaks::SetViewDistance(Settings::ViewDistance());
     Fog::SetParams(Settings::CheapFog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());

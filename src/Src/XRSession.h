@@ -49,8 +49,10 @@ struct XRWristLayer
 //! A flat panel in the room (XRSession::SetPanelLayer): a crop of a texture drawn into its own swapchain with rounded,
 //! anti-aliased edges and submitted as a quad layer in LOCAL space. One frame: set again every frame it is wanted.
 //! Slot 0 = the menu screen (ScreenMode), slot 1 = the power wheel's panel or the stereo HUD, slots 2.. the markers
-//! over characters lifted out of the HUD (ScreenMode::PlayHud, each at its character's distance).
-constexpr int kXrPanels = 8;
+//! over characters lifted out of the HUD (ScreenMode::PlayHud, each at its character's distance), the last slot
+//! (kXrFpsSlot) the frame-rate counter ([Performance] FpsCounter, head-locked).
+constexpr int kXrPanels = 9;
+constexpr int kXrFpsSlot = kXrPanels - 1;
 struct XRPanelLayer
 {
     ID3D11Texture2D* tex = nullptr;            //!< source to COPY from (the backbuffer: not shader-readable), or
@@ -68,6 +70,7 @@ struct XRPanelLayer
     unsigned outW = 0, outH = 0;               //!< swapchain size (the compositor samples it at display resolution)
     float holes[8][4] = {};                    //!< up to 8 source rectangles left out (x0, y0, x1, y1 px): shown on panels of their own
     int nHoles = 0;
+    bool head = false;                         //!< quat / pos are in VIEW space (head-locked) instead of LOCAL
 };
 
 //! What surrounds the menu screen (XRSession::SubmitScreen): the projection layer, drawn for each eye from its pose
@@ -267,6 +270,9 @@ public:
 
     //! A panel in the room (see XRPanelLayer), slot 0 or 1. Set per frame before the frame is submitted.
     void SetPanelLayer(int slot, const XRPanelLayer& l) { if ((unsigned)slot < (unsigned)kXrPanels) m_Panel[slot] = l; }
+    //! [Performance] FpsCounter: 0 off, 1 top left, 2 top right, 3 bottom left, 4 bottom right of the view; size (1 =
+    //! the default) and how far from the view's centre (degrees, sideways; 0.8 of it up / down). Any thread.
+    static void SetFpsCounter(int position, float size, float angleDeg);
     //! The menu screen's frame (ScreenMode): instead of the game's picture across the eyes, the backdrop in the
     //! projection layer (each eye drawn for its pose right now) and panel slot 0 over it. Ends the frame.
     void SubmitScreen(const XRBackdrop& b);
@@ -446,6 +452,8 @@ private:
     XRPanelLayer m_Panel[kXrPanels];         //!< this frame's panels (SetPanelLayer)
     unsigned long long m_PanelFrames[kXrPanels] = {}, m_ScreenFrames = 0, m_Snapshots = 0;
     bool AppendPanelLayer(int slot, XrCompositionLayerQuad& quad);
+    float m_FpsWeight = 1.f;                 //!< what the frame being ended counts for in the frame-rate counter (1 = a new
+                                             //!< picture for both eyes, 0.5 = one eye's (alternating), 0 = a repeat)
     float m_FrameFade = 1.f, m_FrameDim = 1.f;
     float m_FrameTint[3] = {};     //!< DimFrameTo's colour (sRGB), for this frame
     float m_DrawTint[3] = {};      //!< what DrawInto adds to the picture: that colour x (1 - the frame's brightness)

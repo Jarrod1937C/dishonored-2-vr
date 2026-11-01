@@ -116,7 +116,7 @@ struct PumpState
     // The last frame's layers, for the keep-alive frames (the wrist watch is left out: it rides the hand).
     XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
     XrCompositionLayerProjectionView views[XRSession::kMaxEyes] = {};
-    XrCompositionLayerQuad quads[8] = {};
+    XrCompositionLayerQuad quads[kXrPanels + 2] = {};
     int nQuads = 0;
     bool haveLayers = false;
     // the runtime taking the session away (STOPPING -> IDLE without our asking) and not offering it back
@@ -590,6 +590,156 @@ struct PanelRenderer
         copySrv = nullptr; copy = nullptr; cw = ch = 0;
     }
 } g_PanelR;
+
+// ---- the frame-rate counter ([Performance] FpsCounter) ----
+// A small head-locked panel (slot kXrFpsSlot): how many new pictures a second reach the headset, green at its refresh
+// rate, amber below it, red under three quarters of it; under that the frame time and the headset's refresh rate.
+// Its picture is drawn with GDI (Segoe UI, grey-scale anti-aliased) into memory twice a second, uploaded only when the
+// text changes, and drawn into its swapchain like any panel (rounded, translucent dark background).
+namespace
+{
+    std::atomic<int> g_FpsPos{ 0 };                     // 0 off, 1 top left, 2 top right, 3 bottom left, 4 bottom right
+    std::atomic<float> g_FpsSize{ 1.f }, g_FpsAngle{ 15.f };
+}
+struct FpsPanel
+{
+    static constexpr UINT kW = 352, kH = 160;
+    ID3D11Device* dev = nullptr;
+    ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr;
+    HDC dc = nullptr; HBITMAP bmp = nullptr; HGDIOBJ oldBmp = nullptr; void* bits = nullptr;
+    HFONT fontBig = nullptr, fontSmall = nullptr;
+    bool failed = false, haveText = false;
+    double windowStart = 0, frames = 0, fps = 0;
+    std::wstring line1, line2; uint32_t colour = 0;
+    std::vector<uint32_t> px;
+
+    void Count(float weight)
+    {
+        frames += weight;
+        const double now = NowSec();
+        if (windowStart <= 0) { windowStart = now; frames = 0; return; }
+        const double dt = now - windowStart;
+        if (dt >= 0.5) { fps = frames / dt; frames = 0; windowStart = now; haveText = false; }   // new numbers: new text
+    }
+    //! the GDI side: a 32-bit top-down DIB and the two fonts (once)
+    bool InitGdi()
+    {
+        if (dc) return true;
+        if (failed) return false;
+        dc = CreateCompatibleDC(nullptr);
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader); bi.bmiHeader.biWidth = (LONG)kW; bi.bmiHeader.biHeight = -(LONG)kH;
+        bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+        if (dc) bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        fontBig = CreateFontW(-80, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                          ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        fontSmall = CreateFontW(-40, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        if (!dc || !bmp || !bits || !fontBig || !fontSmall)
+        {
+            LOGI("XRSession: frame-rate counter: GDI setup failed (dc {} bitmap {} fonts {} {})", (void*)dc, (void*)bmp, (void*)fontBig, (void*)fontSmall);
+            ReleaseGdi(); failed = true; return false;
+        }
+        oldBmp = SelectObject(dc, bmp);
+        return true;
+    }
+    void ReleaseGdi()
+    {
+        if (dc && oldBmp) SelectObject(dc, oldBmp);
+        if (bmp) DeleteObject(bmp); if (fontBig) DeleteObject(fontBig); if (fontSmall) DeleteObject(fontSmall); if (dc) DeleteDC(dc);
+        dc = nullptr; bmp = nullptr; oldBmp = nullptr; bits = nullptr; fontBig = fontSmall = nullptr;
+    }
+    //! the two lines into the texture: line 1 drawn in pure red and line 2 in pure green on black, so each channel of
+    //! the DIB is one line's coverage; then composed (premultiplied, gamma space) over the background
+    bool Render(ID3D11DeviceContext* ctx)
+    {
+        if (!InitGdi()) return false;
+        memset(bits, 0, (size_t)kW * kH * 4);
+        SetBkMode(dc, TRANSPARENT);
+        RECT r1 = { 0, 4, (LONG)kW, 104 }, r2 = { 0, 100, (LONG)kW, (LONG)kH - 6 };
+        SelectObject(dc, fontBig); SetTextColor(dc, RGB(255, 0, 0));
+        DrawTextW(dc, line1.c_str(), -1, &r1, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        SelectObject(dc, fontSmall); SetTextColor(dc, RGB(0, 255, 0));
+        DrawTextW(dc, line2.c_str(), -1, &r2, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        GdiFlush();
+        const float bgA = 0.62f, bg[3] = { 0.035f, 0.04f, 0.055f };
+        const float c1[3] = { ((colour >> 16) & 255) / 255.f, ((colour >> 8) & 255) / 255.f, (colour & 255) / 255.f };
+        const float c2[3] = { 0.80f, 0.82f, 0.86f };
+        px.resize((size_t)kW * kH);
+        const uint32_t* src = (const uint32_t*)bits;
+        for (size_t i = 0; i < px.size(); i++)
+        {
+            const float a1 = ((src[i] >> 16) & 255) / 255.f, a2 = ((src[i] >> 8) & 255) / 255.f;   // (BGRA: red, green)
+            float c[3], a = bgA;
+            for (int k = 0; k < 3; k++) c[k] = bg[k] * bgA;
+            for (int k = 0; k < 3; k++) c[k] = c[k] * (1 - a1) + c1[k] * a1;
+            a = a * (1 - a1) + a1;
+            for (int k = 0; k < 3; k++) c[k] = c[k] * (1 - a2) + c2[k] * a2;
+            a = a * (1 - a2) + a2;
+            auto b = [](float v) { return (uint32_t)std::lround(std::clamp(v, 0.f, 1.f) * 255.f); };
+            px[i] = b(c[0]) | (b(c[1]) << 8) | (b(c[2]) << 16) | (b(a) << 24);                     // RGBA8
+        }
+        ctx->UpdateSubresource(tex, 0, nullptr, px.data(), kW * 4, 0);
+        return true;
+    }
+    //! this frame's panel; false = none (off, or something failed)
+    bool Layer(ID3D11Device* d, ID3D11DeviceContext* ctx, int pos, long long periodNs, XRPanelLayer& l)
+    {
+        if (!d || !ctx || pos <= 0) return false;
+        if (dev != d) { ReleaseD3d(); dev = d; }
+        if (!tex)
+        {
+            D3D11_TEXTURE2D_DESC td = {}; td.Width = kW; td.Height = kH; td.MipLevels = 1; td.ArraySize = 1;
+            td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc = { 1, 0 }; td.Usage = D3D11_USAGE_DEFAULT;
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            if (FAILED(d->CreateTexture2D(&td, nullptr, &tex)) || FAILED(d->CreateShaderResourceView(tex, nullptr, &srv)))
+            {
+                static int logged = 0;
+                if (logged++ < 3) LOGI("XRSession: frame-rate counter: texture {}x{} failed", kW, kH);
+                ReleaseD3d(); return false;
+            }
+            haveText = false;
+        }
+        if (!haveText)
+        {   // new numbers (twice a second), or a new texture
+            const double hz = periodNs > 1000000 ? 1e9 / (double)periodNs : 0;
+            const double ms = fps > 0.5 ? 1000.0 / fps : 0.0;
+            wchar_t b[64];
+            swprintf(b, 64, L"%.0f fps", fps); line1 = b;
+            if (hz > 0) swprintf(b, 64, L"%.1f ms \u00B7 %.0f Hz", ms, hz); else swprintf(b, 64, L"%.1f ms", ms);
+            line2 = b;
+            const double ratio = hz > 0 ? fps / hz : 1;
+            colour = ratio >= 0.95 ? 0x6EE07A : ratio >= 0.75 ? 0xF2C14E : 0xFF6B5E;   // green / amber / red
+            if (!Render(ctx)) return false;
+            haveText = true;
+        }
+        const float size = g_FpsSize.load(), ang = g_FpsAngle.load() * 3.14159265f / 180.f, dist = 1.f;
+        l = XRPanelLayer();
+        l.srv = srv; l.srcW = kW; l.srcH = kH;
+        l.crop[0] = 0; l.crop[1] = 0; l.crop[2] = (float)kW; l.crop[3] = (float)kH;
+        l.premultiplied = true; l.gamma = true; l.alpha = 1.f;
+        l.corner = 0.16f; l.soft = 0.02f;
+        l.width = 0.2f * size; l.height = l.width * (float)kH / (float)kW;
+        l.outW = kW; l.outH = kH;
+        l.head = true;
+        // up / down and to the side of the view's centre, `dist` away, turned to face the eyes
+        const float sx = (pos == 1 || pos == 3) ? -1.f : 1.f, sy = pos <= 2 ? 1.f : -1.f;
+        float v[3] = { sx * tanf(ang), sy * tanf(ang * 0.8f), -1.f };
+        const float n = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        for (int k = 0; k < 3; k++) { v[k] /= n; l.pos[k] = v[k] * dist; }
+        // the shortest turn of the quad's +Z onto the direction back to the eyes (-v): (-n.y, n.x, 0, 1 + n.z), n = -v
+        float q[4] = { v[1], -v[0], 0.f, 1.f - v[2] };
+        const float qn = sqrtf(q[0] * q[0] + q[1] * q[1] + q[3] * q[3]);
+        for (int k = 0; k < 4; k++) l.quat[k] = q[k] / qn;
+        return true;
+    }
+    void ReleaseD3d()
+    {
+        if (srv) srv->Release(); if (tex) tex->Release();
+        srv = nullptr; tex = nullptr; dev = nullptr; haveText = false;
+    }
+    void Release() { ReleaseD3d(); ReleaseGdi(); failed = false; }
+} g_Fps;
 
 // ---- the menu screen's surroundings (XRBackdrop) ----
 // Each eye's pixel is a direction in the room (its fov's tangents turned by its pose right now): a dark room-locked
@@ -1895,6 +2045,7 @@ void XRSession::SubmitFrame(ID3D11Texture2D* source, int onlyEye)
     // Back from the menu screen in alternating stereo: the other eye's swapchain holds the backdrop, so this one picture
     // goes to both eyes (as mono) and the alternation resumes on the next frame.
     if (m_ResyncEyes) { onlyEye = -1; m_ResyncEyes = false; }
+    m_FpsWeight = onlyEye >= 0 ? 0.5f : 1.f;   // (the frame-rate counter: one eye's new picture is half a frame)
     const float fk = m_FrameFade * m_FrameDim;
     const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
     for (int c = 0; c < 3; c++) { m_DrawTint[c] = m_FrameTint[c] * (1.f - fade); m_FrameTint[c] = 0.f; }   // (DimFrameTo)
@@ -2257,6 +2408,7 @@ bool XRSession::ResubmitLast()
         for (uint32_t v = 0; v < layer.viewCount && v < (uint32_t)kMaxEyes; v++) views[v] = pump.views[v];
     }
     layer.views = views;
+    m_FpsWeight = 0.f;                         // (the frame-rate counter: a repeat, not a new picture)
     EndFrameWithLayers(layer);
     return true;
 }
@@ -2287,12 +2439,26 @@ bool XRSession::SubmitPair(ID3D11Texture2D* right, const float quat[4], const fl
     return true;
 }
 
+//! ([Performance] FpsCounter; the counter itself: FpsPanel)
+void XRSession::SetFpsCounter(int position, float size, float angleDeg)
+{
+    g_FpsPos = (position >= 0 && position <= 4) ? position : 0;
+    g_FpsSize = std::clamp(size, 0.25f, 4.f);
+    g_FpsAngle = std::clamp(angleDeg, 0.f, 40.f);
+}
+
 //! HUD quad layer: head-locked panel at a comfortable virtual depth. The
 //! compositor samples it every display frame — always crisp, always fused,
 //! unlike UI baked into the projection. Then ends the frame.
 void XRSession::EndFrameWithLayers(XrCompositionLayerProjection& layer)
 {
     PassProfile::Scope prof(PassProfile::kSecEnd);       // ([Advanced] ProfileRenderPasses)
+    // the frame-rate counter ([Performance] FpsCounter): this frame counted, and its panel when it is on
+    g_Fps.Count(m_FpsWeight); m_FpsWeight = 1.f;
+    {
+        XRPanelLayer fl;
+        if (g.viewSpace && g_Fps.Layer(g.device, g.context, g_FpsPos.load(), (long long)g.frameState.predictedDisplayPeriod, fl)) m_Panel[kXrFpsSlot] = fl;
+    }
     XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
     bool haveQuad = false;
     if (m_QuadSource && g.viewSpace)
@@ -2509,7 +2675,7 @@ bool XRSession::AppendPanelLayer(int slot, XrCompositionLayerQuad& quad)
     xrReleaseSwapchainImage(g.panelSwapchain[slot], &ri);
     if (!drawn) return false;
     quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied (the default)
-    quad.space = g.space;
+    quad.space = l.head && g.viewSpace ? g.viewSpace : g.space;
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     quad.subImage.swapchain = g.panelSwapchain[slot];
     quad.subImage.imageRect.offset = { 0, 0 };
@@ -2768,7 +2934,7 @@ void XRSession::SaveLayers(const void* layersIn, unsigned count)
             pump.proj.views = pump.views;
             pump.haveLayers = true;
         }
-        else if (l->type == XR_TYPE_COMPOSITION_LAYER_QUAD && pump.nQuads < 8)
+        else if (l->type == XR_TYPE_COMPOSITION_LAYER_QUAD && pump.nQuads < kXrPanels + 2)
             pump.quads[pump.nQuads++] = *(const XrCompositionLayerQuad*)l;
     }
 }
@@ -2781,7 +2947,7 @@ void XRSession::KeepAliveFrame(const void* fsIn)
 {
     const XrFrameState& fs = *(const XrFrameState*)fsIn;
     XrCompositionLayerProjection proj; XrCompositionLayerProjectionView views[kMaxEyes];
-    XrCompositionLayerQuad quads[8]; int nQuads = 0; bool have = false;
+    XrCompositionLayerQuad quads[kXrPanels + 2]; int nQuads = 0; bool have = false;
     {
         std::lock_guard<std::mutex> lk(pump.m);
         have = pump.haveLayers;
@@ -2802,7 +2968,7 @@ void XRSession::KeepAliveFrame(const void* fsIn)
         }
         pump.runFrames++;
     }
-    const XrCompositionLayerBaseHeader* layers[1 + 8]; uint32_t n = 0;
+    const XrCompositionLayerBaseHeader* layers[1 + kXrPanels + 2]; uint32_t n = 0;
     if (have && fs.shouldRender)
     {
         layers[n++] = (const XrCompositionLayerBaseHeader*)&proj;
@@ -3019,6 +3185,7 @@ bool XRSession::Shutdown(bool processExit)
     m_PairStaged = false; m_PairW = m_PairH = 0;
     g_Wrist.Release();
     g_PanelR.Release();
+    g_Fps.Release();
     g_BackdropR.Release();
     ReleaseSnaps();
     for (Snap& s : m_Snap) s.valid = false;

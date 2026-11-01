@@ -182,6 +182,11 @@ namespace
             return w;
         }
         if (name == "outofviewmask") { stepper({ { "0", "Off" }, { "1", "Both sides" }, { "2", "Outer side only" } }); return w; }
+        if (name == "fpscounter")
+        {
+            stepper({ { "off", "Off" }, { "top-left", "Top left" }, { "top-right", "Top right" }, { "bottom-left", "Bottom left" }, { "bottom-right", "Bottom right" } });
+            return w;
+        }
         if (name == "controllerbindings")
         {   // auto, or one of the profiles in VRControllerBindings, each with what it is for ("touch (Quest 1/2/3/Pro, Rift, PS VR2)")
             const std::string now = ControllerBindings::Active();

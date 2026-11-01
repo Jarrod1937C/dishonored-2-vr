@@ -43,6 +43,8 @@ namespace VRRuntime
     bool Vibrate(int hand, float amplitude, float seconds, float hz = 0.f);
     //! ControllerPitchOffset / FingerTracking changed (a controller profile, the VR options tabs): to the session now
     void SetControllerOptions(float pitchOffsetDeg, bool fingerTracking);
+    //! [Performance] FpsCounter / FpsCounterSize / FpsCounterAngle (XRSession::SetFpsCounter)
+    void SetFpsCounter(int position, float size, float angleDeg);
     unsigned long long HapticPulses();
 
     //! Stage 5: alternating-eye stereo. Each game frame is rendered from ONE eye's

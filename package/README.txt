@@ -317,6 +317,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CutsceneLetterbox = 0 (1 = keep the black bars)   CutsceneArms = 0 (1 = the
                                  cutscene moves your hands, not the controllers)
    [Performance]
+               FpsCounter = off (a frame-rate counter in the headset: top-left, top-right, bottom-left or
+                                 bottom-right of your view; green at the headset's refresh rate, amber below, red
+                                 under three quarters of it)
+               FpsCounterSize = 1   FpsCounterAngle = 15 (deg from the view's centre: less = nearer the middle)
                ShadowCullDistance = 0 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
                ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)

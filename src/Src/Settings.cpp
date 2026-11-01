@@ -138,6 +138,9 @@ namespace
         { "display.outofviewmaskmargin", Kind::Float, "2", 0, 15, nullptr, true },     // ...plus this many degrees round it (the compositor's reprojection)
         { "display.outofviewmasklens",  Kind::Bool,   "1", 0, 0, nullptr, true },      // ...and the lens's hidden area (XR_KHR_visibility_mask)
         { "display.outofviewmaskcorners", Kind::Float, "4", 0, 16, nullptr, true },    // ...and the fov's corners outside a superellipse of this exponent (0 = none)
+        { "display.fpscounter",         Kind::Choice, "off", 0, 0, "off|top-left|top-right|bottom-left|bottom-right" },   // XRSession: a frame-rate counter in the headset
+        { "display.fpscountersize",     Kind::Float,  "1", 0.5f, 2, nullptr, true },   // ...its size (1 = 20 cm wide at 1 m)
+        { "display.fpscounterangle",    Kind::Float,  "15", 5, 30, nullptr, true },    // ...degrees from the view's centre, sideways (0.8 of it up / down)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -464,6 +467,13 @@ int Settings::OutOfViewMask() { return (int)std::lround(F("display.outofviewmask
 float Settings::OutOfViewMaskMargin() { return F("display.outofviewmaskmargin"); }
 bool Settings::OutOfViewMaskLens() { return B("display.outofviewmasklens"); }
 float Settings::OutOfViewMaskCorners() { return F("display.outofviewmaskcorners"); }
+int Settings::FpsCounter()
+{
+    const std::string v = V("display.fpscounter");
+    return v == "top-left" ? 1 : v == "top-right" ? 2 : v == "bottom-left" ? 3 : v == "bottom-right" ? 4 : 0;
+}
+float Settings::FpsCounterSize() { return F("display.fpscountersize"); }
+float Settings::FpsCounterAngle() { return F("display.fpscounterangle"); }
 Foveation::Params Settings::Foveated()
 {
     Foveation::Params p;
@@ -614,6 +624,7 @@ namespace
         { "staticlodzoom", "1.5" },
         { "foveatedrendering", "0" },
         { "outofviewmask", "2" },
+        { "fpscounter", "off" },
         { "unlockeverything", "0" },
         { "unlockoutsidersmark", "0" },
         { "unlockpowers", "0" },

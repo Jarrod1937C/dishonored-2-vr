@@ -96,6 +96,9 @@ namespace Settings
     int OutOfViewMask();                          //!< [Display] OutOfViewMask (FovMask): 0 off, 1 all, 2 outer sides only
     float OutOfViewMaskMargin();                  //!< [Display] OutOfViewMaskMargin, degrees
     bool OutOfViewMaskLens();                     //!< [Display] OutOfViewMaskLens
+    int FpsCounter();                             //!< [Performance] FpsCounter: 0 off, 1 top left, 2 top right, 3 bottom left, 4 bottom right
+    float FpsCounterSize();                       //!< [Performance] FpsCounterSize (1 = 20 cm wide at 1 m)
+    float FpsCounterAngle();                      //!< [Performance] FpsCounterAngle: degrees from the view's centre
     bool ProfileRenderPasses();                   //!< [Logging] ProfileRenderPasses: GPU time per render pass (PassProfile)
     bool VrOptionsMenu();                         //!< [System] VrOptionsMenu: VR tabs in the game's Options screen (VrMenu)
     bool LogMenuData();                           //!< [Logging] LogMenuData: the options screen's Flash traffic (MenuProbe)
