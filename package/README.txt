@@ -114,10 +114,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  5. CONTROLS
 ------------------------------------------------------------------------------------------------
 
- IN GAME
+ IN GAME (every controller plays as the Valve Index does; its own buttons are below)
    Left stick ........................ move.  Click: sprint (on until you stop)
-   Right stick ....................... turn (smooth; snap in DishonoredVR.ini).  Click: zoom
-   Right trigger ..................... sword / right-hand weapon
+   Right stick ....................... turn (smooth; snap in DishonoredVR.ini).  Click: the sword's
+                                       button (hold: power attack; Index: the right trackpad)
+   Right trigger ..................... interact: use / open / take what your RIGHT hand points at
    Swing your RIGHT ARM .............. strike with the sword (what the blade touches is hit; with
                                        SwordBladeDamage = 1 the blade itself strikes, harder the
                                        faster it moves; a guard can still block or parry it)
@@ -128,10 +129,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        where your hand points
    Grenades / springrazors ........... hold the left trigger, throw, and let go: a grenade leaves
                                        your hand at that moment, the way and as hard as it moved
-   Right grip, pointing at something . take / use / open it (hold it to pick up a body).
-                                       Holding an object: grip again = drop, right trigger = throw
-                                       Carrying a body: grip again = put it down
-   Right grip, pointing at nothing ... block
+   Right grip ........................ your hand: take what it is AT (a bottle, a cup, a body; an
+                                       item with PhysicalPickup), grab a drawer, cabinet or door to
+                                       pull it open. An object stays in your hand while you hold the
+                                       grip: open it to drop it (or throw it by moving your hand).
+                                       With the sword out it blocks
    Left grip (hold) .................. power wheel - pick with the stick, let go to equip
                                        (it opens on a panel in front of you; the world stays put)
        ...with the wheel open: B ..... drink a health elixir
@@ -141,6 +143,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    B ................................. crouch (toggle)
    Y ................................. quick slot 1 (hold 0.5 s: slot 3 - the controller buzzes)
    X ................................. quick slot 2 (hold 0.5 s: slot 4)
+                                       (Index: the left trackpad's edges; see below)
    Menu button (left controller) ..... short press: journal.  Hold: pause menu (save / load).
                                        The world stops and dims around the menu screen
    BOTH STICKS PRESSED TOGETHER ...... same as the menu button (for controllers without one)
@@ -214,6 +217,23 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    to the game: use BOTH STICKS PRESSED TOGETHER for the journal and the pause menu, or assign
    Create in SteamVR > Settings > Controllers > Manage Controller Bindings > Dishonored 2 >
    "Menu: journal (short) / pause (hold)".
+
+ OTHER CONTROLLERS (each has its profile in VRControllerBindings: its buttons and settings; all
+ of them play the Index's way, Layout = index; Layout = default in a profile = the mod's older
+ Touch layout: right trigger = sword, right grip = take / use / block, right stick click = zoom)
+   Touch-style (A / B, X / Y, two sticks): Meta Quest / Rift (touch.json), HP Reverb G2
+   (hp_reverb_g2.json), Vive Cosmos (vive_cosmos.json), Vive Focus 3 / XR Elite
+   (vive_focus3.json), Pico 4 / Neo 3 (pico.json): the controls above (no zoom: its button is
+   the sword's); menu button = the LEFT controller's menu button.
+   Windows Mixed Reality / Samsung Odyssey (wmr.json): no A / B / X / Y, so the Index's trackpad
+   layout: left trackpad edges = quick slots 1-4, its middle = menu; right trackpad press = the
+   sword's attack; right trigger = interact; right stick click = jump; right menu button =
+   crouch; left stick click = sprint. Elixirs: hand to your mouth + grip. No zoom.
+   HTC Vive / Vive Pro wands (vive_wands.json): left trackpad walks (press: sprint), right one
+   turns (press: jump); right menu button = crouch; left menu button = menu; right trigger =
+   interact, grips for your hands, the sword by swinging. No quick slots or zoom (power wheel
+   on the left grip, holsters, elixirs at the mouth).
+   The right profile is picked by itself (ControllerBindings = auto); the log says which.
 
 
 ------------------------------------------------------------------------------------------------

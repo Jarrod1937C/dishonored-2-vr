@@ -60,6 +60,7 @@ struct XRState
     // XR_EXT_hand_tracking (FingerTracking): enabled when the runtime offers it; the trackers only while an Index is bound
     bool handExt = false, motionRangeExt = false, handSupported = false;
     bool visMaskExt = false;            // XR_KHR_visibility_mask: the lens's hidden area, per eye (FovMask)
+    std::vector<std::string> ctrlExts;  // the controller profiles' extensions the runtime offered (enabled): ControllerBindings
     XrHandTrackerEXT hand[2] = {};
     PFN_xrCreateHandTrackerEXT createHand = nullptr; PFN_xrDestroyHandTrackerEXT destroyHand = nullptr;
     PFN_xrLocateHandJointsEXT locateHand = nullptr;
@@ -832,18 +833,24 @@ bool XRSession::Init(ID3D11Device* device)
             if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr)) && n)
             {
                 std::vector<XrExtensionProperties> props(n, { XR_TYPE_EXTENSION_PROPERTIES });
+                g.ctrlExts.clear();
+                const std::vector<std::string> wanted = ControllerBindings::Extensions();   // their controllers' interaction profiles
                 if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(nullptr, n, &n, props.data())))
                     for (const XrExtensionProperties& e : props)
                     {
                         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) g.handExt = true;
                         if (!strcmp(e.extensionName, XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME)) g.motionRangeExt = true;
                         if (!strcmp(e.extensionName, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME)) g.visMaskExt = true;
+                        for (const std::string& w : wanted) if (w == e.extensionName) g.ctrlExts.push_back(w);
                     }
+                std::string said; for (const std::string& w : wanted) said += fmt::format(" {}{}", w, std::find(g.ctrlExts.begin(), g.ctrlExts.end(), w) != g.ctrlExts.end() ? "" : " (not offered)");
+                if (!wanted.empty()) LOGI("XRSession: controller profiles' extensions:{}", said);
             }
             if (g.handExt) exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
             if (g.handExt && g.motionRangeExt) exts.push_back(XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME);
             else g.motionRangeExt = false;
             if (g.visMaskExt) exts.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
+            for (const std::string& w : g.ctrlExts) exts.push_back(w.c_str());   // (g keeps the strings)
         }
         XrInstanceCreateInfo ici = { XR_TYPE_INSTANCE_CREATE_INFO };
         ici.enabledExtensionCount = (uint32_t)exts.size();
@@ -1146,7 +1153,7 @@ bool XRSession::InitInput()
     //    stick clicks) and the readable action names above for SteamVR's binding editor.
     //  - Valve Index: the same layout; its left A/B are X/Y, and the menu is the left trackpad pressed (force).
     struct B { XrAction* a; const char* path; };
-    auto suggest = [&](const char* profile, std::initializer_list<B> list)
+    auto suggest = [&](const char* profile, const std::vector<B>& list)
     {
         std::vector<XrActionSuggestedBinding> binds;
         for (const B& b : list)
@@ -1196,6 +1203,38 @@ bool XRSession::InitInput()
         { &g.aimAction[0], "/user/hand/left/input/aim/pose" }, { &g.aimAction[1], "/user/hand/right/input/aim/pose" },
         { &g.wristAction, "/user/hand/left/input/grip/pose" },
         { &g.hapticAction[0], "/user/hand/left/output/haptic" }, { &g.hapticAction[1], "/user/hand/right/output/haptic" } });
+
+    // The controller profiles (VRControllerBindings\*.json, ControllerBindings) with "bindings": one call per interaction
+    // profile they list, after the two above (a later call for the same profile replaces an earlier one; the Index's
+    // profile has none: it keeps the bindings above). Action names are the ones made above.
+    {
+        const std::pair<const char*, XrAction*> kActions[] = {
+            { "turn", &g.turnAction }, { "turn_y", &g.turnYAction }, { "move", &g.moveAction },
+            { "trigger_l", &g.triggerAction[0] }, { "trigger_r", &g.triggerAction[1] }, { "grip_l", &g.gripAction[0] }, { "grip_r", &g.gripAction[1] },
+            { "grippress_l", &g.gripPressAction[0] }, { "grippress_r", &g.gripPressAction[1] },
+            { "btn_a", &g.btnAction[0] }, { "btn_b", &g.btnAction[1] }, { "btn_x", &g.btnAction[2] }, { "btn_y", &g.btnAction[3] },
+            { "btn_thumb_l", &g.btnAction[4] }, { "btn_thumb_r", &g.btnAction[5] }, { "btn_menu", &g.btnAction[6] },
+            { "aim_l", &g.aimAction[0] }, { "aim_r", &g.aimAction[1] }, { "wrist_l", &g.wristAction },
+            { "pad_l", &g.padAction[0] }, { "pad_r", &g.padAction[1] }, { "padpress_l", &g.padForceAction[0] }, { "padpress_r", &g.padForceAction[1] },
+            { "trigtouch_l", &g.trigTouchAction[0] }, { "trigtouch_r", &g.trigTouchAction[1] },
+            { "thumbtouch_l", &g.thumbTouchAction[0] }, { "thumbtouch_r", &g.thumbTouchAction[1] },
+            { "haptic_l", &g.hapticAction[0] }, { "haptic_r", &g.hapticAction[1] } };
+        for (const ControllerBindings::Suggestion& s : ControllerBindings::Suggestions())
+        {
+            if (!s.extension.empty() && std::find(g.ctrlExts.begin(), g.ctrlExts.end(), s.extension) == g.ctrlExts.end())
+            { LOGI("XRSession: bindings for {} ({}.json): skipped, the runtime does not offer {}", s.profile, s.file, s.extension); continue; }
+            std::vector<B> list;
+            for (const auto& b : s.binds)
+            {
+                XrAction* a = nullptr;
+                for (const auto& k : kActions) if (b.first == k.first) a = k.second;
+                if (!a) { LOGI("XRSession: {}.json: no action '{}' (binding {} left out)", s.file, b.first, b.second); continue; }
+                list.push_back({ a, b.second.c_str() });
+            }
+            LOGI("XRSession: {}.json: {} bindings for {}", s.file, list.size(), s.profile);
+            suggest(s.profile.c_str(), list);
+        }
+    }
 
     XrSessionActionSetsAttachInfo attach = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
     attach.countActionSets = 1;

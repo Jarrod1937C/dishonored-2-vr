@@ -30,8 +30,16 @@ namespace ControllerBindings
     //! The profile in use ("" = none) and the files there are (names without .json), for the VR options tabs
     std::string Active();
     std::vector<std::string> Names();
+    //! (file name, what it is for): its "label" (short: "Quest 1/2/3/Pro, Rift, PS VR2"), else its "name"
+    std::vector<std::pair<std::string, std::string>> Choices();
     //! The profile in use holds this setting (bare name, any case): it is saved there, not in the ini
     bool Owns(const std::string& bare);
     //! Writes these (bare name, value as the ini would have it) into the profile's file, in place. false + err = not written
     bool Write(const std::vector<std::pair<std::string, std::string>>& values, std::string& err);
+    //! The OpenXR bindings the profiles give (XRSession suggests them, with the instance extensions they need):
+    //! "profiles": [ { "path": "/interaction_profiles/...", "extension": "XR_..." } ], "bindings": { "<action>": "<path>"
+    //! or [ "<path>", ... ] } -- one suggestion per path of every file that has bindings. Its paths also count as `match`.
+    struct Suggestion { std::string file, profile, extension; std::vector<std::pair<std::string, std::string>> binds; };
+    std::vector<Suggestion> Suggestions();
+    std::vector<std::string> Extensions();     //!< the extensions those need (each once)
 }

@@ -94,9 +94,11 @@ namespace
     {
         std::string file;                                   // name without .json, lower case
         std::wstring path;
-        std::string name;                                   // its "name"
+        std::string name, label;                            // its "name", its "label" (for the VR options tabs)
         std::vector<std::string> match;                     // interaction profile paths
         std::vector<std::pair<std::string, std::string>> settings;   // (key as written, value as the ini would have it)
+        std::vector<std::pair<std::string, std::string>> profiles;   // (interaction profile path, extension or "")
+        std::vector<std::pair<std::string, std::string>> bindings;   // (action, input path)
     };
     std::mutex g_M;
     std::vector<Profile> g_Profiles;                        // by file name
@@ -134,7 +136,23 @@ namespace
             Parser ps(text); J root;
             if (!ps.Val(root) || root.t != J::kObj) { LOGI("ControllerBindings: {} is not valid JSON ({}): skipped", fn, ps.err.empty() ? "not an object" : ps.err); continue; }
             if (const J* n = root.Get("name"); n && n->t == J::kStr) p.name = n->s;
+            if (const J* n = root.Get("label"); n && n->t == J::kStr) p.label = n->s;
             if (const J* m = root.Get("match"); m && m->t == J::kArr) for (const J& e : m->a) if (e.t == J::kStr) p.match.push_back(Lower(e.s));
+            if (const J* pr = root.Get("profiles"); pr && pr->t == J::kArr)
+                for (const J& e : pr->a)
+                {
+                    const J* path = e.t == J::kObj ? e.Get("path") : nullptr; const J* ext = e.t == J::kObj ? e.Get("extension") : nullptr;
+                    if (!path || path->t != J::kStr) { LOGI("ControllerBindings: {}: a \"profiles\" entry without a \"path\": skipped", fn); continue; }
+                    p.profiles.push_back({ path->s, ext && ext->t == J::kStr ? ext->s : std::string() });
+                    p.match.push_back(Lower(path->s));
+                }
+            if (const J* bd = root.Get("bindings"); bd && bd->t == J::kObj)
+                for (const auto& kv : bd->o)
+                {
+                    if (kv.second.t == J::kStr) p.bindings.push_back({ kv.first, kv.second.s });
+                    else if (kv.second.t == J::kArr) { for (const J& e : kv.second.a) if (e.t == J::kStr) p.bindings.push_back({ kv.first, e.s }); }
+                    else LOGI("ControllerBindings: {}: binding '{}' is not a path or a list of paths: skipped", fn, kv.first);
+                }
             if (const J* st = root.Get("settings"); st && st->t == J::kObj)
                 for (const auto& kv : st->o)
                 {
@@ -147,7 +165,7 @@ namespace
         FindClose(h);
         std::sort(g_Profiles.begin(), g_Profiles.end(), [](const Profile& a, const Profile& b) { return a.file < b.file; });
         std::string all;
-        for (const Profile& p : g_Profiles) all += fmt::format(" {} ({}, {} settings, for {})", p.file, p.name, p.settings.size(), p.match.empty() ? std::string("any") : p.match[0]);
+        for (const Profile& p : g_Profiles) all += fmt::format(" {} ({}, {} settings, {} bindings, for {})", p.file, p.name, p.settings.size(), p.bindings.size(), p.match.empty() ? std::string("any") : p.match[0]);
         LOGI("ControllerBindings: {} profile(s) in VRControllerBindings:{}", g_Profiles.size(), all);
     }
     //! The profile to use now (g_M held): the ini's choice, else the reported controller's, else the first
@@ -203,9 +221,14 @@ void ControllerBindings::OnProfile(const std::string& left, const std::string& r
     int idx; std::string why;
     {
         std::lock_guard lk(g_M);
-        const std::string l = Lower(left), r = Lower(right);
+        std::string l = Lower(left), r = Lower(right);
+        if (l == "none") l.clear();
+        if (r == "none") r.clear();
+        // "none" for both (the runtime sends it first at every session start, and when the controllers sleep): not a
+        // controller -- the profile in use stays (else it flipped to the first file and back, re-applying both)
+        if (l.empty() && r.empty()) return;
         if (l == g_Left && r == g_Right) return;
-        g_Left = l == "none" ? "" : l; g_Right = r == "none" ? "" : r;
+        g_Left = l; g_Right = r;
         idx = Choose(why);
     }
     Use(idx, why, false);
@@ -223,6 +246,13 @@ std::vector<std::string> ControllerBindings::Names()
     std::vector<std::string> n; for (const Profile& p : g_Profiles) n.push_back(p.file);
     return n;
 }
+std::vector<std::pair<std::string, std::string>> ControllerBindings::Choices()
+{
+    std::lock_guard lk(g_M);
+    std::vector<std::pair<std::string, std::string>> c;
+    for (const Profile& p : g_Profiles) c.push_back({ p.file, !p.label.empty() ? p.label : p.name.substr(0, p.name.find(" (")) });   // ("Valve Index (Knuckles)": "Valve Index")
+    return c;
+}
 bool ControllerBindings::Owns(const std::string& bare)
 {
     std::lock_guard lk(g_M);
@@ -230,6 +260,24 @@ bool ControllerBindings::Owns(const std::string& bare)
     const std::string b = Lower(bare);
     for (const auto& kv : g_Profiles[g_Active].settings) if (Lower(kv.first) == b) return true;
     return false;
+}
+std::vector<ControllerBindings::Suggestion> ControllerBindings::Suggestions()
+{
+    std::lock_guard lk(g_M);
+    std::vector<Suggestion> out;
+    for (const Profile& p : g_Profiles)
+        if (!p.bindings.empty())
+            for (const auto& pr : p.profiles) out.push_back({ p.file, pr.first, pr.second, p.bindings });
+    return out;
+}
+std::vector<std::string> ControllerBindings::Extensions()
+{
+    std::lock_guard lk(g_M);
+    std::vector<std::string> out;
+    for (const Profile& p : g_Profiles)
+        for (const auto& pr : p.profiles)
+            if (!pr.second.empty() && std::find(out.begin(), out.end(), pr.second) == out.end()) out.push_back(pr.second);
+    return out;
 }
 bool ControllerBindings::Write(const std::vector<std::pair<std::string, std::string>>& values, std::string& err)
 {

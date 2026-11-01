@@ -1,0 +1,50 @@
+{
+  "name": "HTC Vive Focus 3 / XR Elite",
+  "label": "Vive Focus 3 / XR Elite",
+  "about": "Touch-style buttons, sticks and analog grips. Played as the Valve Index is (Layout = index): right trigger = interact, right stick click = the sword's button, Y / X = quick slots, A / B = jump / crouch, grips for your hands, left menu button = menu. Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
+  "profiles": [
+    {
+      "path": "/interaction_profiles/htc/vive_focus3_controller",
+      "extension": "XR_HTC_vive_focus3_controller_interaction"
+    }
+  ],
+  "settings": {
+    "Layout": "index",
+    "QuickSlotHoldTime": 0.5,
+    "GripThresholdLeft": 0.6,
+    "GripThresholdRight": 0.45,
+    "FingerTracking": false,
+    "ControllerPitchOffset": 0
+  },
+  "bindings": {
+    "turn": "/user/hand/right/input/thumbstick/x",
+    "turn_y": "/user/hand/right/input/thumbstick/y",
+    "move": "/user/hand/left/input/thumbstick",
+    "trigger_l": "/user/hand/left/input/trigger/value",
+    "trigger_r": "/user/hand/right/input/trigger/value",
+    "grip_l": "/user/hand/left/input/squeeze/value",
+    "grip_r": "/user/hand/right/input/squeeze/value",
+    "grippress_l": "/user/hand/left/input/squeeze/value",
+    "grippress_r": "/user/hand/right/input/squeeze/value",
+    "btn_a": "/user/hand/right/input/a/click",
+    "btn_b": "/user/hand/right/input/b/click",
+    "btn_x": "/user/hand/left/input/x/click",
+    "btn_y": "/user/hand/left/input/y/click",
+    "btn_thumb_l": "/user/hand/left/input/thumbstick/click",
+    "btn_thumb_r": "/user/hand/right/input/thumbstick/click",
+    "btn_menu": "/user/hand/left/input/menu/click",
+    "aim_l": "/user/hand/left/input/aim/pose",
+    "aim_r": "/user/hand/right/input/aim/pose",
+    "wrist_l": "/user/hand/left/input/grip/pose",
+    "haptic_l": "/user/hand/left/output/haptic",
+    "haptic_r": "/user/hand/right/output/haptic"
+  },
+  "notes": {
+    "Layout": "index = the Valve Index's layout (the one the mod is tuned for): right trigger = interact, the grips are for your hands (grab, pull, holsters; the right one blocks only with the sword out; an object stays in your hand while you hold the grip), the sword strikes by swinging. Without trackpads its button is the right stick click (hold: power attack) and Y / X are quick slots 1 / 2 (held: 3 / 4). default = the mod's older Touch layout (right trigger = sword, right grip = take / use / block, right stick click = zoom); classic = Y leans, X interacts, menu button pauses (held: journal).",
+    "QuickSlotHoldTime": "How long Y / X are held to use quick slot 3 / 4 instead of 1 / 2, in seconds (0.15 - 2).",
+    "GripThresholdLeft": "How far the left grip must be squeezed to count (0.05 - 0.95; lower = more sensitive). On controllers whose grip is a button (it clicks) any value works.",
+    "GripThresholdRight": "The same for the right grip.",
+    "FingerTracking": "Only for controllers with finger sensors (Valve Index): leave false.",
+    "ControllerPitchOffset": "If the in-game hands and weapons point higher or lower than your real controllers, tilt them here, in degrees: positive = up, negative = down (-60 - 60)."
+  }
+}

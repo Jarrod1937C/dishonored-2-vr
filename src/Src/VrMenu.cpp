@@ -183,9 +183,10 @@ namespace
         }
         if (name == "outofviewmask") { stepper({ { "0", "Off" }, { "1", "Both sides" }, { "2", "Outer side only" } }); return w; }
         if (name == "controllerbindings")
-        {   // auto, or one of the profiles in VRControllerBindings
-            std::vector<std::pair<std::string, std::string>> o{ { "auto", "auto (for the controllers in use)" } };
-            for (const std::string& n : ControllerBindings::Names()) o.push_back({ n, n });
+        {   // auto, or one of the profiles in VRControllerBindings, each with what it is for ("touch (Quest 1/2/3/Pro, Rift, PS VR2)")
+            const std::string now = ControllerBindings::Active();
+            std::vector<std::pair<std::string, std::string>> o{ { "auto", now.empty() ? std::string("auto (for the controllers in use)") : "auto (for the controllers in use: now " + now + ")" } };
+            for (const auto& c : ControllerBindings::Choices()) o.push_back({ c.first, c.second.empty() ? c.first : c.first + " (" + c.second + ")" });
             stepper(o); return w;
         }
         if (name == "renderscale")

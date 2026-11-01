@@ -1284,15 +1284,21 @@ void KbmInject::Tick()
     // no pause, no save and no load. While the chord is held neither click does its own job.
     unsigned raw = in.buttons;
     // The Index layout (and an Index bound): the left pad's force -- the menu button of the other layouts, wherever it is
-    // pressed -- is split by where it is pressed (PadBits). Any other controller keeps the default layout.
-    const bool indexPads = g_QuickSlots.load() == 2 && in.pad;
+    // pressed -- is split by where it is pressed (PadBits).
+    // The same layout on controllers WITHOUT trackpads (2026-11-01: every other controller profile asks for it, so they
+    // play as the Index does): right trigger = interact, grips physical (the right one blocks only with the sword out),
+    // an object held while its grip is; what was on the pads moves to what they have -- the sword's button to the right
+    // stick click (zoom goes: no button left for it), the quick slots stay on Y / X (short / held). (Until then a
+    // controller without trackpads fell back to the default layout.)
+    const bool indexScheme = g_QuickSlots.load() == 2;
+    const bool indexPads = indexScheme && in.pad;
     {
         static int was = -1;
-        if (g_QuickSlots.load() == 2 && (int)in.pad != was)
+        if (indexScheme && (int)in.pad != was)
         {
             was = in.pad ? 1 : 0;
             LOGI("KbmInject: Index layout {}", in.pad ? "on: right trigger = interact, right trackpad = sword, left trackpad = quick slots (edges) and menu (middle), left B / A = health / mana potion"
-                                                      : "asked for, but no trackpads are bound (not an Index controller): the default layout");
+                                                      : "on, without trackpads: right trigger = interact, right stick click = the sword's button (no zoom), Y / X = quick slots (short / held), menu button = menu");
         }
     }
     if (indexPads) raw = (raw & ~kXRBtnMenu) | PadBits(in);
@@ -1515,7 +1521,7 @@ void KbmInject::Tick()
     else if (quick) QuickButtons(live, pressed, false);
     else QuickReset();
     Hold(kAlt,   !quick && (live & kXRBtnY) != 0);        // (old) Y      : lean
-    Hold(kZ,     (live & kXRBtnThumbR) != 0);             // R stick click: zoom
+    Hold(kZ,     !(indexScheme && !indexPads) && (live & kXRBtnThumbR) != 0);   // R stick click: zoom (the Index layout without pads: the sword)
     // The grabbing hand (GrabHand, `vr grabhand`: the right by default) takes what it touches: its grip on something
     // the palm's sweep has picked is the game's interact -- take a bottle, eat the fruit, open a door -- and anywhere
     // else it does what it always did (right: block, left: the power wheel). While an object is held neither grip
@@ -1597,7 +1603,7 @@ void KbmInject::Tick()
     // an item (by hand), an object the game holds (a bottle, a glass), a body to carry, a drawer / cabinet to pull --
     // touched, or within reach of the hand when the pointer has it (small things and recessed fronts are easy to miss by
     // touch). Everything that is USED (doors, levers, notes, switches; items from afar) is the trigger's.
-    const bool physicalGrip = indexPads;
+    const bool physicalGrip = indexScheme;
     const int pickId = GrabHand::TargetId();
     float pickPt[3]; float pickDist = 1e9f;
     if (handOk && pickId > 0 && pickId != 0x3FFF0010 && GrabHand::TargetPoint(pickPt))
@@ -1814,19 +1820,14 @@ void KbmInject::Tick()
     // PhysicalPickup: an item can be taken by hand -- AND with the trigger, as ever: reported, blocking the trigger on
     // items left notes unreadable and pouches untakeable ("interactions using trigger are sometimes broken now")
     const bool itemAimed = false;
-    const bool trigUse = indexPads && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
+    const bool trigUse = indexScheme && (live & kVTrigR) != 0 && !holding && !(grabHand == 1 && g_TrigLets) && !itemAimed;
     if (trigUse && (pressed & kVTrigR)) Collision::NoteInteract((uint32_t)GrabHand::TargetId());   // (a cabinet front's count)
-    if (indexPads && (pressed & kVTrigR))
+    if (indexScheme && (pressed & kVTrigR))
     {   // reported: "the right trigger does nothing" -- what each press did, for the log (the first 200)
         static int logged = 0;
         if (logged++ < 200)
             LOGI("KbmInject: right trigger: {} (pointer pick {}{}{})", trigUse ? "interact (F)" : holding ? "lets the held object go" : itemAimed ? "nothing: an item is taken by hand" : "nothing",
                  Collision::PointerDescribe(), GrabHand::HandHasTarget() ? "" : ", no target in reach", g_Latched & kVTrigR ? ", latched" : "");
-    }
-    else if (!indexPads && g_QuickSlots.load() == 2 && (pressed & kVTrigR))
-    {
-        static int logged = 0;
-        if (logged++ < 5) LOGI("KbmInject: right trigger with Layout = index but no trackpads bound (in.pad 0): it is the sword's attack, not interact");
     }
     Hold(kF, (!quick && (live & kXRBtnX) != 0 && !itemAimed) || g_GripF || trigUse);   // the grabbing grip (above), (old) X, Index trigger : interact
     if (holding && relMode == 1 && (released & grabGrip))
@@ -1894,10 +1895,12 @@ void KbmInject::Tick()
     // Holding an object the game puts the sword away and its attack button is the object's throw: the right hand stays
     // out of it (a swing would throw the bottle).
     // (the sword's button: the right trigger, or with the Index layout the right trackpad)
-    const bool trigR = indexPads ? ((live & kVPadUse) != 0 && !holding) : ((live & kVTrigR) != 0 && !holding && !letsR);
+    const bool trigR = indexPads ? ((live & kVPadUse) != 0 && !holding)
+                     : indexScheme ? ((live & kXRBtnThumbR) != 0 && !holding)       // (no trackpad: the right stick click)
+                     : ((live & kVTrigR) != 0 && !holding && !letsR);
     // Index layout: the right grip is physical (grab, pull, the sword's holster), and blocks only while the sword is in
     // the hand -- reported: squeezing it brought the sword AND the left hand's weapon out (the game's block draws them).
-    const bool blockOk = !indexPads || !Holster::Enabled() || Holster::InHand(Holster::kSword);
+    const bool blockOk = !indexScheme || !Holster::Enabled() || Holster::InHand(Holster::kSword);
     const bool gripR = (live & kVGripR) != 0 && !holding && !takesR && !g_SwordGrip && !g_DrinkGrip[1] && blockOk;
     // The blade strikes what it touches (SwordContact): before the gestures, so a contact during a charged thrust
     // releases it this same tick.
