@@ -143,6 +143,7 @@ static DWORD WINAPI InitThread(LPVOID)
     MeleeAim::SetBladeDamage(Settings::SwordBladeDamage(), Settings::SwordDamageScale());
     MeleeAim::SetKnockoutBlow(Settings::KnockoutBlow());
     MeleeAim::SetKnockoutSpeed(Settings::KnockoutSpeed());
+    MeleeAim::SetKnockoutZone(Settings::KnockoutAngle(), Settings::KnockoutRadius());
     MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
     BinkVideo::SetSkipIntros(Settings::SkipIntroVideos());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());

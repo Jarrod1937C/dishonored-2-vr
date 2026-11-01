@@ -84,6 +84,10 @@ namespace
     // empty too after kEmptyKeep s, as if its holster had emptied it. The player entity changing (a load) starts over.
     constexpr double kEmptyKeep = 1.5;
     double g_EmptySince[2] = { -1, -1 };
+    // ...and empty while playing at all, the lock count not looked at: the state machine is only known from the first
+    // hand change after a load (g_Machine), so a save loaded with empty hands was never found empty before the wheel's
+    // first equip re-equipped the sword into the other hand (reported 2026-10-31). Checked at that change instead.
+    std::atomic<double> g_EmptyAnySince[2] = { -1.0, -1.0 };
     void* g_LastPlayer = nullptr;
 
     std::atomic<bool> g_On{ true };
@@ -255,7 +259,18 @@ namespace
     {
         alignas(16) uint8_t copy[kParSize];
         const uint8_t* entry = nullptr; uint32_t flags = 0;
-        if (state == kStateEquipRight || state == kStateEquipLeft) g_Machine = machine;
+        if (state == kStateEquipRight || state == kStateEquipLeft)
+        {
+            g_Machine = machine;
+            const int h = state == kStateEquipLeft ? 1 : 0;
+            const double since = g_EmptyAnySince[h].load();
+            if (g_On.load() && !g_WantEmpty[h].load() && since >= 0 && Now() - since >= kEmptyKeep && LockCount(h) == 0)
+            {   // empty this long with no lock of the game's: kept empty before this change is looked at (see g_EmptyAnySince)
+                g_WantEmpty[h] = true; g_EmptyAnySince[h] = -1.0;
+                LOGI("Holster: the {} hand was empty for {:.1f} s with no lock of the game's on it when the game changed it: kept empty, as if put away",
+                     h ? "left" : "right", Now() - since);
+            }
+        }
         const int f = FilterEquip(state, par, copy, &entry, &flags);
         if (g_On.load() && (state == kStateEquipRight || state == kStateEquipLeft))
         {   // every hand change, for the log (the first 400): which way the game came to put something in a hand
@@ -321,6 +336,7 @@ void Holster::Tick()
     {   // a new player (a load, a new map): what the hands hold comes from the save; found again below
         if (g_LastPlayer && (g_WantEmpty[0].load() || g_WantEmpty[1].load())) LOGI("Holster: a new player entity (a load): the hands are no longer kept empty, until found so again");
         g_LastPlayer = player; g_WantEmpty[0] = false; g_WantEmpty[1] = false; g_EmptySince[0] = g_EmptySince[1] = -1;
+        g_EmptyAnySince[0] = -1.0; g_EmptyAnySince[1] = -1.0; g_Machine = nullptr;   // the old player's machine
     }
     // a hand that has been empty a while, outside any lock of the game's, while the player plays: kept empty
     {
@@ -330,6 +346,8 @@ void Holster::Tick()
         for (int h = 0; h < 2; h++)
         {
             const bool empty = !(h ? s.left : s.right);
+            if (!(empty && playing && !g_WantEmpty[h].load())) g_EmptyAnySince[h] = -1.0;
+            else if (g_EmptyAnySince[h].load() < 0) g_EmptyAnySince[h] = now;
             const int locks = empty && playing && !g_WantEmpty[h].load() ? LockCount(h) : -1;
             if (locks != 0) { g_EmptySince[h] = -1; continue; }
             if (g_EmptySince[h] < 0) g_EmptySince[h] = now;

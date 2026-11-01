@@ -58,6 +58,9 @@ namespace MeleeAim
     //! [Gameplay] KnockoutSpeed: how fast (m/s, relative to the player) the fist, pistol or sword's pommel must move for
     //! a blow to knock out, 1..20.
     void SetKnockoutSpeed(float mps);
+    //! [Gameplay] KnockoutAngle / KnockoutRadius: from how far off straight behind the target (deg) a knockout / stealth
+    //! kill is possible (the blue dot shows), and how close to his head's centre (m) the blow must land.
+    void SetKnockoutZone(float angleDeg, float radiusM);
     //! [Gameplay] KnockoutSoundVolume: the hit sound when a knockout blow lands, 0..1 (0 = none).
     void SetKnockoutSound(float volume);
     //! [Gameplay] FinisherAnimations: false = a finishing blow is an ordinary blow (no synchronised kill animation) and

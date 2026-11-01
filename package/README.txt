@@ -160,7 +160,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  see-through they are. When you can take a guard down from behind, the right one turns RED inside a
  thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button). With
  KnockoutBlow = 1, hitting the back of his head hard (fist, the sword's pommel, the pistol) knocks him
- out at once instead. KnockoutSpeed sets how hard (in m/s; 4.5 by default).
+ out at once instead. KnockoutSpeed sets how hard (in m/s; 4.5 by default), KnockoutAngle how squarely
+ behind him you must be (degrees off straight behind; 60), KnockoutRadius how close to his head (m; 0.3).
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab

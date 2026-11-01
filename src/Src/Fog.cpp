@@ -161,7 +161,7 @@ void sky(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID, uint gi : SV_Grou
 // once every direction has been seen -- or, after the map's first 30 s, once at least 8 of them have.
 groupshared float4 gb[kBins];
 groupshared float gw[kBins], gl[kBins];
-groupshared float gr;
+groupshared float gr, gm;
 [numthreads(64, 1, 1)]
 void skyfinal(uint gi : SV_GroupIndex)
 {
@@ -187,6 +187,7 @@ void skyfinal(uint gi : SV_GroupIndex)
         float W = 0, L = 0;
         for (uint i = 0; i < kBins; i++) { W += gw[i]; L += gl[i]; }
         gr = W >= 64 ? clamp(exp(L / W), 1.0 / 64, 64) : rPrev;
+        gm = W >= 64 ? 1 : 0;
     }
     GroupMemoryBarrierWithGroupSync();
     const float r = gr;
@@ -236,7 +237,12 @@ void skyfinal(uint gi : SV_GroupIndex)
         }
         float4 ex = Summary[4];
         if (Summary[2].w <= 0 && (n >= kBins || (g3.x > 0 && n >= 8))) { Summary[2] = float4(avg, 1); ex.y = e; }
-        Summary[4] = float4(r, ex.y, e, 0);   // the check, the factor when the colour was set, the factor now
+        // what the factor leaves (measured 2026-10-31: the check still moved 0.5x - 1.8x; the white level the buffers are
+        // also divided by changes by area): the check smoothed over ~1 s, the fog scaled by it too -- it follows the
+        // sky as drawn. No sky seen: as it was
+        float rs = ex.w > 0 ? ex.w : 1;
+        if (gm > 0.5 && g2.w > 0) rs = lerp(rs, clamp(r, 0.4, 2.5), 0.02);
+        Summary[4] = float4(r, ex.y, e, rs);   // the check, the factor when the colour was set, the factor now, the residual
     }
 }
 
@@ -269,6 +275,7 @@ float4 ps(VO i) : SV_Target
     // exposure as everything else does); not following it: as the scene was when the colour was set
     float4 ex = SummaryIn[4];
     col /= g4.y > 0.5 ? Elf() : (ex.y > 0 ? ex.y : 1);
+    if (g4.y > 0.5 && ex.w > 0) col *= ex.w;
     float f = 0;
     if (d > 0)
     {
@@ -495,8 +502,8 @@ void Fog::SetParams(const Params& p)
                          : fmt::format("fixed: {:.3f},{:.3f},{:.3f} (linear, x{:.2f})", p.rgb[0], p.rgb[1], p.rgb[2], p.brightness),
                    p.skyHeight <= 0 ? std::string("not fogged") : p.skyAuto ? fmt::format("fogged up to the top of the far background, thinning out {:.0f} deg above it", p.skyHeight)
                                     : fmt::format("fogged up to {:.0f} deg above the horizon", p.skyHeight));
-    if (p.on) LOGI("Fog: never darker than {:.2f} as seen, after the game's exposure (CheapFogMinBrightness){}", p.minBrightness,
-                   p.followExposure ? "; its colour scaled as the sky's own brightness changes (CheapFogFollowExposure)" : "");
+    if (p.on) LOGI("Fog: never darker than {:.2f} x EngineLuminanceFactor (CheapFogMinBrightness){}", p.minBrightness,
+                   p.followExposure ? "; it follows the game's exposure and the sky's drawn brightness (CheapFogFollowExposure)" : "");
 }
 bool Fog::Wanted() { return g_Want.load(); }
 
@@ -949,7 +956,7 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 if (fabsf(logf(e / g_LoggedExpo)) > 0.15f)
                 {
                     LOGI("Fog: exposure check: the sky as drawn x EngineLuminanceFactor is x{:.2f} of what it was learned as (1 = the fog "
-                         "follows the exposure as the scene does); the factor {:.3f} now, {:.3f} when this map's colour was set{}", e, v[18], v[17],
+                         "follows the exposure as the scene does; the fog is scaled by it smoothed, now x{:.2f}); the factor {:.3f} now, {:.3f} when this map's colour was set{}", e, v[19], v[18], v[17],
                          P.followExposure ? "" : " (CheapFogFollowExposure = 0: the fog does not follow it)");
                     g_LoggedExpo = e;
                 }

@@ -849,13 +849,17 @@ namespace
     // The guard must not see it coming: the player behind him -- the direction from his head to the player at least
     // ~100 deg away from where he faces (cos = -0.17). Reported: "I can be literally standing in front of them".
     // Loosened for VR (asked: "more forgiving than the default"): 90 deg, i.e. anywhere behind his shoulders' line.
-    constexpr float kKoBehindCos = 0.0f;
+    // [Gameplay] KnockoutAngle (2026-10-31, reported: the dot showed while standing at a guard's side): how far from
+    // straight behind him the player may be, deg; behind = cos(his facing, him -> player) below -cos(that). 90 = the old.
+    std::atomic<float> g_KoBehindCos{ -0.5f };
+    std::atomic<float> g_KoAngle{ 60.f };
     // Reported twice as too picky: 0.22, then 0.30 m. The near misses logged after that were 35-58 cm from the centre
     // of the head (its top joints) and up to 27 cm in front of it: the head, the neck and the top of the shoulders.
     // ...and a third time ("very delayed or not registering"): the near misses after 0.42 were still 48-60 cm out --
     // blows to the back of the neck and the shoulders. Those count now.
     // With the blue dot showing where to hit, 0.60 m let blows far from it count: back to the head and the neck.
-    constexpr float kKoRadius = 0.40f;      // m around the head's centre
+    // [Gameplay] KnockoutRadius (2026-10-31: asked smaller): m around the head's centre (was 0.40)
+    std::atomic<float> g_KoRadius{ 0.30f };
     constexpr float kKoFront = 0.20f;       // m the blow may land in front of the head's centre (the sides of the head)
     // s the knockout stays possible after the offer goes away. Was 1.5 s; now the same 0.25 s as the stealth kill's
     // (KillOffered) -- the game's offer flickers off for a frame or two, that is all this bridges. Reported: the dot
@@ -1006,7 +1010,7 @@ namespace
         {
             float tp[2] = { playerOrg[0] - head[0], playerOrg[1] - head[1] };
             const float tl = sqrtf(tp[0] * tp[0] + tp[1] * tp[1]), fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]);
-            if (tl > 1e-3f && fl > 1e-3f) { facing = (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl); behind = facing < kKoBehindCos; }
+            if (tl > 1e-3f && fl > 1e-3f) { facing = (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl); behind = facing < g_KoBehindCos.load(std::memory_order_relaxed); }
         }
         {   // where to hit, for the reticle's blue dot: the back of the head (6 cm behind its centre) -- only when he
             // cannot see the player
@@ -1020,7 +1024,8 @@ namespace
             if ((double)(now - toldAt) / (double)QpcFreq() > 3.0)
             {
                 toldAt = now;
-                LOGI("MeleeAim: no knockout: the guard can see you ({:.0f} deg from where he faces; it needs more than 90)", acosf(std::clamp(facing, -1.f, 1.f)) * 57.29578f);
+                LOGI("MeleeAim: no knockout: the guard can see you ({:.0f} deg from where he faces; it needs more than {:.0f}: KnockoutAngle)",
+                     acosf(std::clamp(facing, -1.f, 1.f)) * 57.29578f, 180.f - g_KoAngle.load());
             }
             g_KoPrevT = 0;
             return;
@@ -1040,14 +1045,15 @@ namespace
             const float miss = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
             // from behind: where it met the head is not in front of the face
             const float front = q[0] * fwd[0] + q[1] * fwd[1] + q[2] * fwd[2];
-            if (miss > kKoRadius || front > kKoFront)
+            const float koRadius = g_KoRadius.load(std::memory_order_relaxed);
+            if (miss > koRadius || front > kKoFront)
             {   // a near miss, for tuning (reported: some guards -- the red soldiers without a helmet -- never went down)
                 static long long nearLog = 0;
                 if (miss < 0.6f && (double)(now - nearLog) / (double)QpcFreq() > 0.5)
                 {
                     nearLog = now;
                     LOGI("MeleeAim: knockout near miss with the {} at {:.1f} m/s: {:.0f} cm from the head's centre (needs {:.0f}), {:.0f} cm {} it (needs < {:.0f} in front); head from {} joints, {:.2f} m up",
-                         cur[i].what, speed, miss * 100.f, kKoRadius * 100.f, fabsf(front) * 100.f, front > 0.f ? "in front of" : "behind", kKoFront * 100.f, nh,
+                         cur[i].what, speed, miss * 100.f, koRadius * 100.f, fabsf(front) * 100.f, front > 0.f ? "in front of" : "behind", kKoFront * 100.f, nh,
                          playerOrg ? head[2] - playerOrg[2] : 0.f);
                 }
                 continue;
@@ -1085,7 +1091,7 @@ namespace
         const float tp[2] = { playerOrg[0] - org[0], playerOrg[1] - org[1] };
         const float tl = sqrtf(tp[0] * tp[0] + tp[1] * tp[1]), fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]);
         if (tl < 1e-3f || fl < 1e-3f) return false;
-        return (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl) < kKoBehindCos;
+        return (tp[0] * fwd[0] + tp[1] * fwd[1]) / (tl * fl) < g_KoBehindCos.load(std::memory_order_relaxed);
     }
     //! The back of his head (for the dot when only the stealth kill is on: KnockoutBlow off).
     bool HeadBack(uint8_t* target, float out[3])
@@ -1109,6 +1115,14 @@ void MeleeAim::SetKnockoutSound(float volume)
     g_KoVolume = std::clamp(volume, 0.f, 1.f);
     g_KoWav.clear();   // made again at that volume
     LOGI("MeleeAim: knockout hit sound {}", g_KoVolume.load() > 0.f ? fmt::format("at {:.0f}% (DVR_knockout.wav in the game's folder replaces it)", g_KoVolume.load() * 100.f) : std::string("off"));
+}
+void MeleeAim::SetKnockoutZone(float angleDeg, float radiusM)
+{
+    g_KoAngle = std::clamp(angleDeg, 10.f, 120.f);
+    g_KoBehindCos = -cosf(g_KoAngle.load() * 0.0174533f);
+    g_KoRadius = std::clamp(radiusM, 0.1f, 0.8f);
+    LOGI("MeleeAim: a knockout (and the blue dot) only from within {:.0f} deg of straight behind the guard, the blow within {:.0f} cm of his head's centre",
+         g_KoAngle.load(), g_KoRadius.load() * 100.f);
 }
 void MeleeAim::SetKnockoutSpeed(float mps)
 {
