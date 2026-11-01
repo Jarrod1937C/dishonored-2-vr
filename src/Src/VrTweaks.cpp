@@ -7,6 +7,8 @@
 #include <vector>
 #include <mutex>
 #include <cmath>
+#include "GameInfo.h"
+#include <detours/detours.h>
 
 namespace
 {
@@ -23,6 +25,63 @@ namespace
     std::mutex g_MapM; std::string g_Map;   // the current map's name, lower case (written on the render thread)
     std::atomic<bool> g_MapFog{ false };   // the current map is one of FogMaps
     std::atomic<float> g_LodZoom{ 1.f };   // StaticLodZoom (1 = the game's own, never written)
+
+    // ViewDistance: the game's view-distance preset (ARK_VISUALSETTING_VIEW_DISTANCE, r_viewDistPreset; set by the
+    // menu's environment detail with the others) is applied by exe+0x5105A0(settings, level) -- reached from
+    // exe+0x50FD30 (setting 11), at start and at every change. It sets exactly two cvars from the game's own table
+    // (settings+0x78; the levels' list at *(exe+0x32CDD00)+0x10, 16-byte entries { name, level }; the values at
+    // +(0x96E + i) * 4 and +(0x91A + i) * 4): r_lodZoomMultiplicator (the static models' level of detail, see
+    // StaticLodZoom) and r_umbraGateVisibilityRatio (Umbra's occlusion culling: how far is seen through the level's
+    // gates -- doorways, windows, portals). The hook gives it ViewDistance's level instead of the game's.
+    using ViewDistFn = void(*)(void* settings, int level);
+    ViewDistFn g_ViewDistReal = nullptr;
+    std::atomic<int> g_ViewDist{ -1 };   // -1 = the game's
+    struct ViewDistLevel { char name[24]; long long level; float lod, gate; };
+    //! the game's table (no C++ objects here: __try)
+    int ReadViewDistTable(void* settings, ViewDistLevel* out, int max)
+    {
+        int n = 0;
+        __try
+        {
+            const uintptr_t base = GameInfo::Base();
+            const uint8_t* tbl = *(const uint8_t* const*)((const uint8_t*)settings + 0x78);
+            const uint8_t* lst = *(const uint8_t* const*)(*(const uint8_t* const*)(base + 0x32CDD00) + 0x10);
+            for (int i = 0; i < max; i++)
+            {
+                const char* nm = *(const char* const*)(lst + i * 16);
+                if (!nm || !nm[0]) break;
+                ViewDistLevel& L = out[n];
+                for (int k = 0; k < 23; k++) { L.name[k] = nm[k]; if (!nm[k]) break; }
+                L.name[23] = 0;
+                L.level = *(const long long*)(lst + i * 16 + 8);
+                L.lod = *(const float*)(tbl + (0x96E + i) * 4); L.gate = *(const float*)(tbl + (0x91A + i) * 4);
+                n++;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+        return n;
+    }
+    void LogViewDistTable(void* settings)
+    {
+        static void* logged = nullptr;
+        if (logged == settings) return;
+        logged = settings;
+        ViewDistLevel lv[12] = {};
+        const int n = ReadViewDistTable(settings, lv, 12);
+        std::string s;
+        for (int i = 0; i < n; i++) s += fmt::format(" | {} ({}): lod zoom {:g}, gate visibility {:g}", lv[i].name, lv[i].level, lv[i].lod, lv[i].gate);
+        LOGI("VrTweaks: the game's view-distance levels:{}", n < 0 ? std::string(" (unreadable)") : s);
+    }
+    void HkViewDist(void* settings, int level)
+    {
+        if (settings) LogViewDistTable(settings);
+        const int want = g_ViewDist.load();
+        if (want >= 0 && want != level) LOGI("VrTweaks: view distance: the game asked for level {}, ViewDistance {} applied instead", level, want);
+        g_ViewDistReal(settings, want >= 0 ? want : level);
+        LOGI("VrTweaks: view distance level {} applied: r_lodZoomMultiplicator {:g}{}, r_umbraGateVisibilityRatio {:g}", want >= 0 ? want : level,
+             CVars::GetFloat("r_lodZoomMultiplicator", -1.f), fabsf(g_LodZoom.load() - 1.f) > 1e-3f ? fmt::format(" (StaticLodZoom {:g} holds it instead)", g_LodZoom.load()) : std::string(),
+             CVars::GetFloat("r_umbraGateVisibilityRatio", -1.f));
+    }
     // The map's name: idGameLocal's vtable +0x88 (exe+0x8A89E0) returns gameLocal+0x337128, the map's file record,
     // whose idStr at +0x10 is the map file name -- what the game's own crash report prints as "Map:" (exe+0x427BD).
     constexpr size_t kMapNameStr = 0x337128 + 0x10;
@@ -76,6 +135,26 @@ void VrTweaks::SetLodZoom(float z)
 {
     g_LodZoom = z;
     if (fabsf(z - 1.f) > 1e-3f) LOGI("VrTweaks: StaticLodZoom {:g}: the game's r_lodZoomMultiplicator held at it (the static models' level of detail; experimental)", z);
+}
+void VrTweaks::SetViewDistance(int level)
+{
+    g_ViewDist = level < 0 ? -1 : (level > 5 ? 5 : level);
+}
+void VrTweaks::InstallViewDistance()
+{
+    if (g_ViewDistReal) return;
+    const uintptr_t base = GameInfo::Base();
+    static const uint8_t kExpect[15] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x20 };
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery((const void*)(base + 0x5105A0), &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || memcmp((const void*)(base + 0x5105A0), kExpect, sizeof kExpect)) { LOGI("VrTweaks: the view-distance setter exe+0x5105A0 is not as expected (another game version?): ViewDistance not applied"); return; }
+    g_ViewDistReal = (ViewDistFn)(base + 0x5105A0);
+    DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)g_ViewDistReal, (PVOID)&HkViewDist);
+    const LONG e = DetourTransactionCommit();
+    if (e != NO_ERROR) { g_ViewDistReal = nullptr; LOGI("VrTweaks: the view-distance hook failed ({})", e); return; }
+    const int v = g_ViewDist.load();
+    LOGI("VrTweaks: ViewDistance {}", v < 0 ? std::string("-1: the game's own view distance (its levels are logged when it applies one)")
+                                          : fmt::format("{}: the game's view-distance level {} (0 very low .. 5 ultra) whatever its menu says", v, v));
 }
 void VrTweaks::SetFog(bool on)
 {

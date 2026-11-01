@@ -82,6 +82,7 @@ namespace
         { "display.shadowlampfewerupdates", Kind::Bool, "1", 0, 0, nullptr }, // ScreenShadows: the lamps' moving-caster updates at Low's thresholds
         { "display.shadowlampcacheslices", Kind::Float, "32", 0, 128, nullptr }, // ScreenShadows: r_shadowCacheSliceCnt (0 = the game's 12)
         { "display.staticlodzoom",      Kind::Float,  "1", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
+        { "display.viewdistance",       Kind::Float,  "-1", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
@@ -118,6 +119,7 @@ namespace
         { "display.outofviewmask",      Kind::Float,  "0", 0, 2, nullptr },      // FovMask: 0 off, 1 all outside each eye's native fov not shaded, 2 only its outer side
         { "display.outofviewmaskmargin", Kind::Float, "2", 0, 15, nullptr },     // ...plus this many degrees round it (the compositor's reprojection)
         { "display.outofviewmasklens",  Kind::Bool,   "1", 0, 0, nullptr },      // ...and the lens's hidden area (XR_KHR_visibility_mask)
+        { "display.outofviewmaskcorners", Kind::Float, "4", 0, 16, nullptr },    // ...and the fov's corners outside a superellipse of this exponent (0 = none)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -346,6 +348,7 @@ bool Settings::ShadowUltraTrim() { return B("display.shadowultratrim"); }
 bool Settings::ShadowLampFewerUpdates() { return B("display.shadowlampfewerupdates"); }
 int Settings::ShadowLampCacheSlices() { return (int)std::lround(F("display.shadowlampcacheslices")); }
 float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
+int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
 float Settings::ShadowMapMinObjectSize() { return F("display.shadowmapminobjectsize"); }
 int Settings::ShadowSunUpdateEvery() { return (int)std::lround(F("display.shadowsunupdateevery")); }
 float Settings::HudScale() { return F("display.hudscale"); }
@@ -361,6 +364,7 @@ int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdi
 int Settings::OutOfViewMask() { return (int)std::lround(F("display.outofviewmask")); }
 float Settings::OutOfViewMaskMargin() { return F("display.outofviewmaskmargin"); }
 bool Settings::OutOfViewMaskLens() { return B("display.outofviewmasklens"); }
+float Settings::OutOfViewMaskCorners() { return F("display.outofviewmaskcorners"); }
 Foveation::Params Settings::Foveated()
 {
     Foveation::Params p;

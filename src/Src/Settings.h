@@ -43,9 +43,11 @@ namespace Settings
     float ScreenSpaceShadowSmallObjects();        //!< [Display] (ScreenShadows), m across
     float ShadowCullDistance();                   //!< [Display] ShadowCullDistance: r_shadowCullDistance held (ScreenShadows)
     bool ShadowUltraTrim();                       //!< [Display] ShadowUltraTrim (ScreenShadows)
+    float OutOfViewMaskCorners();                 //!< [Display] OutOfViewMaskCorners (FovMask)
     bool ShadowLampFewerUpdates();                //!< [Display] ShadowLampFewerUpdates (ScreenShadows)
     int ShadowLampCacheSlices();                  //!< [Display] ShadowLampCacheSlices (ScreenShadows)
     float StaticLodZoom();                        //!< [Display] StaticLodZoom (VrTweaks, experimental)
+    int ViewDistance();                           //!< [Display] ViewDistance (VrTweaks): -1 = the game's
     float ShadowMapMinObjectSize();               //!< [Display] (ScreenShadows), m across
     int ShadowSunUpdateEvery();                   //!< [Display] (ScreenShadows), frame pairs 1 / 2 / 4
     float HudMarkerSize();                        //!< [Display] HudMarkerSize: the HUD square around a marker put at its character's distance (ScreenMode)                             //!< [Display] HudScale: the stereo HUD panel's share of the view (ScreenMode)

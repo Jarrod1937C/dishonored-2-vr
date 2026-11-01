@@ -27,6 +27,12 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
     std::atomic<int> g_Mode{ 1 };
     std::atomic<float> g_Margin{ 2.f };
     std::atomic<bool> g_Lens{ true };       // OutOfViewMaskLens: the lens's hidden area too (XR_KHR_visibility_mask)
+    // OutOfViewMaskCorners: the two outer corners of each eye's fov (plus the margin) outside a superellipse |x/X|^n + |y/Y|^n = 1
+    // through the middles of its four edges, X / Y the tangents of that quadrant's edges; 0 = none. For a headset whose
+    // runtime gives no lens mask (Pimax via SteamVR: none): the lens shows a rounded picture, its corners are never seen.
+    // n = 4 masks ~3.5 % of the fov (two corners of four), 3 ~6 %, 2 (an ellipse) ~11 %
+    std::atomic<float> g_Corners{ 0.f };
+    float g_CornerShare[2] = {};
 
     std::mutex g_M;   // everything below
     bool g_Ready = false, g_Failed = false;
@@ -210,6 +216,43 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
                 lensShare += Area(tri) / 4.f; lensTris++;
                 for (const V2& p : q) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
             }
+        // the fov's corners outside a superellipse (OutOfViewMaskCorners), in the eye frame on z = -1, projected the same way
+        g_CornerShare[eye & 1] = 0;
+        if (const float n = g_Corners.load(); n >= 1.f)
+        {
+            constexpr int kSeg = 16;
+            const float e = 2.f / n;
+            for (int q = 0; q < 4; q++)
+            {
+                // only the two OUTER corners (the left eye's left ones, the right eye's right ones): between the eyes the
+                // mask broke the screen-space reflections, hair and glass (OutOfViewMask 1); the outer side does not
+                if ((eye == 0) != (q == 1 || q == 2)) continue;
+                const float X = (q == 0 || q == 3) ? R : L, Y = (q < 2) ? U : D;   // the quadrant's edges (tangents)
+                auto toRender = [&](float x, float y, V2& out) {
+                    const float ve[3] = { x, y, -1.f }; float vr[3];
+                    VRMath::QRotate(conj, ve, vr);
+                    return vr[2] < -1e-3f && Project(P, vr, out);
+                };
+                V2 corner;
+                if (!toRender(X, Y, corner)) continue;
+                V2 prev; bool havePrev = false;
+                for (int k = 0; k <= kSeg; k++)
+                {
+                    const float th = 1.5707963f * (float)k / (float)kSeg;
+                    const float c = powf(std::max(0.f, cosf(th)), e), sn = powf(std::max(0.f, sinf(th)), e);
+                    V2 cur;
+                    if (!toRender(X * c, Y * sn, cur)) { havePrev = false; continue; }
+                    if (havePrev)
+                    {
+                        std::vector<V2> tri = { corner, prev, cur };
+                        for (int i = 0; i < 4 && !tri.empty(); i++) { const V2 a = rect[i], b = rect[(i + 1) % 4]; tri = Clip(tri, a, b, 1.f); }
+                        if (tri.size() >= 3) g_CornerShare[eye & 1] += Area(tri) / 4.f;
+                        for (const V2& p : { corner, prev, cur }) { verts.push_back(p.x); verts.push_back(p.y); verts.push_back(z); verts.push_back(1.f); }
+                    }
+                    prev = cur; havePrev = true;
+                }
+            }
+        }
         if (verts.size() / 4 > (size_t)kMaxVerts) { why = "too many triangles"; return false; }
         return true;
     }
@@ -222,7 +265,7 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
         const VRRuntime::Placement pl = VRRuntime::GetPlacement(eye);
         float key[26];
         unsigned gen = 0; { std::vector<float> tmp; XRVisMask::Get(eye, tmp, &gen); }
-        memcpy(key, P, 64); memcpy(key + 16, pl.fov, 16); memcpy(key + 20, rot, 16); key[24] = g_Margin.load() + 100.f * (float)g_Mode.load(); key[25] = g_Lens.load() ? (float)gen + 1.f : 0.f;
+        memcpy(key, P, 64); memcpy(key + 16, pl.fov, 16); memcpy(key + 20, rot, 16); key[24] = g_Margin.load() + 100.f * (float)g_Mode.load() + 1000.f * g_Corners.load(); key[25] = g_Lens.load() ? (float)gen + 1.f : 0.f;
         bool same = E.built;
         for (int i = 0; same && i < 26; i++) same = fabsf(key[i] - E.key[i]) < (i < 16 ? 2e-3f : 1e-5f);   // (a TAA jitter is not a change)
         if (same) return &E;
@@ -237,8 +280,9 @@ float4 vs(uint id : SV_VertexID) : SV_Position { return Verts[id]; }
         D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = DXGI_FORMAT_UNKNOWN; vd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER; vd.Buffer.NumElements = (UINT)(v.size() / 4);
         if (FAILED(g_Dev->CreateBuffer(&bd, &sd, &E.buf)) || FAILED(g_Dev->CreateShaderResourceView(E.buf, &vd, &E.srv))) { Rel(E.buf); g_Why = "vertex buffer"; return &E; }
         E.n = (UINT)(v.size() / 4); E.empty = false;
-        LOGI("FovMask: eye {}: {:.0f} % of its image lies outside its native fov (+ {:.1f} deg), {}: masked with {} triangles at depth {:.0f}",
+        LOGI("FovMask: eye {}: {:.0f} % of its image lies outside its native fov (+ {:.1f} deg){}, {}: masked with {} triangles at depth {:.0f}",
              eye, masked * 100.f, std::max(g_Margin.load(), CameraHook::EyeProjMargin()),
+             g_Corners.load() >= 1.f ? fmt::format(", the fov's corners {:.0f} % more (OutOfViewMaskCorners {:g})", g_CornerShare[eye & 1] * 100.f, g_Corners.load()) : std::string(),
              !g_Lens.load() ? std::string("the lens's hidden area not used (OutOfViewMaskLens = 0)")
                             : lensTris ? fmt::format("the lens's hidden area {} triangles, {:.0f} % more (some of it overlapping)", lensTris, lensShare * 100.f)
                                        : std::string("no lens mask from the runtime (yet)"),
@@ -281,6 +325,13 @@ void FovMask::SetParams(int mode, float marginDeg, bool lens)
                                   : std::string("off (OutOfViewMask = 0)"));
 }
 bool FovMask::Wanted() { return g_On.load(); }
+void FovMask::SetCorners(float n)
+{
+    g_Corners = n < 1.f ? 0.f : std::min(n, 16.f);
+    if (g_Corners.load() >= 1.f)
+        LOGI("FovMask: OutOfViewMaskCorners {:g}: the two outer corners of each eye's fov outside a rounded outline are not shaded either{}", g_Corners.load(),
+             g_On.load() ? "" : " (needs OutOfViewMask 1 or 2: off now)");
+}
 
 bool FovMask::AtDraw(ID3D11DeviceContext* c, const void* view, int eye)
 {

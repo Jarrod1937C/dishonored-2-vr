@@ -147,6 +147,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetFog(Settings::Fog());
     VrTweaks::SetFogMaps(Settings::FogMaps());
     VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    VrTweaks::SetViewDistance(Settings::ViewDistance());
     Fog::SetParams(Settings::CheapFog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
@@ -180,6 +181,7 @@ static DWORD WINAPI InitThread(LPVOID)
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
     Foveation::SetParams(Settings::Foveated());
     FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
+    FovMask::SetCorners(Settings::OutOfViewMaskCorners());
     ScreenShadows::SetParams(Settings::ScreenSpaceShadows(), Settings::ScreenSpaceShadowLength(), Settings::ScreenSpaceShadowSteps(),
                              Settings::ScreenSpaceShadowStrength());
     ScreenShadows::SetObjects(Settings::ScreenSpaceShadowCharacters(), Settings::ShadowMapCharacters(), Settings::ScreenSpaceShadowContact());
@@ -223,6 +225,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s
     ScreenShadows::InstallSmallObjects();   // ScreenSpaceShadowSmallObjects: small moving objects out of the sun's maps
     ScreenShadows::InstallSunUpdateRate();  // ShadowSunUpdateEvery: the sun's far cascades redrawn less often
+    VrTweaks::InstallViewDistance();        // ViewDistance: the game's view-distance level, whatever its menu says
     PassProfile::Install();          // [Advanced] ProfileRenderPasses only
     XInputHook::Install();
     XInputHook::SetEnabled(false);       // pad emulation reaches the engine's event queue but not the player yet (see ENGINE.md)

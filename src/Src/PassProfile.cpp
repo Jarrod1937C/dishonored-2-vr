@@ -510,8 +510,43 @@ namespace
         unsigned long long frame = 0; int row = 0, idx = 0; DWORD tid = 0;
         uint64_t psHash = 0, vsHash = 0; const void* psPtr = nullptr; const void* cs = nullptr;
         uint32_t elems = 0, inst = 0, rtW = 0, rtH = 0, rtFmt = 0, rtN = 0; bool depth = false, indirect = false, dispatch = false;
+        const void* srcRes = nullptr; const void* rtvRes = nullptr; const void* dsvRes = nullptr;   // t0, the first target, the depth
+        uint32_t srcW = 0, srcH = 0, srcFmt = 0, dsW = 0, dsH = 0, dsFmt = 0;
     };
     constexpr int kDSlots = 8192;
+    // Which passes read what (the draw-by-draw frame): every left-eye task's draws and dispatches, the resources behind
+    // their pixel / compute shaders' views, so that what a DEPTHPASS copy writes can be followed to its readers.
+    struct Rd { bool on = false; ID3D11DeviceContext* c = nullptr; int row = -1; };
+    thread_local Rd t_Rd;
+    std::mutex g_ReadM;
+    std::unordered_map<const void*, std::pair<uint64_t, uint64_t>> g_Reads;   // resource -> the rows that read it (bits 0..127)
+    void NoteReads(ID3D11DeviceContext* c, bool dispatch)
+    {
+        if (!c || c != t_Rd.c || t_Rd.row < 0 || t_Rd.row >= 128) return;
+        ID3D11ShaderResourceView* v[16] = {};
+        if (dispatch) c->CSGetShaderResources(0, 16, v); else c->PSGetShaderResources(0, 16, v);
+        const void* res[16] = {}; int n = 0;
+        for (int i = 0; i < 16; i++)
+            if (v[i]) { ID3D11Resource* r = nullptr; v[i]->GetResource(&r); if (r) { res[n++] = r; r->Release(); } v[i]->Release(); }
+        if (!n) return;
+        std::lock_guard lk(g_ReadM);
+        if (g_Reads.size() > 20000) return;
+        for (int i = 0; i < n; i++)
+        {
+            auto& b = g_Reads[res[i]];
+            if (t_Rd.row < 64) b.first |= 1ull << t_Rd.row; else b.second |= 1ull << (t_Rd.row - 64);
+        }
+    }
+    std::string ReadersOf(const void* res)
+    {
+        std::lock_guard lk(g_ReadM);
+        auto it = g_Reads.find(res);
+        if (it == g_Reads.end()) return "none in this frame";
+        std::string out;
+        for (int r = 0; r < 128; r++)
+            if (r < 64 ? (it->second.first >> r) & 1 : (it->second.second >> (r - 64)) & 1) out += fmt::format("{}{}", out.empty() ? "" : ", ", RowName(r));
+        return out;
+    }
     DRec g_D[kDSlots];
     std::atomic<unsigned long long> g_DNext{ 0 };
     std::atomic<unsigned long long> g_DescFrame{ 0 };       // the frame being described (0 none)
@@ -550,6 +585,7 @@ namespace
         d.frame = t_Desc.frame; d.row = t_Desc.row; d.idx = t_Desc.idx++; d.tid = GetCurrentThreadId();
         d.elems = elems; d.inst = inst; d.indirect = indirect; d.dispatch = dispatch;
         d.psHash = d.vsHash = 0; d.psPtr = d.cs = nullptr; d.rtW = d.rtH = d.rtFmt = d.rtN = 0; d.depth = false;
+        d.srcRes = d.rtvRes = d.dsvRes = nullptr; d.srcW = d.srcH = d.srcFmt = d.dsW = d.dsH = d.dsFmt = 0;
         if (dispatch)
         {
             ID3D11ComputeShader* cs = nullptr; c->CSGetShader(&cs, nullptr, nullptr);
@@ -570,11 +606,25 @@ namespace
                     {
                         ID3D11Resource* r = nullptr; rtv[k]->GetResource(&r);
                         d.rtW = TexSize(r, &d.rtH, &d.rtFmt, nullptr, nullptr);
+                        d.rtvRes = r;
                         if (r) r->Release();
                     }
                     rtv[k]->Release();
                 }
-            if (dsv) { d.depth = true; dsv->Release(); }
+            if (dsv)
+            {
+                d.depth = true;
+                ID3D11Resource* r = nullptr; dsv->GetResource(&r);
+                if (r) { d.dsvRes = r; d.dsW = TexSize(r, &d.dsH, &d.dsFmt, nullptr, nullptr); r->Release(); }
+                dsv->Release();
+            }
+            ID3D11ShaderResourceView* t0 = nullptr; c->PSGetShaderResources(0, 1, &t0);
+            if (t0)
+            {
+                ID3D11Resource* r = nullptr; t0->GetResource(&r);
+                if (r) { d.srcRes = r; d.srcW = TexSize(r, &d.srcH, &d.srcFmt, nullptr, nullptr); r->Release(); }
+                t0->Release();
+            }
         }
         c->End(d.b);
         if (d.ps) c->Begin(d.ps);
@@ -661,11 +711,16 @@ namespace
         const Acc saved = t_Acc;
         t_Acc = Acc{}; t_Acc.on = prof;
         const Desc savedDesc = t_Desc;
-        t_Desc = Desc{};
-        if (slot >= 0 && kind == kLeft && DescRow(row))
+        const Rd savedRd = t_Rd;
+        t_Desc = Desc{}; t_Rd = Rd{};
+        if (slot >= 0 && (kind == kLeft || kind == kNoView))
         {
             const unsigned long long df = g_DescFrame.load(std::memory_order_relaxed);
-            if (df && g_Frame.load() == df) { t_Desc.on = true; t_Desc.c = c; t_Desc.row = row; t_Desc.frame = df; }
+            if (df && g_Frame.load() == df)
+            {
+                t_Rd.on = true; t_Rd.c = c; t_Rd.row = row;
+                if (kind == kLeft && DescRow(row)) { t_Desc.on = true; t_Desc.c = c; t_Desc.row = row; t_Desc.frame = df; }
+            }
         }
         LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
         const uintptr_t ret = real(task);
@@ -673,7 +728,7 @@ namespace
         const Acc mine = t_Acc;
         t_Acc = saved;
         if (t_Desc.on) DescClose();
-        t_Desc = savedDesc;
+        t_Desc = savedDesc; t_Rd = savedRd;
         t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
@@ -938,7 +993,8 @@ namespace
     void DescReport(unsigned long long frame)
     {
         struct Out { int row, idx; DWORD tid; double ms; D3D11_QUERY_DATA_PIPELINE_STATISTICS st; bool stats; uint64_t ps, vs; const void* psPtr; const void* cs;
-                     uint32_t elems, inst, rtW, rtH, rtFmt, rtN; bool depth, indirect, dispatch; };
+                     uint32_t elems, inst, rtW, rtH, rtFmt, rtN; bool depth, indirect, dispatch;
+                     const void* srcRes; const void* rtvRes; const void* dsvRes; uint32_t srcW, srcH, srcFmt, dsW, dsH, dsFmt; };
         std::vector<Out> out; int notReady = 0;
         for (int i = 0; i < kDSlots; i++)
         {
@@ -951,7 +1007,8 @@ namespace
             const bool stats = in && d.ps && g_Imm->GetData(d.ps, &ps, sizeof ps, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
             if (in && te >= tb && g_Freq)
                 out.push_back({ d.row, d.idx, d.tid, (double)(te - tb) * 1000.0 / (double)g_Freq, ps, stats, d.psHash, d.vsHash, d.psPtr, d.cs,
-                                d.elems, d.inst, d.rtW, d.rtH, d.rtFmt, d.rtN, d.depth, d.indirect, d.dispatch });
+                                d.elems, d.inst, d.rtW, d.rtH, d.rtFmt, d.rtN, d.depth, d.indirect, d.dispatch,
+                                d.srcRes, d.rtvRes, d.dsvRes, d.srcW, d.srcH, d.srcFmt, d.dsW, d.dsH, d.dsFmt });
             else notReady++;
             d.state = 0;
         }
@@ -994,6 +1051,28 @@ namespace
                 for (size_t i = 0; i < big.size() && i < 12; i++)
                     s += fmt::format(" | #{} {:.2f} Mpx {} prims {:.3f} ms PS {:016x}", big[i]->idx, big[i]->st.PSInvocations / 1e6, big[i]->st.CPrimitives, big[i]->ms, big[i]->ps);
                 LOGI("PassProfile: DEPTHPASS: the draws that shade the most pixels:{}", s);
+                // its full-screen draws (copies of depth, mostly): what each reads and writes, and who reads that
+                {
+                    std::map<const void*, int> rtvUse, dsvUse;   // the targets of its geometry draws
+                    for (const Out& o : out)
+                        if (o.row == g_RowDepth && o.stats && o.st.CPrimitives > 4) { if (o.rtvRes) rtvUse[o.rtvRes]++; if (o.dsvRes) dsvUse[o.dsvRes]++; }
+                    const void* sceneRt = nullptr; const void* sceneDs = nullptr; int best = 0;
+                    for (auto& kv : rtvUse) if (kv.second > best) { best = kv.second; sceneRt = kv.first; }
+                    best = 0;
+                    for (auto& kv : dsvUse) if (kv.second > best) { best = kv.second; sceneDs = kv.first; }
+                    auto name = [&](const void* r) { return !r ? std::string("-") : r == sceneDs ? std::string("SCENE DEPTH") : r == sceneRt ? std::string("SCENE RG16F")
+                                                                                   : fmt::format("{}", r); };
+                    LOGI("PassProfile: DEPTHPASS's geometry writes its target {} (read by: {}) and the depth {} (read by: {})",
+                         sceneRt, sceneRt ? ReadersOf(sceneRt) : std::string("-"), sceneDs, sceneDs ? ReadersOf(sceneDs) : std::string("-"));
+                    for (const Out& o : out)
+                    {
+                        if (o.row != g_RowDepth || !o.stats || o.st.CPrimitives > 4 || o.st.PSInvocations < 1000000) continue;
+                        const void* dst = o.rtvRes ? o.rtvRes : o.dsvRes;
+                        LOGI("PassProfile:   full-screen #{} (thread {}) PS {:016x} {:.3f} ms {:.1f} Mpx: reads {} ({}x{} {}) -> {} {} ({}x{} {}); that target is read by: {}",
+                             o.idx, o.tid, o.ps, o.ms, o.st.PSInvocations / 1e6, name(o.srcRes), o.srcW, o.srcH, Fmt(o.srcFmt), o.rtvRes ? "target" : "depth", name(dst),
+                             o.rtvRes ? o.rtW : o.dsW, o.rtvRes ? o.rtH : o.dsH, Fmt(o.rtvRes ? o.rtFmt : o.dsFmt), dst ? ReadersOf(dst) : std::string("-"));
+                    }
+                }
             }
         }
         // the full-screen passes, draw by draw
@@ -1008,6 +1087,7 @@ namespace
                  o.rtN, o.rtW, o.rtH, Fmt(o.rtFmt), o.depth ? " + depth" : "", ShaderReads(o.dispatch ? o.cs : o.psPtr, o.ps));
         }
         LOGI("PassProfile: ===== end of the draw-by-draw frame #{} =====", frame);
+        { std::lock_guard lk(g_ReadM); g_Reads.clear(); }
     }
     void ResetWindow()
     {
@@ -1148,6 +1228,7 @@ void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned i
     if (t_Caps.on) CaptureTargets();
     if (t_SssCtx) ScreenShadows::AtTaskDraw(t_SssCtx, t_SssView, t_SssEye);
     if (t_Desc.on) DescDraw(c, elements, instances, indirect, false);   // (after the mod's own draws above)
+    if (t_Rd.on) NoteReads(c, false);
     if (!t_Acc.on) return;
     t_Acc.draws++; if (indirect) t_Acc.indirect++;
     t_Acc.elems += (uint64_t)elements * (instances ? instances : 1);
@@ -1162,6 +1243,7 @@ void PassProfile::NoteCopy() { if (t_Acc.on) t_Acc.copies++; }
 void PassProfile::NoteDispatch(ID3D11DeviceContext* c, unsigned x, unsigned y, unsigned z, bool indirect)
 {
     if (t_Desc.on) DescDraw(c, x * y * z, 0, indirect, true);
+    if (t_Rd.on) NoteReads(c, true);
     if (!t_Acc.on) return;
     t_Acc.dispatches++; if (indirect) t_Acc.indirect++;
     t_Acc.groups += (uint64_t)x * y * z;

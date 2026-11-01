@@ -26,6 +26,10 @@ namespace VrTweaks
     //! [Display] StaticLodZoom (experimental, default 1 = untouched): the game's r_lodZoomMultiplicator ("zoom
     //! multiplicator for static LODs") held at this, checked every second
     void SetLodZoom(float z);
+    //! [Display] ViewDistance: the game's view-distance level used instead of the menu's (0 very low .. 5 ultra; -1 =
+    //! the game's); InstallViewDistance hooks where the game applies it (at init, before the game sets its settings up)
+    void SetViewDistance(int level);
+    void InstallViewDistance();
     std::string MapName();                  //!< the loaded map's name as the game has it ("" between maps)
     void OnPresent();                       //!< follows whether the headset shows the game (render thread)
     void OnMainView(void* view);            //!< the main view being set up (ViewMatrixHook): its render flags

@@ -20,6 +20,9 @@ namespace FovMask
     //! from the ini, before PassProfile::Install; `lens` = the lens's hidden area too (XR_KHR_visibility_mask)
     //! `mode` 0 off, 1 everything outside the fov, 2 only each eye's outer side (left of the left eye, right of the right)
     void SetParams(int mode, float marginDeg, bool lens);
+    //! [Display] OutOfViewMaskCorners: also the fov's corners outside the superellipse of this exponent (0 = none);
+    //! after SetParams
+    void SetCorners(float n);
     bool Wanted();
     //! PassProfile's executor hook, at a draw of a DEPTHPASS task of eye `eye`'s main view (before the draw is made):
     //! true = done for this task (drawn, or not to be: no fov yet, not the main depth buffer...), false = try again at
