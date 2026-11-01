@@ -66,6 +66,10 @@ namespace
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
         { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr },
+        { "display.screenspaceshadows", Kind::Bool,   "1", 0, 0, nullptr },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
+        { "display.screenspaceshadowlength", Kind::Float, "3", 0.2f, 20, nullptr },   // m towards the sun
+        { "display.screenspaceshadowsteps", Kind::Float, "16", 4, 64, nullptr },
+        { "display.screenspaceshadowstrength", Kind::Float, "1", 0, 1, nullptr },
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr },   // ViewMatrixHook: no game neck on top of the real one
@@ -316,6 +320,10 @@ float Settings::SnapTurnBlankOpacity() { return F("controls.snapturnblankopacity
 bool Settings::StereoHud() { return B("display.stereohud"); }
 float Settings::HudDistance() { return F("display.huddistance"); }
 bool Settings::HudMarkers() { return B("display.hudmarkers"); }
+bool Settings::ScreenSpaceShadows() { return B("display.screenspaceshadows"); }
+float Settings::ScreenSpaceShadowLength() { return F("display.screenspaceshadowlength"); }
+int Settings::ScreenSpaceShadowSteps() { return (int)std::lround(F("display.screenspaceshadowsteps")); }
+float Settings::ScreenSpaceShadowStrength() { return F("display.screenspaceshadowstrength"); }
 float Settings::HudScale() { return F("display.hudscale"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }

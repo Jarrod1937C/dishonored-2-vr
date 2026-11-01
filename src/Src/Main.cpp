@@ -16,6 +16,7 @@
 #include "Fog.h"
 #include "Foveation.h"
 #include "FovMask.h"
+#include "ScreenShadows.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
 #include "Commands.h"
@@ -58,6 +59,7 @@ static void OnPresent(IDXGISwapChain* sc)
         // The proxy loads before the exe's static initializers run, so the
         // idCVar objects are only valid once the game is actually rendering.
         CVars::Init();
+        ScreenShadows::StartSettingsLog();   // the game's shadow settings, now and whenever one changes
         SysInfo::LogFirstPresent(sc);
         GpuTrace::Install(sc);   // needs the game's real device context vtable
         PlayerState::Install();  // counting stubs on the player-state vtables (what the player is doing)
@@ -166,6 +168,8 @@ static DWORD WINAPI InitThread(LPVOID)
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
     Foveation::SetParams(Settings::Foveated());
     FovMask::SetParams(Settings::OutOfViewMask(), Settings::OutOfViewMaskMargin(), Settings::OutOfViewMaskLens());
+    ScreenShadows::SetParams(Settings::ScreenSpaceShadows(), Settings::ScreenSpaceShadowLength(), Settings::ScreenSpaceShadowSteps(),
+                             Settings::ScreenSpaceShadowStrength());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();
     // Test hook: <game>\DVR_usemock.txt holding a runtime manifest path selects

@@ -8,6 +8,7 @@
 #include "Fog.h"
 #include "Foveation.h"
 #include "FovMask.h"
+#include "ScreenShadows.h"
 #include "VrTweaks.h"
 #include <d3d11.h>
 #include <dxgi1_4.h>
@@ -54,6 +55,8 @@ namespace
     std::atomic<bool> g_On{ false };              // profiling
     std::atomic<bool> g_FogHook{ false };         // Fog's anchors (FORWARD_DYNAMIC end, ALPHA_LIT start) need the hook too
     int g_RowOpaque = -1, g_RowTransparent = -1;  // FORWARD_DYNAMIC, ALPHA_LIT
+    std::atomic<bool> g_SssHook{ false };         // ScreenShadows: the end of SCREENSHADOWS (the sun's mask still bound)
+    int g_RowScreenShadows = -1;
     std::atomic<bool> g_FovHook{ false };         // Foveation: the scene passes, at the eye's resolution
     std::atomic<bool> g_MaskHook{ false };        // FovMask: the depth pass of each eye's main view
     int g_RowDepth = -1;                          // DEPTHPASS
@@ -517,6 +520,7 @@ namespace
         if (fovRow) Foveation::End(c, foveated);
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
+        if (c && mainView && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed)) ScreenShadows::AfterMask(c, view, eye);
         if (slot >= 0)
         {
             Rec& r = g_Rec[slot];
@@ -787,6 +791,7 @@ void PassProfile::Install()
         if (!strcmp(kPasses[i].name, "SSAO")) g_RowSsao = i;
         if (!strcmp(kPasses[i].name, "DOF")) g_RowDof = i;
         if (!strcmp(kPasses[i].name, "DEPTHPASS")) g_RowDepth = i;
+        if (!strcmp(kPasses[i].name, "SCREENSHADOWS")) g_RowScreenShadows = i;
         // Foveation: what shades the scene at the eye's resolution
         static const char* fov[] = { "DEPTHPASS", "DEPTHALPHA_LIT", "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY" };
         for (const char* n : fov) if (!strcmp(kPasses[i].name, n) && i < 64) g_FovRow[i] = true;
@@ -794,7 +799,8 @@ void PassProfile::Install()
     g_FogHook = Fog::Wanted();
     g_FovHook = Foveation::Wanted();
     g_MaskHook = FovMask::Wanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load()) || g_Exec) return;
+    g_SssHook = ScreenShadows::Wanted();
+    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -806,7 +812,7 @@ void PassProfile::Install()
     DetourAttach(&(PVOID&)g_ExecImm, (PVOID)&HkExec<1>);
     const LONG e = DetourTransactionCommit();
     LOGI("PassProfile: task executors exe+0x2C5D50 / exe+0x2C5F60 hooked (detour={})", e);
-    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; g_MaskHook = false; }
+    if (e != NO_ERROR) { g_On = false; g_FogHook = false; g_FovHook = false; g_SkipEffects = false; g_MaskHook = false; g_SssHook = false; }
 }
 
 void PassProfile::SetSkipEffects(int mode)

@@ -264,6 +264,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CheapFogMinBrightness = 0.35 (never darker than this, in the game's light units)
                CheapFogFollowExposure = 1 (the fog changes with the eye adaptation as the scene does)
                CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
+               ScreenSpaceShadows = 1 (sharp sun shadows of what is on screen, traced through the depth buffer)
+               ScreenSpaceShadowLength = 3 (m)   ScreenSpaceShadowSteps = 16   ScreenSpaceShadowStrength = 1
                OutOfViewMask = 0 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
                OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
                OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime)
