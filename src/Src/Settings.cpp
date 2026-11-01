@@ -145,6 +145,26 @@ namespace
         { "display.cutsceneletterbox",  Kind::Bool,   "0", 0, 0, nullptr },
         { "display.cutscenearms",       Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.unlockeverything",    Kind::Bool,   "0", 0, 0, nullptr },
+        // the parts of it, each on its own (TestAids::Unlock)
+        { "cheats.unlockoutsidersmark", Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockpowers",        Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockpowerupgrades", Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockblackmarketupgrades", Kind::Bool, "0", 0, 0, nullptr },
+        { "cheats.unlockweapons",       Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.fillammoandgadgets",  Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.fillelixirs",         Kind::Bool,   "0", 0, 0, nullptr },
+        // each power on its own ([Cheats.Powers]; Settings::PowerUnlocks: the parts of their item names)
+        { "cheats.unlockblink",           Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockfarreach",        Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockdarkvision",      Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockpossession",      Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockdevouringswarm",  Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockbendtime",        Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockwindblast",       Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockdomino",          Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockdoppelganger",    Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockmesmerize",       Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockshadowwalk",      Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infinitemana",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infiniteammo",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infinitehealth",      Kind::Bool,   "0", 0, 0, nullptr },
@@ -317,10 +337,8 @@ std::vector<std::string> Settings::PackageCommands()
     // Camera motion blur smears the whole view each time the head-driven camera turns: off in VR (the game keeps it
     // in its own config afterwards, as if it had been unticked in the options).
     if (B("display.disablemotionblur")) c.push_back("exec r_skipCameraMotionBlur 1");
-    // `vr autoall 1` (the development command) also switches infinite mana, ammo and items on; the ini's own switches
-    // decide each one after it, so "everything unlocked" does not have to mean "nothing runs out" (release 1.0: unlocked
-    // + infinite mana, ammo and health normal). Same frame, before any tick: an infinite switched off here never acts.
-    if (B("cheats.unlockeverything")) c.push_back("vr autoall 1");
+    // (UnlockEverything and its parts: TestAids::SetAutoUnlock, from Main -- since 2026-11-01 no longer `vr autoall 1`,
+    // which also switched the infinites on before the lines below switched them as the ini says)
     c.push_back(B("cheats.infinitemana") ? "vr mana inf" : "vr mana 0");
     c.push_back(B("cheats.infiniteammo") ? "vr ammo inf" : "vr ammo 0");   // the game's own counter: ammo, gadgets and elixirs
     c.push_back(B("cheats.infiniteammo") ? "vr infitems 1" : "vr infitems 0");   // + the top-up of what was held
@@ -369,6 +387,33 @@ float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth")
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
 bool Settings::MouthPotions() { return B("gameplay.mouthpotions"); }
+std::string Settings::PowerUnlocks()
+{
+    // the part of each power's inventory item name (models/powers/<x>/<x>.inventoryitem; ENGINE.md 10.1)
+    static const std::pair<const char*, const char*> kPowers[] = {
+        { "cheats.unlockblink", "blink" },
+        { "cheats.unlockfarreach", "grapple" },
+        { "cheats.unlockdarkvision", "darkvision" },
+        { "cheats.unlockpossession", "possession" },
+        { "cheats.unlockdevouringswarm", "devouring_swarm" },
+        { "cheats.unlockbendtime", "bendtime" },
+        { "cheats.unlockwindblast", "windblast" },
+        { "cheats.unlockdomino", "phantasmal_link" },
+        { "cheats.unlockdoppelganger", "doppelganger" },
+        { "cheats.unlockmesmerize", "mesmerize" },
+        { "cheats.unlockshadowwalk", "shadow_walk" },
+    };
+    std::string s;
+    for (const auto& p : kPowers) if (B(p.first)) s += (s.empty() ? "" : ",") + std::string(p.second);
+    return s;
+}
+unsigned Settings::Unlocks()
+{
+    if (B("cheats.unlockeverything")) return 127u;
+    return (B("cheats.unlockoutsidersmark") ? 1u : 0u) | (B("cheats.unlockpowers") ? 2u : 0u) | (B("cheats.unlockpowerupgrades") ? 4u : 0u)
+         | (B("cheats.unlockblackmarketupgrades") ? 8u : 0u) | (B("cheats.unlockweapons") ? 16u : 0u) | (B("cheats.fillammoandgadgets") ? 32u : 0u)
+         | (B("cheats.fillelixirs") ? 64u : 0u);
+}
 bool Settings::SwipeDials() { return B("gameplay.swipedials"); }
 bool Settings::SlideWindows() { return B("gameplay.slidewindows"); }
 bool Settings::HolsterWeapons() { return B("gameplay.holsterweapons"); }
@@ -570,6 +615,24 @@ namespace
         { "foveatedrendering", "0" },
         { "outofviewmask", "2" },
         { "unlockeverything", "0" },
+        { "unlockoutsidersmark", "0" },
+        { "unlockpowers", "0" },
+        { "unlockpowerupgrades", "0" },
+        { "unlockblackmarketupgrades", "0" },
+        { "unlockweapons", "0" },
+        { "fillammoandgadgets", "0" },
+        { "fillelixirs", "0" },
+        { "unlockblink", "0" },
+        { "unlockfarreach", "0" },
+        { "unlockdarkvision", "0" },
+        { "unlockpossession", "0" },
+        { "unlockdevouringswarm", "0" },
+        { "unlockbendtime", "0" },
+        { "unlockwindblast", "0" },
+        { "unlockdomino", "0" },
+        { "unlockdoppelganger", "0" },
+        { "unlockmesmerize", "0" },
+        { "unlockshadowwalk", "0" },
         { "infinitemana", "1" },
         { "infiniteammo", "1" },
         { "infinitehealth", "1" },

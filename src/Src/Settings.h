@@ -69,6 +69,10 @@ namespace Settings
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool MouthPotions();                          //!< [Gameplay] MouthPotions: a grip at the mouth drinks an elixir (KbmInject)
+    //! [Cheats] UnlockEverything (= all) or its parts: the TestAids::Unlock mask given to every save loaded
+    unsigned Unlocks();
+    //! [Cheats.Powers] the powers switched on one by one, as TestAids::SetAutoPowers takes them ("blink,darkvision"; "" = none)
+    std::string PowerUnlocks();
     bool SwipeDials();                            //!< [Gameplay] SwipeDials: slide a hand up / down a safe dial to turn it
     bool SlideWindows();                          //!< [Gameplay] SlideWindows: slide a hand up / down a window to raise / lower it
     bool HolsterWeapons();                        //!< [Gameplay] HolsterWeapons: left trigger at the left hip draws the pistol, behind the back the crossbow

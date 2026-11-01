@@ -46,6 +46,7 @@
 #include "Settings.h"
 #include "Roomscale.h"
 #include "ControllerBindings.h"
+#include "TestAids.h"
 #include "Seeds.h"
 #include "SysInfo.h"
 #include "Version.h"
@@ -174,6 +175,14 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "slidewindows" })) Collision::SetWindows(Settings::SlideWindows());
     if (has({ "holsterweapons" })) Holster::SetEnabled(Settings::HolsterWeapons());
     if (has({ "mouthpotions" })) KbmInject::SetMouthPotions(Settings::MouthPotions());
+    if (has({ "unlockeverything", "unlockoutsidersmark", "unlockpowers", "unlockpowerupgrades", "unlockblackmarketupgrades", "unlockweapons",
+              "fillammoandgadgets", "fillelixirs" }))
+        TestAids::SetAutoUnlock(Settings::Unlocks());   // the current player gets the new ones in a few seconds
+    {
+        bool power = false;
+        for (const char* k : { "unlockblink", "unlockfarreach", "unlockdarkvision", "unlockpossession", "unlockdevouringswarm", "unlockbendtime", "unlockwindblast", "unlockdomino", "unlockdoppelganger", "unlockmesmerize", "unlockshadowwalk" }) if (has({ k })) power = true;
+        if (power) { const std::string p = Settings::PowerUnlocks(); TestAids::SetAutoPowers(p.empty() ? "off" : p); }
+    }
     if (has({ "huddistance", "hudscale" })) ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     if (has({ "minimalreticle", "reticleopacity" })) Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());
     if (has({ "foveatedrendering" })) Foveation::SetParams(Settings::Foveated());
@@ -239,6 +248,8 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetWindows(Settings::SlideWindows());
     Holster::SetEnabled(Settings::HolsterWeapons());
     KbmInject::SetMouthPotions(Settings::MouthPotions());
+    TestAids::SetAutoUnlock(Settings::Unlocks());   // [Cheats]: given to every save loaded, ~3 s into play
+    if (const std::string p = Settings::PowerUnlocks(); !p.empty()) TestAids::SetAutoPowers(p);   // [Cheats.Powers]: the mark and those
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());
     ScreenMode::SetHud(Settings::StereoHud(), Settings::HudDistance(), Settings::HudScale(), Settings::HudMarkerSize());
     Reticle::SetStyle(Settings::MinimalReticle(), Settings::ReticleOpacity());

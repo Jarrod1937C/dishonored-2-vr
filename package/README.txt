@@ -320,6 +320,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
    [Cheats]    UnlockEverything = 1   InfiniteMana = 1   InfiniteAmmo = 0   InfiniteHealth = 0
+               or, each on its own: UnlockOutsidersMark, UnlockPowers, UnlockPowerUpgrades,
+               UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs
+   [Cheats.Powers] each power on its own: UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,
+               UnlockDevouringSwarm, UnlockBendTime, UnlockWindblast, UnlockDomino, UnlockDoppelganger,
+               UnlockMesmerize, UnlockShadowWalk
    [System]    KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
                                  picture instead of an hourglass)
                NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;

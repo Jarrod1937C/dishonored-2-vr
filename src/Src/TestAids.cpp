@@ -26,6 +26,7 @@ namespace
     std::atomic<float> g_ManaLast{ -1.f }, g_ManaMaxLast{ -1.f };
     std::string g_AutoPowers;                 // under g_M; empty = off
     bool g_AutoAll = false;                   // under g_M: giveall for every new player
+    unsigned g_AutoMask = 0;                  // under g_M: the ini's parts of giveall for every new player (TestAids::Unlock)
     void* g_AutoPlayer = nullptr; int g_AutoTicks = 0; unsigned g_AutoRuns = 0;
 
     bool Readable(const void* p, size_t n)
@@ -276,8 +277,9 @@ namespace
             LOGI("TestAids: giveupgrade '{}': {} upgrades known, {} given, {} already owned", a.arg, n, given, had);
             return;
         }
-        if (a.kind == 7)
-        {   // giveall: everything a player can own, for this character
+        if (a.kind == 7 || a.kind == 8)
+        {   // giveall: everything a player can own, for this character -- or (8) the parts of it in the mask (arg)
+            const unsigned mask = a.kind == 7 ? TestAids::kUnlockAll : (unsigned)std::strtoul(a.arg.c_str(), nullptr, 10);
             std::string who = "corvo";
             if (uint8_t* ps = (uint8_t*)GetComponent(player, TestAids::kPowerSystemCpntTypeInfo); ps && Readable(ps + TestAids::kEquipUpgradeList, 0x10))
             {   // the black market's tree names its character-specific upgrades *_corvo / *_emily
@@ -293,16 +295,17 @@ namespace
                 }
                 if (emily > corvo) who = "emily";
             }
-            LOGI("TestAids: giveall for {}", who);
-            const Action subs[] = {
-                { 0, {} }, { 1, "all" }, { 3, "all" }, { 5, "all" },
-                { 6, "models/weapons/gun_player/" }, { 6, "models/weapons/crossbow/crossbow_" + who + "." },
+            LOGI("TestAids: give{} for {}", a.kind == 7 ? "all" : fmt::format(" parts {:#x}", mask), who);
+            const struct { unsigned bit; Action act; } subs[] = {
+                { TestAids::kUnlockMark | TestAids::kUnlockPowers, { 0, {} } }, { TestAids::kUnlockPowers, { 1, "all" } },
+                { TestAids::kUnlockPowerUpgrades, { 3, "all" } }, { TestAids::kUnlockEquipUpgrades, { 5, "all" } },
+                { TestAids::kUnlockWeapons, { 6, "models/weapons/gun_player/" } }, { TestAids::kUnlockWeapons, { 6, "models/weapons/crossbow/crossbow_" + who + "." } },
                 // NOT the Heart: it is a story item the Outsider hands over in the Void at the start of the game, and
                 // a player who already holds one cannot take it there (a tester was stuck in front of it, 2026-10-19).
-                { 6, who == "corvo" ? "models/items/spyglass/spyglass_corvo." : "models/items/spyglass/spyglass.inventoryitem" },
-                { 6, "components/equipment/ammo/*max" }, { 6, "components/equipment/gadgets/*max" },
-                { 6, "components/interactive/health_potion.*max" }, { 6, "components/interactive/mana_potion.*max" } };
-            for (const Action& sub : subs) DoAction(sub);
+                { TestAids::kUnlockWeapons, { 6, who == "corvo" ? "models/items/spyglass/spyglass_corvo." : "models/items/spyglass/spyglass.inventoryitem" } },
+                { TestAids::kUnlockAmmo, { 6, "components/equipment/ammo/*max" } }, { TestAids::kUnlockAmmo, { 6, "components/equipment/gadgets/*max" } },
+                { TestAids::kUnlockElixirs, { 6, "components/interactive/health_potion.*max" } }, { TestAids::kUnlockElixirs, { 6, "components/interactive/mana_potion.*max" } } };
+            for (const auto& sub : subs) if (mask & sub.bit) DoAction(sub.act);
             return;
         }
         if (a.kind == 6)
@@ -501,6 +504,18 @@ void TestAids::SetAutoAll(int on)
     SetInfiniteMana(on); SetInfiniteAmmo(on); SetInfiniteItems(on);
     LOGI("TestAids: autoall {}", on);
 }
+void TestAids::SetAutoUnlock(unsigned mask)
+{
+    {
+        std::lock_guard lk(g_M);
+        if (mask == g_AutoMask) return;
+        g_AutoMask = mask & kUnlockAll;
+        g_AutoPlayer = nullptr;               // apply to the current player too
+    }
+    LOGI("TestAids: the ini's unlocks {:#x} for every save loaded (mark {}, powers {}, power upgrades {}, black market {}, weapons {}, ammo {}, elixirs {})", mask,
+         (mask & kUnlockMark) != 0, (mask & kUnlockPowers) != 0, (mask & kUnlockPowerUpgrades) != 0, (mask & kUnlockEquipUpgrades) != 0,
+         (mask & kUnlockWeapons) != 0, (mask & kUnlockAmmo) != 0, (mask & kUnlockElixirs) != 0);
+}
 void TestAids::SetInfiniteItems(int on) { g_InfItems = on; LOGI("TestAids: infinite items {}", on ? "on" : "off"); }
 void TestAids::SetInfiniteAmmo(int on) { g_InfAmmo = on; LOGI("TestAids: infinite ammo {}", on ? "on" : "off"); }
 void TestAids::SetInfiniteMana(int on) { g_InfMana = on; LOGI("TestAids: infinite mana {}", on ? "on" : "off"); }
@@ -546,14 +561,15 @@ void TestAids::Tick()
         // Only while actually playing: the main menu runs a player too, and first-person draws are the mod's one
         // positive "in game" signal.
         const bool playing = GpuTrace::FirstPersonDraws() > 0;
-        if ((!g_AutoPowers.empty() || g_AutoAll) && playing && g_AutoTicks < 180 && ++g_AutoTicks == 180)
+        if ((!g_AutoPowers.empty() || g_AutoAll || g_AutoMask) && playing && g_AutoTicks < 180 && ++g_AutoTicks == 180)
         {
-            g_Actions.push_back({ 0, {} });
+            if (!g_AutoPowers.empty() || g_AutoAll) g_Actions.push_back({ 0, {} });
             if (!g_AutoPowers.empty()) g_Actions.push_back({ 1, g_AutoPowers });
             if (g_AutoPowers.find("all") != std::string::npos) g_Actions.push_back({ 3, "all" });   // and every upgrade (possessing humans...)
             if (g_AutoAll) g_Actions.push_back({ 7, {} });
+            else if (g_AutoMask) g_Actions.push_back({ 8, std::to_string(g_AutoMask) });
             g_AutoRuns++;
-            LOGI("TestAids: autopowers for player {}: the mark and '{}'{}", player, g_AutoPowers, g_AutoAll ? ", and everything else (autoall)" : "");
+            LOGI("TestAids: autopowers for player {}: '{}'{}", player, g_AutoPowers, g_AutoAll ? ", and everything else (autoall)" : g_AutoMask ? fmt::format(", the ini's unlocks {:#x}", g_AutoMask) : std::string());
         }
     }
     for (;;)

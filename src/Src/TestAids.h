@@ -73,6 +73,20 @@ namespace TestAids
     //! GiveAll for every new player (each load / level change, ~3 s in), plus infinite mana, ammo and items. For
     //! DVR_autoexec.txt: what is given lives in the session (and in any save made after it), a load forgets it.
     void SetAutoAll(int on);
+    //! The parts of GiveAll, for the ini's cheats ([Cheats.Player] Unlock* / Fill*, 2026-11-01): given to every new
+    //! player (~3 s into play) and once to the current one when the set changes. Nothing is taken back when one is off.
+    enum Unlock : unsigned
+    {
+        kUnlockMark = 1u,              //!< the Outsider's mark
+        kUnlockPowers = 2u,            //!< every power (and the mark they need)
+        kUnlockPowerUpgrades = 4u,     //!< every power upgrade and enhancement, bone charm crafting...
+        kUnlockEquipUpgrades = 8u,     //!< every black market upgrade (weapons, gadgets, gear)
+        kUnlockWeapons = 16u,          //!< the pistol, the character's crossbow, the spyglass
+        kUnlockAmmo = 32u,             //!< ammo and gadgets filled up
+        kUnlockElixirs = 64u,          //!< health and mana elixirs filled up
+        kUnlockAll = 127u
+    };
+    void SetAutoUnlock(unsigned mask);
     //! Mana: 1 = kept full every frame (infinite), 0 = the game's own.
     void SetInfiniteMana(int on);
     void SetInfiniteHealth(int on);   //!< vr hp inf|normal: the player's health kept full (ark_god_player does not hold)
