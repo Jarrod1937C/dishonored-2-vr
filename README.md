@@ -3,6 +3,9 @@
 A native VR mod for **Dishonored 2** (Arkane Studios, 2016): play the whole game in a PC VR headset with motion
 controllers. Free, open source, unofficial.
 
+This mod is only possible thanks to the initial work by **The Cosmic Tangerine**, whose original Dishonored 2 VR mod
+it builds on.
+
 - **The view follows your head** in 6DOF; walk around your room, lean, peek and crouch with your body.
 - **Two independent hands**: the sword in the right, the pistol, crossbow, powers and grenades in the left, each one
   aimed exactly where that hand points, on full arms with inverse kinematics.
@@ -15,6 +18,8 @@ controllers. Free, open source, unofficial.
 - **Real stereo 3D** at the headset's full refresh, menus on a big screen in the room, the HUD as a watch on your
   wrist, and cutscenes played around you.
 
+> **Release coming soon: no build is available to download yet.**
+>
 > Status: **0.5.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
 > Beyond 2 and a Pimax using Valve Index controllers. Other headsets and controllers have their own profiles and are
 > expected to work, but are less tested: see [docs/STATUS.md](docs/STATUS.md) for what is verified, and the known
@@ -23,6 +28,7 @@ controllers. Free, open source, unofficial.
 ## Contents
 
 - [Install](#install) and [Requirements](#requirements)
+- [Known limitations](#known-limitations)
 - [Features](#features)
   - [Your body](#your-body)
   - [Two independent hands](#two-independent-hands)
@@ -49,11 +55,12 @@ controllers. Free, open source, unofficial.
   - [Stereo rendering](#stereo-rendering)
   - [Performance optimizations](#performance-optimizations)
 - [For developers and modders](#for-developers-and-modders)
-- [Support](#support) and [License and credits](#license-and-credits)
+- [License and credits](#license-and-credits)
 
 ## Install
 
-1. Download `DishonoredVR-<version>.zip` from the [Releases](../../releases) page.
+1. Download `DishonoredVR-<version>.zip` from the [Releases](../../releases) page (coming soon: there is no release
+   yet).
 2. In Steam: right-click Dishonored 2 > Manage > Browse local files (the folder with `Dishonored2.exe`).
 3. Copy `dinput8.dll`, `DishonoredVR.dll`, `DishonoredVR.ini` and the `VRControllerBindings` folder into that folder.
 4. Make your headset's app the active OpenXR runtime (Meta Horizon Link app, Virtual Desktop's VDXR, or SteamVR >
@@ -73,6 +80,32 @@ uninstall, delete those files (the game itself is never modified).
 | Headset | Any PC VR headset with an OpenXR runtime. Tested: Meta Quest 3 over Link / Air Link; Bigscreen Beyond 2 and Pimax on SteamVR with Index controllers. Expected to work: other Quests, Virtual Desktop, other SteamVR headsets, WMR, Pico, Vive (see [STATUS](docs/STATUS.md)). |
 | Display mode | Windowed (not fullscreen or borderless). |
 | Graphics | A PC that runs VR. Fixed foveated rendering (optional) needs an NVIDIA card. |
+
+## Known limitations
+
+**Performance is the biggest limitation.** Dishonored 2 is hard to run at a full, steady frame rate even as a flat
+game, and VR asks far more of it: every game tick is drawn twice (once per eye), at the headset's resolution, which is
+much higher than a monitor's. At 90 Hz that is 90 stereo pairs, or 180 rendered frames, every second.
+
+Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had a hard time holding a constant 90 fps
+(stereo pairs), despite the many optimizations the mod employs (see
+[Performance optimizations](#performance-optimizations)). Expect to tune it for your PC:
+
+- Turn on the **FPS counter** (VR Performance tab, or `FpsCounter` in the ini): green at the headset's refresh rate,
+  amber below it, red under three quarters of it.
+- Try the settings in the **VR Performance** and **VR Display** tabs and the game's own graphics options (shadows,
+  view distance, detail) and watch the counter.
+- The biggest lever is most likely the **rendering resolution**: lower `RenderScale` (for example 0.8), or the
+  resolution in your headset's PC app (SteamVR's per-application resolution, the Meta Horizon Link app, Virtual
+  Desktop).
+
+Other limitations:
+
+- Only the current **Steam** build of Dishonored 2, in **windowed** mode, is supported; the game window must stay in
+  front on the PC (the mod keeps it there).
+- Most testing was on a Quest 3 and on SteamVR with Index controllers; other headsets and controllers have profiles
+  but are less tested.
+- [docs/STATUS.md](docs/STATUS.md) lists every known issue, and what is verified and what is not.
 
 ## Features
 
@@ -442,16 +475,15 @@ Details in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 Bug reports are welcome in the Issues: attach `DishonoredVR.log` and `DishonoredVR.prev.log` from the game folder,
 your headset and how it is connected, and say what you were doing.
 
-## Support
-
-If you enjoy the mod, you can support its development:
-[patreon.com/CosmicTangerine](https://www.patreon.com/CosmicTangerine) ·
-[ko-fi.com/cosmictangerine](https://ko-fi.com/cosmictangerine)
-
 ## License and credits
 
-Made by **The Cosmic Tangerine**. See [LICENSE](LICENSE). Third-party software linked into the DLLs (Microsoft
-Detours, {fmt}, Dear ImGui, the OpenXR SDK loader, JsonCpp) is listed with its licences in `THIRD-PARTY-NOTICES.txt`
+Based on the original Dishonored 2 VR mod by **The Cosmic Tangerine**, who built its foundation. This version is an
+extensive update of his work: it reworks the sword, throwing and grabbing into physical interactions, brings stereo rendering
+to the headset's full refresh, and adds collision, holsters and the performance work. His license still applies to the whole project: see
+[LICENSE](LICENSE).
+
+Third-party software linked into the DLLs (Microsoft Detours, {fmt}, Dear ImGui, the OpenXR SDK loader, JsonCpp) is
+listed with its licences in `THIRD-PARTY-NOTICES.txt`
 in every release zip.
 
 Dishonored 2 is a trademark of ZeniMax Media / Bethesda Softworks, developed by Arkane Studios. This project is not
