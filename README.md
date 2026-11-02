@@ -12,7 +12,9 @@ it builds on.
   aimed exactly where that hand points, on full arms with inverse kinematics.
 - **A physical sword**: the blade hits what it touches, harder the faster you swing; gestures charge the power attack
   and block.
-- **Knock a guard out** with a blow to the back of his head, or take him down from behind.
+- **Knockout blows, a new game mechanic**: sneak up behind a guard and knock him out by hand with a blow to the back
+  of his head, a VR-friendly non-lethal takedown with no choke animation. The game's own takedowns from behind still
+  work too.
 - **Solid hands and weapons** that stop at walls and push loose objects; push doors, pull drawers open, slide windows,
   turn safe dials, take items and eat food by hand.
 - **Holsters on your body**, elixirs drunk at your mouth, grenades thrown with your arm's motion.
@@ -157,9 +159,10 @@ pistol with an empty right hand.
 
 - **From behind**, when the game offers a takedown, the right pointer turns red inside a thick blue border: **swing the
   sword** for the lethal takedown (red), or **press block** for the non-lethal choke (blue).
-- **Knockout blow:** sneak up behind a guard who has not seen you and a **blue dot** marks the back of his head. Hit it
-  firmly with your fist (open or closed), the sword's pommel or the pistol and he is knocked out at once, without the
-  choke animation.
+- **Knockout blow (new):** a game mechanic of the mod's own, not in the original game. It is a VR-friendly way to take
+  someone out non-lethally with your own hands, instead of a choke animation that takes the view and your hands away.
+  Sneak up behind a guard who has not seen you and a **blue dot** marks the back of his head. Hit it firmly with your
+  fist (open or closed), the sword's pommel or the pistol and he is knocked out at once.
   - How hard: `KnockoutSpeed` (8 m/s in the shipped ini; a firm punch is about 4 to 6 m/s).
   - How squarely behind him (60° off straight behind) and how close to his head (30 cm) are hidden settings.
   - A hit sound plays (`KnockoutSoundVolume`); put your own `DVR_knockout.wav` in the game folder to replace it.
