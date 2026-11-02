@@ -19,6 +19,8 @@
 #include "VRMath.h"
 #include <cmath>
 
+static bool HudFrameOfPose(const ViewMatrixHook::XrPose& rp, float q[4], float pos[3], float tan[4]);   // (below)
+
 namespace
 {
     XRSession g_Session;
@@ -387,20 +389,8 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
             // eyes on the plane of the picture it was drawn over, in the frame the game camera rendered it as -- the
             // eye's turn to its frustum (warp) and the eye's own offset from the head taken back out
             auto playHud = [&](const ViewMatrixHook::XrPose& rp) {
-                if (!rp.valid || !rp.tanValid || rp.flat) return;
-                float q[4]; memcpy(q, rp.quat, 16);
-                if (rp.eye >= 0)
-                {
-                    const float cw[4] = { -rp.warp[0], -rp.warp[1], -rp.warp[2], rp.warp[3] };
-                    float e[4]; VRMath::QMul(rp.quat, cw, e);     // the eye
-                    float rel[4];
-                    if (EyeRelative(rp.eye, rel)) { const float cr[4] = { -rel[0], -rel[1], -rel[2], rel[3] }; VRMath::QMul(e, cr, q); }
-                    else memcpy(q, e, 16);
-                }
-                float pos[3]; memcpy(pos, rp.pos, 12);
-                VRRuntime::PoseSet vps;
-                if (ViewMatrixHook::ViewPoses(rp.pair ? rp.pair : rp.serial, vps) && vps.valid && vps.head.valid) memcpy(pos, vps.head.pos, 12);
-                ScreenMode::PlayHud(g_Session, q, pos, rp.tan, rp.serial);
+                float q[4], pos[3], tan[4];
+                if (HudFrameOfPose(rp, q, pos, tan)) ScreenMode::PlayHud(g_Session, q, pos, tan, rp.serial);
             };
             // The layer's fov (vr layerfov): a stereo eye's image declares its own (margin included) when asked; a mono
             // image goes into each eye's native fov (warped there on canted displays)
@@ -749,6 +739,31 @@ void VRRuntime::SetControllerOptions(float pitchOffsetDeg, bool fingerTracking)
     g_Session.SetFingerTracking(fingerTracking);
 }
 void VRRuntime::SetFpsCounter(int position, float size, float angleDeg) { XRSession::SetFpsCounter(position, size, angleDeg); }
+static bool HudFrameOfPose(const ViewMatrixHook::XrPose& rp, float q[4], float pos[3], float tan[4])
+{   // the frame the game camera rendered a main view's picture as: the eye's turn to its frustum (warp) and the eye's
+    // own offset from the head taken back out; at the head of the view's pair
+    if (!rp.valid || !rp.tanValid || rp.flat) return false;
+    memcpy(q, rp.quat, 16);
+    if (rp.eye >= 0)
+    {
+        const float cw[4] = { -rp.warp[0], -rp.warp[1], -rp.warp[2], rp.warp[3] };
+        float e[4]; VRMath::QMul(rp.quat, cw, e);     // the eye
+        float rel[4];
+        if (VRRuntime::EyeRelative(rp.eye, rel)) { const float cr[4] = { -rel[0], -rel[1], -rel[2], rel[3] }; VRMath::QMul(e, cr, q); }
+        else memcpy(q, e, 16);
+    }
+    memcpy(pos, rp.pos, 12);
+    VRRuntime::PoseSet vps;
+    if (ViewMatrixHook::ViewPoses(rp.pair ? rp.pair : rp.serial, vps) && vps.valid && vps.head.valid) memcpy(pos, vps.head.pos, 12);
+    memcpy(tan, rp.tan, 16);
+    return true;
+}
+bool VRRuntime::HudFrameOf(unsigned long long serial, float q[4], float pos[3], float tan[4])
+{
+    if (!serial) return false;
+    const ViewMatrixHook::XrPose rp = ViewMatrixHook::RenderPoseXr(serial);
+    return rp.valid && rp.serial == serial && HudFrameOfPose(rp, q, pos, tan);
+}
 
 void VRRuntime::Shutdown(bool processExit)
 {

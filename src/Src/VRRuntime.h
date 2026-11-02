@@ -45,6 +45,9 @@ namespace VRRuntime
     void SetControllerOptions(float pitchOffsetDeg, bool fingerTracking);
     //! [Performance] FpsCounter / FpsCounterSize / FpsCounterAngle (XRSession::SetFpsCounter)
     void SetFpsCounter(int position, float size, float angleDeg);
+    //! The frame a main view's picture (render serial) was drawn in, as the HUD's panel is placed for it: the head's
+    //! orientation and position of that view and the picture's tangents. False when the serial is no longer known.
+    bool HudFrameOf(unsigned long long serial, float q[4], float pos[3], float tan[4]);
     unsigned long long HapticPulses();
 
     //! Stage 5: alternating-eye stereo. Each game frame is rendered from ONE eye's

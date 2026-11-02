@@ -38,6 +38,7 @@ namespace
     std::atomic<int> g_ManualW{ 0 }, g_ManualH{ 0 }; // vr rendersize <w> <h>: fixed target (research)
     std::atomic<int> g_Mode{ 1 };                   // 1 = auto, 0 = off (the window's size, the old behaviour)
     std::atomic<float> g_Scale{ 1.f };
+    std::atomic<int> g_RtMaxW{ 0 }, g_RtMaxH{ 0 };   // the runtime's largest swapchain image (0 = not known yet)
     std::atomic<bool> g_Reapply{ false };
     std::string g_Why = "starting";
     unsigned long long g_Applies = 0, g_Spoofed = 0, g_Buffers = 0, g_CfgGuards = 0, g_PlaceGuards = 0;
@@ -231,20 +232,29 @@ namespace
             fh = fw * (float)rh / (float)rw;
             why = "headset, game fov";
         }
-        // A budget: SteamVR's automatic supersampling on a strong GPU, a wide headset (Pimax) or a high setting in the
-        // headset's app can ask for 4000+ px per eye, and the game's whole set of render targets follows this size (an
-        // 8192x8192 frame is ~67 MP of G-buffers: out of video memory). At most 4096 a side and 16 MP, the aspect kept;
-        // the eye swapchain holds this frame, and 4096 is what every runtime measured so far allows.
-        constexpr float kMaxSide = 4096.f, kMaxPixels = 16.0e6f;
-        float k = std::min({ 1.f, kMaxSide / fw, kMaxSide / fh, sqrtf(kMaxPixels / (fw * fh)) });
+        // Limits, the aspect kept. The eye swapchain holds this frame, so never more than the runtime's largest swapchain
+        // image (SteamVR 8192; 4096 until the runtime has said) nor D3D11's 16384. Until 2026-11-01 also at most 4096 a
+        // side and 16 MP, for video memory (the game's whole set of render targets follows this size): that capped a
+        // Bigscreen Beyond 2 asking 4875x5036 to 3936x4066, so a higher resolution in SteamVR changed nothing. Now only
+        // the optional budget [Display] MaxRenderMegapixels (0 = none), for a card that runs out of video memory.
+        const int rtw = g_RtMaxW.load(), rth = g_RtMaxH.load();
+        const float maxW = (float)std::min(rtw > 0 ? rtw : 4096, 16384), maxH = (float)std::min(rth > 0 ? rth : 4096, 16384);
+        const float mp = Settings::MaxRenderMegapixels();
+        float k = std::min({ 1.f, maxW / fw, maxH / fh });
+        if (mp > 0.f) k = std::min(k, sqrtf(mp * 1.0e6f / (fw * fh)));
         if (k < 1.f)
         {
             static int lastW = 0;
-            if (lastW != (int)fw) { lastW = (int)fw; LOGI("RenderRes: the headset asks for {}x{}: capped to {}x{} (at most 4096 a side, 16 MP)", (int)fw, (int)fh, (int)(fw * k), (int)(fh * k)); }
+            if (lastW != (int)fw)
+            {
+                lastW = (int)fw;
+                LOGI("RenderRes: the headset asks for {}x{}: capped to {}x{} (at most {}x{}{})", (int)fw, (int)fh, (int)(fw * k), (int)(fh * k),
+                     (int)maxW, (int)maxH, mp > 0.f ? fmt::format(", {:.1f} MP: MaxRenderMegapixels", mp) : std::string());
+            }
             fw *= k; fh *= k;
         }
-        w = std::clamp((int)lroundf(fw), 320, 4096);
-        h = std::clamp((int)lroundf(fh), 240, 4096);
+        w = std::clamp((int)lroundf(fw), 320, (int)maxW);
+        h = std::clamp((int)lroundf(fh), 240, (int)maxH);
         return true;
     }
 
@@ -272,6 +282,13 @@ namespace
             g_RsSaved = -1;
         }
     }
+}
+
+void RenderRes::SetRuntimeLimit(int w, int h)
+{
+    g_RtMaxW = w; g_RtMaxH = h;
+    LOGI("RenderRes: the runtime's largest swapchain image is {}x{}: the render size's limit{}", w, h,
+         Settings::MaxRenderMegapixels() > 0.f ? fmt::format(" (and MaxRenderMegapixels {:.1f} MP)", Settings::MaxRenderMegapixels()) : std::string());
 }
 
 void RenderRes::Install()

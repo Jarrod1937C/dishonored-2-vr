@@ -8,6 +8,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include "XRSession.h"
+#include "RenderRes.h"
 #include "MetaAsw.h"
 #include "SysInfo.h"
 #include "Watchdog.h"
@@ -1208,6 +1209,7 @@ bool XRSession::Init(ID3D11Device* device)
         LOGI("XRSession: headset '{}' (vendor {:#x}), max swapchain {}x{}, orientation tracking {}, position tracking {}", sp.systemName,
              sp.vendorId, sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight,
              (bool)sp.trackingProperties.orientationTracking, (bool)sp.trackingProperties.positionTracking);
+        RenderRes::SetRuntimeLimit((int)sp.graphicsProperties.maxSwapchainImageWidth, (int)sp.graphicsProperties.maxSwapchainImageHeight);
     }
 
     // --- Required: query graphics requirements before session creation. The runtime composites on ONE adapter, and

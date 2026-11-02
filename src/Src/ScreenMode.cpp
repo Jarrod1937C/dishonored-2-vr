@@ -431,7 +431,7 @@ void main(uint3 id : SV_DispatchThreadID)
     } g_MG;
     std::vector<Shape> g_Shapes;
     std::vector<int> g_Integral;
-    std::atomic<unsigned long long> g_ShapesMeasured{ 0 }, g_ShapesGrown{ 0 }, g_MarkMerged{ 0 };
+    std::atomic<unsigned long long> g_ShapesMeasured{ 0 }, g_ShapesGrown{ 0 }, g_MarkMerged{ 0 }, g_MarkOwnView{ 0 };
     float g_PanelW = 0, g_PanelH = 0; double g_PanelShrinkSince = 0;   // the markers' panels' swapchain size (shared)
 
     template <class T> void RelP(T*& p) { if (p) { p->Release(); p = nullptr; } }
@@ -617,7 +617,7 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
     if (g_MarkersOn.load() && g_MarkBox.load() > 0.f)
     {   // the markers at their characters' distance: the batch of the tick this picture was drawn from (the newest one
         // made no later than its view), each marker's square of the HUD on a panel of its own, left out of the HUD's
-        MarkRec ms[16]; int n = 0;
+        MarkRec ms[16]; int n = 0; unsigned long long bserial = 0;
         {
             std::lock_guard mk(g_MkM);
             const double now = NowSecs();
@@ -627,8 +627,16 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
                 if (!b.n || now - b.t > 0.25 || (serial && b.serial > serial)) continue;
                 if (!best || b.serial > best->serial || (b.serial == best->serial && b.t > best->t)) best = &b;
             }
-            if (best) { n = best->n; memcpy(ms, best->m, sizeof(MarkRec) * n); }
+            if (best) { n = best->n; memcpy(ms, best->m, sizeof(MarkRec) * n); bserial = best->serial; }
         }
+        // The markers were placed (MarkerProjHook) for the view the game had when it ticked -- the batch's -- and the
+        // game ticks once per pair of pictures or less often: placed from THIS picture's head, a marker followed the head
+        // between ticks and jumped back at each (reported 2026-11-01: a rune's / bone charm's marker choppy, at half or a
+        // third of the frame rate). Placed from the batch's own view's head, it stays where its character is.
+        float mq[4], mpos[3], mtan[4];
+        if (!VRRuntime::HudFrameOf(bserial, mq, mpos, mtan) || !(mtan[1] > mtan[0]) || !(mtan[2] > mtan[3]))
+        { memcpy(mq, quat, 16); memcpy(mpos, pos, 12); mtan[0] = l; mtan[1] = r; mtan[2] = u; mtan[3] = dn; }
+        else g_MarkOwnView++;
         std::sort(ms, ms + n, [](const MarkRec& a, const MarkRec& b) { return a.f < b.f; });
         const float S = g_MarkBox.load() * (float)th;
         // each marker's box: its whole drawing, as last measured (MaskMeasure), else its square; overlapping ones together
@@ -693,13 +701,15 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
             // the box's centre as a direction from the head (the HUD's panel: its frustum shrunk by HudScale), out to
             // the character's distance (the game's metres)
             const float mx = 0.5f * (x0 + x1), my = 0.5f * (y0 + y1);
-            const float tx = 0.5f * (r + l) + (mx / (float)tw - 0.5f) * (r - l) * hs;
-            const float ty = 0.5f * (u + dn) - (my / (float)th - 0.5f) * (u - dn) * hs;
+            const float ml = mtan[0], mr = mtan[1], mu = mtan[2], md = mtan[3];
+            const float tx = 0.5f * (mr + ml) + (mx / (float)tw - 0.5f) * (mr - ml) * hs;
+            const float ty = 0.5f * (mu + md) - (my / (float)th - 0.5f) * (mu - md) * hs;
             const float v[3] = { tx * m.f, ty * m.f, -m.f };
-            float wv[3]; VRMath::QRotate(quat, v, wv);
-            for (int k = 0; k < 3; k++) mp.pos[k] = pos[k] + wv[k];
-            mp.width = m.f * (x1 - x0) / (float)tw * (r - l) * hs;
-            mp.height = m.f * (y1 - y0) / (float)th * (u - dn) * hs;
+            float wv[3]; VRMath::QRotate(mq, v, wv);
+            for (int k = 0; k < 3; k++) mp.pos[k] = mpos[k] + wv[k];
+            memcpy(mp.quat, mq, 16);
+            mp.width = m.f * (x1 - x0) / (float)tw * (mr - ml) * hs;
+            mp.height = m.f * (y1 - y0) / (float)th * (mu - md) * hs;
             mp.outW = (unsigned)g_PanelW; mp.outH = (unsigned)g_PanelH;
             xr.SetPanelLayer(2 + used, mp);
             used++;
@@ -795,9 +805,9 @@ void ScreenMode::InstallMarkers(bool on)
 }
 std::string ScreenMode::MarkerStats()
 {
-    return fmt::format("markers placed for the headset {}, left to the game (behind the head) {}, HUD frames with markers on panels of their own {}; "
+    return fmt::format("markers placed for the headset {}, left to the game (behind the head) {}, HUD frames with markers on panels of their own {} (placed from their own view {}); "
                        "markers' drawings measured {} (larger than the square {}), overlapping boxes joined {}, panels {}x{}",
-                       g_MarkersFixed.load(), g_MarkersKept.load(), g_MarkPanels.load(), g_ShapesMeasured.load(), g_ShapesGrown.load(), g_MarkMerged.load(),
+                       g_MarkersFixed.load(), g_MarkersKept.load(), g_MarkPanels.load(), g_MarkOwnView.load(), g_ShapesMeasured.load(), g_ShapesGrown.load(), g_MarkMerged.load(),
                        g_PanelW, g_PanelH);
 }
 void ScreenMode::SetHud(bool on, float dist, float scale, float markerSize)

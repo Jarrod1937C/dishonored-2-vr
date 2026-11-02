@@ -195,7 +195,30 @@ namespace
     bool g_FireWanted = false; double g_FireWantedAt = 0;   // render thread -> game thread
     void* g_PostCpnt = nullptr; double g_PostedAt = -1; bool g_PostTaken = true;
     double g_SkipUntil = 0, g_UnhideAt = 0; bool g_Hidden = false;
-    unsigned long long g_Instant = 0, g_AnimDropped = 0, g_PostFails = 0;
+    unsigned long long g_Instant = 0, g_AnimDropped = 0, g_PostFails = 0, g_NeverLit = 0, g_WaitedLit = 0;
+    // The grenade in the hand has its own arkCpntGrenade (throwable +0x160; exe+0x633539 fetches it): its fuse is lit by
+    // the game's throw itself (arkCpntGrenade's start, exe+0x490600, from the throwable's states exe+0x633720 /
+    // exe+0x633810: flags +0x38 bit 0x1 = lit, 0x8 = gone off), and Throw copies that state into the new projectile's
+    // (exe+0x490F70). Fired before the game lit it, the grenade flew unlit -- a dud (it went off only when shot); with
+    // none left the game never starts a throw at all, so a fire posted anyway spawned unlit grenades for ever. So the
+    // release only asks for the grenade; it leaves as soon as the game has lit it (at once, unless the trigger was
+    // tapped), and never if the game does not light one in `kLitWait` (none left, or no throw).
+    constexpr uint32_t kThrowableGrenade = 0x160, kGrenadeFlags = 0x38;
+    constexpr double kLitWait = 0.5;
+    bool g_WaitLit = false; double g_WaitFrom = 0; void* g_WaitCpnt = nullptr;
+    //! the hand grenade's fuse: 1 lit, 0 not, -1 unreadable / gone off
+    int FuseLit(uint8_t* cpnt)
+    {
+        __try
+        {
+            const uint8_t* g = *(uint8_t**)(cpnt + kThrowableGrenade);
+            if (!g) return -1;
+            const uint8_t f = g[kGrenadeFlags];
+            if (f & 0x8) return -1;
+            return (f & 0x1) ? 1 : 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
 
     //! The left hand's throwable component (an arkCpntWeaponThrowable), or null. No C++ objects (__try).
     uint8_t* LeftThrowable()
@@ -241,6 +264,7 @@ namespace
             std::lock_guard lk(g_FireM);
             if (self == g_PostCpnt && !g_PostTaken && now - g_PostedAt < 0.5) { ours = true; g_PostTaken = true; g_SkipUntil = now + 2.0; }
             else if (self == g_PostCpnt && now < g_SkipUntil) { drop = true; g_SkipUntil = 0; g_UnhideAt = now + 0.15; }
+            else if (g_WaitLit && self == g_WaitCpnt) { g_WaitLit = false; LOGI("Throw: the game threw before the grenade was seen lit: its own launch (with the hand's velocity)"); }
         }
         if (drop)
         {
@@ -343,10 +367,36 @@ void ThrowGesture::GameTick()
         if (g_FireWanted) { want = true; wantAt = g_FireWantedAt; g_FireWanted = false; }
         if (g_Hidden && g_UnhideAt > 0 && now > g_UnhideAt) { g_UnhideAt = 0; BodyHide::SetHideWeapon(0, false); g_Hidden = false; }
     }
-    if (!want || now - wantAt > 0.3) return;
+    if (want && now - wantAt <= 0.3)
+    {   // a release: wait for the game to light the grenade in the hand (below)
+        uint8_t* cpnt = LeftThrowable();
+        if (!cpnt) { g_PostFails++; LOGI("Throw: the release wanted the grenade fired, but the left hand holds no throwable now: the game's own launch"); return; }
+        std::lock_guard lk(g_FireM);
+        g_WaitLit = true; g_WaitFrom = wantAt; g_WaitCpnt = cpnt;
+    }
+    void* waitCpnt = nullptr; double waitFrom = 0;
+    { std::lock_guard lk(g_FireM); if (g_WaitLit) { waitCpnt = g_WaitCpnt; waitFrom = g_WaitFrom; } }
+    if (!waitCpnt) return;
     uint8_t* cpnt = LeftThrowable();
-    if (!cpnt) { g_PostFails++; LOGI("Throw: the release wanted the grenade fired, but the left hand holds no throwable now: the game's own launch"); return; }
-    { std::lock_guard lk(g_FireM); g_PostCpnt = cpnt; g_PostedAt = now; g_PostTaken = false; }
+    const int lit = cpnt == waitCpnt ? FuseLit(cpnt) : -1;
+    if (lit < 0)
+    {
+        { std::lock_guard lk(g_FireM); g_WaitLit = false; }
+        LOGI("Throw: the grenade in the hand is gone or unreadable before it was lit: nothing fired");
+        return;
+    }
+    if (lit == 0)
+    {
+        if (now - waitFrom > kLitWait)
+        {
+            { std::lock_guard lk(g_FireM); g_WaitLit = false; }
+            g_NeverLit++;
+            LOGI("Throw: the game did not light a grenade within {:.1f} s of the release (none left, or no throw started): nothing thrown", kLitWait);
+        }
+        return;
+    }
+    { std::lock_guard lk(g_FireM); g_WaitLit = false; g_PostCpnt = cpnt; g_PostedAt = now; g_PostTaken = false; }
+    if (now - waitFrom > 0.03) { g_WaitedLit++; LOGI("Throw: the grenade was lit {:.0f} ms after the release: fired now", (now - waitFrom) * 1000.0); }
     if (!PostFire(cpnt)) { g_PostFails++; std::lock_guard lk(g_FireM); g_PostTaken = true; LOGI("Throw: the fire message could not be posted: the game's own launch"); }
 }
 

@@ -89,6 +89,7 @@ namespace Settings
     bool StereoHud();                             //!< [Display] StereoHud: the game's HUD on one panel for both eyes (ScreenMode)
     float HudDistance();                          //!< [Display] HudDistance: that panel's distance, m
     bool CameraPitchFix();                        //!< [Display] CameraPitchFix: the game's neck out of the view (ViewMatrixHook)
+    float MaxRenderMegapixels();                  //!< [Display] MaxRenderMegapixels: the render size's budget, MP per eye (0 = none)
     float SnapTurnBlankOpacity();                 //!< [Controls] SnapTurnBlankOpacity: 0..1, 1 = black
     bool MinimalReticle();                        //!< [Display] MinimalReticle: the reticle is only a dot (Reticle)
     float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)

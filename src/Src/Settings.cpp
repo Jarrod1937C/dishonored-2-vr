@@ -110,6 +110,7 @@ namespace
         { "display.hudskipempty",       Kind::Bool,   "1", 0, 0, nullptr, true },     // ScreenMode / XRSession: the HUD panel only where it shows something
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr, true },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr, true },   // ViewMatrixHook: no game neck on top of the real one
+        { "display.maxrendermegapixels", Kind::Float, "0", 0, 200, nullptr, true },   // RenderRes: a budget for the render size (0 = only the headset's own limit)
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.wristhudsize",       Kind::Float,  "8.5", 4, 15, nullptr },
         // 0 mono, 1 synchronised stereo, 2 the alternating stereo of 1.0 (whose ini had 1 / true for that one: it gets
@@ -465,6 +466,7 @@ float Settings::HudResolution() { return F("display.hudresolution"); }
 bool Settings::HudSkipEmpty() { return B("display.hudskipempty"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
+float Settings::MaxRenderMegapixels() { return F("display.maxrendermegapixels"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }

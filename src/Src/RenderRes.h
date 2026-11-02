@@ -29,4 +29,6 @@ namespace RenderRes
     bool RealClient(int& w, int& h);
     bool Command(const std::string& what, std::istringstream& ss);
     std::string Status();   //!< one heartbeat line
+    //! The headset runtime's largest swapchain image (XRSession, from xrGetSystemProperties): the render size's limit.
+    void SetRuntimeLimit(int w, int h);
 }

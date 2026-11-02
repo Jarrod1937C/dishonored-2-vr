@@ -46,6 +46,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 
  UNINSTALL: delete dinput8.dll, DishonoredVR.dll, DishonoredVR.ini, DishonoredVR*.log and the
  DVR_*.txt files from the game folder. The game itself is never modified.
+ DVR_hands.txt and DVR_grips.txt are not logs: they hold how your hands grip each weapon, kept
+ between sessions (delete them to learn the grips again). DishonoredVR.log is always written; the
+ other DVR_*.txt files appear only with the [Logging] settings on.
 
 
 ------------------------------------------------------------------------------------------------

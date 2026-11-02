@@ -11,6 +11,7 @@
 #include <d3d11shader.h>
 #include "GpuTrace.h"
 #include "GameInfo.h"
+#include "Settings.h"
 
 namespace
 {
@@ -19,7 +20,9 @@ namespace
     // the column holding (0, 0, +-1, 0) says which. V: its view matrix (view+0x7450, rows -left / up / -forward: ENGINE.md),
     // for each pixel's ray in the world. The fog has ONE colour per map: the average of the sky near the horizon all the
     // way round (64 world directions, each learned as the player looks that way), settled once every direction has been
-    // seen (or 30 s into the map with 8 of them) and kept for the map; the fog fades in then. Per-direction colours
+    // seen (or 20 s into the map with 8 of them) and kept for the map. The fog fades in as soon as 4 directions are seen,
+    // with their average, refined as more are seen until it settles (2026-11-01: it waited for the settled colour, up to
+    // 40 s into a map). Per-direction colours
     // (tried 2026-10-31) differed between the eyes at a sky's transitions and could not show on the sky itself.
     // The colour follows the game's EXPOSURE (2026-10-31, reported: the fog changed with a hand over the head or under
     // a covering -- "depending on the player, not the environment" -- and was too dark in a second map). The game draws
@@ -319,9 +322,10 @@ float4 ps(VO i) : SV_Target
     float d = SceneDistance(i.pos.xy, p);
     float3 col = g1.rgb;
     if (g0.w < 0.5)
-    {   // the map's one colour, once settled
+    {   // the map's one colour, once settled; until then the average of the sky's directions seen so far, from 4 of them
+        // (2026-11-01, reported: the fog took a long while to show -- 43 s in one map -- waiting for the whole horizon)
         float4 c = SummaryIn[2];
-        if (c.w <= 0) discard;
+        if (c.w <= 0) { float4 a = SummaryIn[0]; if (a.w < 4) discard; c.rgb = a.rgb; }
         col = c.rgb;
     }
     {   // never dark: real fog scatters the light (no black or dark grey fog)
@@ -612,9 +616,10 @@ float4 ps(VO i) : SV_Target
         }
     };
     double g_SettledAt = 0;
+    double g_ProvAt = 0;                        // when a first colour (4 directions of the sky seen) was read back: the fade-in
     float g_LoggedTop = -9.f;                   // the far background's top as last logged
     // CheapFogColor = auto: the category chosen for this map (-1 = not yet) and its colour (linear, at its brightness)
-    int g_Cat = -1; float g_CatRgb[3] = {};
+    int g_Cat = -1; float g_CatRgb[3] = {}; double g_CatAt = 0;
     const char* kCatName[3] = { "NIGHT", "DUSK", "DAY" };                     // when the map's colour was seen settled (render thread; 0 = not yet): the fade-in
     double Now() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
 }
@@ -743,9 +748,13 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
     for (int i = 0; i < 3; i++) k.g1[i] = P.category ? g_CatRgb[i] : P.rgb[i] * P.brightness;
     k.g1[3] = P.skyAuto ? 1.f : 0.f;
     k.g2[0] = (float)t.w; k.g2[1] = (float)t.h; k.g2[2] = (float)kSkyStep; k.g2[3] = Now() - g_MapAt.load() > 5.0 ? 1.f : 0.f;
-    k.g3[0] = Now() - g_MapAt.load() > 35.0 ? 1.f : 0.f;
-    // the fade-in once the map's colour has settled (the sky's average, or the category picked by it); a fixed colour: at once
-    k.g3[1] = P.sky || P.category ? (g_SettledAt > 0 && (!P.category || g_Cat >= 0) ? (float)std::min(1.0, (Now() - g_SettledAt) / 2.0) : 0.f) : 1.f;
+    k.g3[0] = Now() - g_MapAt.load() > 20.0 ? 1.f : 0.f;
+    // the fade-in from the map's first colour (sky: 4 directions seen, refined until it settles; auto: the category, picked
+    // by the upper sky); a fixed colour: at once
+    {
+        const double from = P.category ? (g_Cat >= 0 ? g_CatAt : 0) : (g_ProvAt > 0 ? g_ProvAt : g_SettledAt);
+        k.g3[1] = P.sky || P.category ? (from > 0 ? (float)std::min(1.0, (Now() - from) / 2.0) : 0.f) : 1.f;
+    }
     k.g3[2] = kLearnFrames;
     k.g3[3] = P.skyHeight > 0.f ? sinf(std::min(90.f, P.skyHeight) * 0.0174533f) : 0.f;
     k.g4[0] = std::max(0.f, P.minBrightness); k.g4[1] = P.followExposure ? 1.f : 0.f; k.g4[2] = water ? 1.f : 0.f;
@@ -762,7 +771,7 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
         const float z[4] = {}; const UINT zu[4] = {};
         c->ClearUnorderedAccessViewFloat(g_BinsUav, z); c->ClearUnorderedAccessViewFloat(g_SummaryUav, z); c->ClearUnorderedAccessViewUint(g_AccUav, zu);
         c->ClearUnorderedAccessViewFloat(g_RefUav, z);
-        g_SettledAt = 0; g_LoggedTop = -9.f; g_Cat = -1; g_LoggedExpo = 1.f; g_LoggedPlane = -1.f; g_Gen++;   // a read-back copied before this is stale
+        g_SettledAt = 0; g_ProvAt = 0; g_LoggedTop = -9.f; g_Cat = -1; g_LoggedExpo = 1.f; g_LoggedPlane = -1.f; g_Gen++;   // a read-back copied before this is stale
     }
     {   // 1) the horizon's colours, round it (only what this eye sees of the sky adds to them; with a fixed colour, for the log)
         c->CSSetConstantBuffers(0, 1, &g_Cb);
@@ -937,7 +946,8 @@ void Fog::OnShader(void* sh, const void* code, size_t len, bool cs)
         for (const ExpoMember& e : u.members) m += fmt::format(" {}@{}{}", e.name, e.off, e.isFloat ? (e.n > 1 ? fmt::format(":float{}", e.n) : std::string(":float")) : std::string(""));
         LOGI("Fog: {} shader {:016x} {} the game's exposure '{}' ({}{}, {} bytes):{}", cs ? "compute" : "pixel", u.hash, u.uav ? "writes" : "reads",
              u.res, u.uav ? "u" : "t", u.slot, u.stride, m.empty() ? std::string(" (not a structured buffer)") : m);
-        if (g_ExpoDumps < 3) { DumpDisasm(code, len, u.hash); g_ExpoDumps++; }
+        // the disassembly files are a development aid: written only while the render passes are profiled
+        if (g_ExpoDumps < 3 && Settings::ProfileRenderPasses()) { DumpDisasm(code, len, u.hash); g_ExpoDumps++; }
     }
     g_ExpoShaders[sh] = u;
     if (!g_ExpoBuf && !g_ExpoSearch.load()) StartExpoSearch();
@@ -1115,8 +1125,14 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 if (P.sky) LOGI("Fog: this map's fog colour: {:.3f},{:.3f},{:.3f} (the sky round the horizon, {:.0f} of 64 directions seen; darkest {:.3f}, brightest {:.3f}): kept for the map, the fog fades in. As a fixed colour: {}",
                                 fc[0], fc[1], fc[2], a[3], r[0], r[1], asIni(fc));
             }
-            if (settled && P.category && g_Cat < 0)
-            {   // night, dusk or day, by the upper sky (25-75 deg: the top of a level view), else the horizon's average
+            if (!settled && P.sky && g_ProvAt <= 0 && a[3] >= 4)
+            {
+                g_ProvAt = now;
+                LOGI("Fog: a first colour for this map from {:.0f} directions of the sky round the horizon: the fog fades in now, refined as more is seen until it settles", a[3]);
+            }
+            if (P.category && g_Cat < 0 && (settled || (v[13] >= 30 && a[3] >= 4)))
+            {   // night, dusk or day, by the upper sky (25-75 deg: the top of a level view), else the horizon's average -- as
+                // soon as the upper sky has been seen for a while (not when the whole horizon has)
                 const float* up = v + 12;
                 const float horizonY = 0.2126f * a[0] + 0.7152f * a[1] + 0.0722f * a[2];
                 const bool upSeen = up[1] >= 30;
@@ -1127,6 +1143,7 @@ void Fog::OnPresent(IDXGISwapChain* sc)
                 const float rSet = 1.f;     // the horizon's average is kept x EngineLuminanceFactor already
                 const float k = c[3] > 0 ? c[3] : horizonY * rSet / cy;   // no brightness given: the map's horizon brightness
                 for (int i = 0; i < 3; i++) g_CatRgb[i] = c[i] * k;
+                g_CatAt = now;
                 LOGI("Fog: this map is {} (the {} sky's brightness {:.3f}{}; night below {:.2f}, day from {:.2f}): fog colour {:.3f},{:.3f},{:.3f}{}",
                      kCatName[g_Cat], upSeen ? "upper" : "horizon's", y, upSeen ? fmt::format(", over {:.0f} frames", up[1]) : std::string(" (no upper sky seen)"),
                      P.nightBelow, P.dayAbove, g_CatRgb[0], g_CatRgb[1], g_CatRgb[2], c[3] > 0 ? fmt::format(" (brightness {:.2f} as set)", c[3]) : fmt::format(" (at the horizon's brightness {:.3f})", horizonY * rSet));
@@ -1162,7 +1179,8 @@ void Fog::OnPresent(IDXGISwapChain* sc)
             else if (!settled && now - g_LogAt2 >= 10.0)
             {
                 g_LogAt2 = now;
-                LOGI("Fog: no colour for this map yet: {:.0f} of 64 directions of the sky round the horizon seen (from 5 s in; all of them, or 8 after 30 s, settle it): no fog until then", a[3]);
+                LOGI("Fog: no settled colour for this map yet: {:.0f} of 64 directions of the sky round the horizon seen (from 5 s in; all of them, or 8 after 20 s, settle it){}", a[3],
+                     a[3] >= 4 ? ": the fog uses what has been seen so far" : ": no fog until 4 are seen");
             }
         }
         else if (hr != DXGI_ERROR_WAS_STILL_DRAWING || now - g_StageAt > 2.0) g_StagePending = false;

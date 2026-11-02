@@ -22,7 +22,14 @@ namespace
     float g_Offset[2] = {}; bool g_Allowed = false; double g_OffsetAt = -1e9;
     float g_Pending[2] = {};                    // moved since the view last took it
     bool g_Following = false;
-    unsigned long long g_Ticks = 0, g_Pushed = 0, g_Blocked = 0, g_Starts = 0;
+    unsigned long long g_Ticks = 0, g_Pushed = 0, g_Blocked = 0, g_Starts = 0, g_BlockStops = 0;
+    // Blocked (2026-11-01, reported: leaning over a table to pick something up moved the view BACK): the head leaves the
+    // character, it follows into the table, the game's collision stops it and pushes it back out -- and the view, which
+    // rides the character, went back with it, every time the following started again. Now a push that the character
+    // could not make (2 ticks in a row under a quarter of it) stops the following in that direction until the head
+    // comes back within the deadzone or moves off sideways; and the character's being pushed back along the request
+    // is credited to the view like a step (the view stays where the head is).
+    bool g_BlockOn = false; float g_BlockDir[2] = {}; int g_BlockTicks = 0;
     double g_MovedTotal = 0;
     bool g_Logged = false;
 
@@ -58,7 +65,13 @@ namespace
             else
             {
                 const float rx = g_Offset[0] - g_Pending[0], ry = g_Offset[1] - g_Pending[1], d = sqrtf(rx * rx + ry * ry);
-                if (!g_Following && d > g_Dead.load()) { g_Following = true; g_Starts++; }
+                if (g_BlockOn)
+                {   // blocked that way: not again until the head comes back, or goes off that way
+                    const float along = d > 1e-4f ? (rx * g_BlockDir[0] + ry * g_BlockDir[1]) / d : 0.f;
+                    if (d < g_Dead.load() || along < 0.5f) g_BlockOn = false;
+                }
+                if (g_BlockOn) g_Following = false;
+                else if (!g_Following && d > g_Dead.load()) { g_Following = true; g_Starts++; }
                 if (g_Following && d < kStopAt) g_Following = false;
                 if (g_Following)
                 {
@@ -78,14 +91,20 @@ namespace
         // what of the request the character moved: along it, the game's own velocity's part taken out, at most the request
         const float ux = e[0] / el, uy = e[1] / el;
         float along = ((p1[0] - p0[0]) - v0[0] * dt) * ux + ((p1[1] - p0[1]) - v0[1] * dt) * uy;
-        along = along < 0.f ? 0.f : along > el ? el : along;
+        along = along < -el ? -el : along > el ? el : along;   // (pushed back by the collision: credited too)
         const float mx = along * ux, my = along * uy;
         // the game keeps only its own velocity (its acceleration, animation and footsteps go by it)
-        vel[0] -= mx / dt; vel[1] -= my / dt;
+        const float vk = along > 0.f ? along : 0.f;
+        vel[0] -= vk * ux / dt; vel[1] -= vk * uy / dt;
         {
             std::lock_guard lk(g_M);
             g_Pending[0] += mx; g_Pending[1] += my; g_MovedTotal += along;
             g_Pushed++; if (along < 0.5f * el) g_Blocked++;
+            if (along < 0.25f * el)
+            {
+                if (++g_BlockTicks >= 2) { g_BlockOn = true; g_BlockDir[0] = ux; g_BlockDir[1] = uy; g_Following = false; g_BlockTicks = 0; g_BlockStops++; }
+            }
+            else g_BlockTicks = 0;
             if (!g_Logged) { g_Logged = true; LOGI("Roomscale: first push: proxy {} at ({:.2f}, {:.2f}, {:.2f}), dt {:.4f}: asked {:.3f} m, moved {:.3f} m", proxy, p0[0], p0[1], p0[2], dt, el, along); }
         }
         return r;
@@ -178,12 +197,12 @@ bool Roomscale::TakeMoved(float moved[2])
 void Roomscale::Reset()
 {
     std::lock_guard lk(g_M);
-    g_Pending[0] = g_Pending[1] = 0.f; g_Offset[0] = g_Offset[1] = 0.f; g_Following = false;
+    g_Pending[0] = g_Pending[1] = 0.f; g_Offset[0] = g_Offset[1] = 0.f; g_Following = false; g_BlockOn = false; g_BlockTicks = 0;
 }
 std::string Roomscale::Stats()
 {
     std::lock_guard lk(g_M);
-    return fmt::format("roomscale {} ticks {} pushes {} blocked {} starts {} moved {:.1f} m offset {:.2f} m{}; wall fade rays {} hits {} fades {}", g_On.load() ? "on" : "off", g_Ticks, g_Pushed,
-                       g_Blocked, g_Starts, g_MovedTotal, sqrtf(g_Offset[0] * g_Offset[0] + g_Offset[1] * g_Offset[1]), g_Following ? " following" : "",
+    return fmt::format("roomscale {} ticks {} pushes {} blocked {} (stopped {}) starts {} moved {:.1f} m offset {:.2f} m{}; wall fade rays {} hits {} fades {}", g_On.load() ? "on" : "off", g_Ticks, g_Pushed,
+                       g_Blocked, g_BlockStops, g_Starts, g_MovedTotal, sqrtf(g_Offset[0] * g_Offset[0] + g_Offset[1] * g_Offset[1]), g_Following ? " following" : "",
                        g_FadeRays.load(), g_FadeHits.load(), g_Fades.load());
 }
