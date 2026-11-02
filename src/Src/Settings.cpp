@@ -85,7 +85,7 @@ namespace
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr, true },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
         { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr, true },
-        { "display.screenspaceshadows", Kind::Bool,   "0", 0, 0, nullptr },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
+        { "display.screenspaceshadows", Kind::Bool,   "0", 0, 0, nullptr, true },   // ScreenShadows: the sun's shadows of what is on screen, traced in the depth buffer
         { "display.screenspaceshadowlength", Kind::Float, "3", 0.2f, 20, nullptr, true },   // m towards the sun
         { "display.screenspaceshadowsteps", Kind::Float, "24", 4, 64, nullptr, true },
         { "display.screenspaceshadowstrength", Kind::Float, "1", 0, 1, nullptr, true },
@@ -159,7 +159,7 @@ namespace
         { "cheats.unlockeverything",    Kind::Bool,   "0", 0, 0, nullptr },
         // the parts of it, each on its own (TestAids::Unlock)
         { "cheats.unlockoutsidersmark", Kind::Bool,   "0", 0, 0, nullptr },
-        { "cheats.unlockpowers",        Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.unlockpowers",        Kind::Bool,   "0", 0, 0, nullptr, true },   // hidden (2026-11-01): the powers are chosen one by one ([Cheats.Powers])
         { "cheats.unlockpowerupgrades", Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.unlockblackmarketupgrades", Kind::Bool, "0", 0, 0, nullptr },
         { "cheats.unlockweapons",       Kind::Bool,   "0", 0, 0, nullptr },
@@ -424,7 +424,9 @@ std::string Settings::PowerUnlocks()
 }
 unsigned Settings::Unlocks()
 {
-    if (B("cheats.unlockeverything")) return 127u;
+    // UnlockEverything: everything but the powers (2026-11-01: one switch for all powers next to a list of the single
+    // powers was confusing -- the powers come from [Cheats.Powers] only; the hidden UnlockPowers still adds them all)
+    if (B("cheats.unlockeverything")) return (127u & ~2u) | (B("cheats.unlockpowers") ? 2u : 0u);
     return (B("cheats.unlockoutsidersmark") ? 1u : 0u) | (B("cheats.unlockpowers") ? 2u : 0u) | (B("cheats.unlockpowerupgrades") ? 4u : 0u)
          | (B("cheats.unlockblackmarketupgrades") ? 8u : 0u) | (B("cheats.unlockweapons") ? 16u : 0u) | (B("cheats.fillammoandgadgets") ? 32u : 0u)
          | (B("cheats.fillelixirs") ? 64u : 0u);
@@ -606,7 +608,6 @@ namespace
         { "cheapfogend", "400" },
         { "cheapfogopacity", "0.6" },
         { "cheapfogcolor", "auto" },
-        { "screenspaceshadows", "0" },
         { "shadowculldistance", "32" },
         { "shadowsunupdateevery", "2" },
         { "shadowultratrim", "1" },
@@ -619,7 +620,6 @@ namespace
         { "fpscounter", "off" },
         { "unlockeverything", "0" },
         { "unlockoutsidersmark", "0" },
-        { "unlockpowers", "0" },
         { "unlockpowerupgrades", "0" },
         { "unlockblackmarketupgrades", "0" },
         { "unlockweapons", "0" },

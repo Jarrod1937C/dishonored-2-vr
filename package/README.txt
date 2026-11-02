@@ -314,7 +314,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CheapFogMinBrightness = 0.35 (never darker than this, in the game's light units)
                CheapFogFollowExposure = 1 (the fog changes with the eye adaptation as the scene does)
                CheapFogSkyHeight = auto (the sky fogged up to the far background's top; or degrees; 0 = none)
-               ScreenSpaceShadows = 0 (experimental: sharp sun shadows of characters / small objects on screen)
+               ScreenSpaceShadows = 0 (hidden, experimental: sharp sun shadows of characters / small objects)
                ScreenSpaceShadowCharacters = 1 (characters cast them)   ShadowMapCharacters = 0 (and leave the sun's shadow maps; needs ScreenSpaceShadows = 1)
                ScreenSpaceShadowSmallObjects = 1 (m across: smaller moving objects too, out of the shadow maps)
                ScreenSpaceShadowLength = 3 (m)   ScreenSpaceShadowContact = 0 (m, everything's contact shadows)
@@ -361,10 +361,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  (StereoReflectionReuse is no longer used: it broke reflections)
                SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
-   [Cheats]    UnlockEverything = 1   InfiniteMana = 1   InfiniteAmmo = 0   InfiniteHealth = 0
-               or, each on its own: UnlockOutsidersMark, UnlockPowers, UnlockPowerUpgrades,
+   [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 1   InfiniteAmmo = 1
+               InfiniteHealth = 1; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
                UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs
-   [Cheats.Powers] each power on its own: UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,
+   [Cheats.Powers] the powers, each on its own (the only way to unlock them): UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,
                UnlockDevouringSwarm, UnlockBendTime, UnlockWindblast, UnlockDomino, UnlockDoppelganger,
                UnlockMesmerize, UnlockShadowWalk
    [System]    KeepAliveFrames = 1 (while the game stops for a moment, the headset keeps the last
@@ -375,10 +375,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
                                       the mod's own steps, hitches and a frame draw by draw)
 
- TWO CHEATS ARE ON by default, so every power and weapon can be tried in VR right away:
- UnlockEverything (every power, upgrade, bone charm crafting, black market upgrade and weapon, on
- every save you load, with full ammo once) and InfiniteMana. Ammo, gadgets, elixirs and health
- work as in the game (InfiniteAmmo / InfiniteHealth = 1 to change that). The cheats change your
+ THREE CHEATS ARE ON by default: InfiniteMana, InfiniteAmmo (ammo, gadgets and elixirs are not
+ used up) and InfiniteHealth. Unlocks are off: UnlockEverything gives the mark, every upgrade, bone
+ charm crafting, black market upgrade and weapon; the powers you want are switched on one by one in
+ [Cheats.Powers] (or the VR tab's Powers list). The cheats change your
  game for real: once the game saves or autosaves, the save keeps them. Use saves you do not mind
  changing, or set them to 0 before playing your own.
 

@@ -189,10 +189,22 @@ namespace
             return w;
         }
         if (name == "controllerbindings")
-        {   // auto, or one of the profiles in VRControllerBindings, each with what it is for ("touch (Quest 1/2/3/Pro, Rift, PS VR2)")
-            const std::string now = ControllerBindings::Active();
-            std::vector<std::pair<std::string, std::string>> o{ { "auto", now.empty() ? std::string("auto (for the controllers in use)") : "auto (for the controllers in use: now " + now + ")" } };
-            for (const auto& c : ControllerBindings::Choices()) o.push_back({ c.first, c.second.empty() ? c.first : c.first + " (" + c.second + ")" });
+        {   // auto, or one of the profiles in VRControllerBindings, by a short name: the option box is narrow, and the long
+            // form ("auto (for the controllers in use: now index)", "touch (Quest 1/2/3/Pro, Rift, PS VR2)") was too small
+            // to read (reported 2026-11-01). "Auto (Index)" = auto, picking the Index profile now.
+            auto shortName = [](const std::string& file, const std::string& label)
+            {
+                static const std::pair<const char*, const char*> kShort[] = {
+                    { "index", "Index" }, { "touch", "Quest / Touch" }, { "pico", "Pico" }, { "hp_reverb_g2", "Reverb G2" },
+                    { "vive_cosmos", "Vive Cosmos" }, { "vive_focus3", "Vive Focus 3" }, { "vive_wands", "Vive wands" }, { "wmr", "WMR" } };
+                for (const auto& s : kShort) if (file == s.first) return std::string(s.second);
+                return label.empty() || label.size() > 16 ? file : label;   // a profile added later: its label if short
+            };
+            std::string now = ControllerBindings::Active();
+            std::string nowLabel;
+            for (const auto& c : ControllerBindings::Choices()) if (c.first == now) nowLabel = c.second;
+            std::vector<std::pair<std::string, std::string>> o{ { "auto", now.empty() ? std::string("Auto") : "Auto (" + shortName(now, nowLabel) + ")" } };
+            for (const auto& c : ControllerBindings::Choices()) o.push_back({ c.first, shortName(c.first, c.second) });
             stepper(o); return w;
         }
         if (name == "renderscale")
