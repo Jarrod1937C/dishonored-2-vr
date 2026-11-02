@@ -185,7 +185,7 @@ pistol with an empty right hand.
 - **Grenades and springrazors:** hold the left trigger, swing your arm and let go. It leaves your hand at that moment,
   the way and as hard as your hand was moving. The mod waits for the game to light the fuse before it lets go, so a
   quick throw is never a dud.
-- **Objects:** take a bottle, a cup or a body with the right grip and let go while moving your hand to throw it.
+- **Objects:** take a bottle or a cup with the right grip and let go while moving your hand to throw it.
 
 ### Holsters
 
@@ -228,7 +228,8 @@ side, so you can look around and still find your hips.
   any item from afar too.
 - **Eating and drinking:** bring food to your mouth to eat it; bring a hand to your mouth and squeeze to drink an elixir
   (left = health, right = mana).
-- **Grab and carry:** objects and bodies, with the right grip; an object stays in your hand while you hold the grip.
+- **Grab and carry objects** with the right grip: an object stays in your hand while you hold the grip. Bodies are
+  picked up the game's own way, onto your shoulder, not held in your hand.
 
 ### HUD, menus and cutscenes
 
