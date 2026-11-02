@@ -430,6 +430,20 @@ namespace
         for (int i = 0; i < 3; i++) { o.r[i * 3] = x[i]; o.r[i * 3 + 1] = y[i]; o.r[i * 3 + 2] = z[i]; }
         return o;
     }
+    //! p turned in place (about its own origin) by `deg` round the world axis `a` (right-handed)
+    Rigid TurnInPlace(const Rigid& p, const float a[3], float deg)
+    {
+        const float n = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        if (n < 1e-6f) return p;
+        const float x = a[0] / n, y = a[1] / n, z = a[2] / n, c = cosf(deg * 0.0174533f), s = sinf(deg * 0.0174533f), k = 1.f - c;
+        Rigid R;
+        R.r[0] = c + x * x * k;     R.r[1] = x * y * k - z * s; R.r[2] = x * z * k + y * s;
+        R.r[3] = y * x * k + z * s; R.r[4] = c + y * y * k;     R.r[5] = y * z * k - x * s;
+        R.r[6] = z * x * k - y * s; R.r[7] = z * y * k + x * s; R.r[8] = c + z * z * k;
+        Rigid o = Mul(R, p);
+        memcpy(o.t, p.t, sizeof o.t);
+        return o;
+    }
 
     // ---- the factorisation ----
     struct Factored
@@ -2078,7 +2092,16 @@ namespace
                 {
                     Rigid ent; for (int i = 0; i < 3; i++) { ent.r[i * 3] = wa.axis[i]; ent.r[i * 3 + 1] = wa.axis[3 + i]; ent.r[i * 3 + 2] = wa.axis[6 + i]; ent.t[i] = wa.org[i]; }
                     const Rigid palmTarget = Mul(Mul(handH[owner], HandGripOffset(owner)), gh.rel);
-                    const Rigid gdw = Mul(Mul(palmTarget, gh.inPalm), Inv(ent));
+                    Rigid held = Mul(palmTarget, gh.inPalm);
+                    // The Timepiece: a quarter turn counter-clockwise as the player sees it, round the controller's
+                    // pointing axis (asked 2026-11-02: the grip was right, the device sideways in it). Only its draws:
+                    // the light in its dome (HandFx, from WeaponTargetPose) was where the turned dome now is.
+                    if (BodyHide::HeldItemClass(owner) == BodyHide::kTimeShiftCpntVtable)
+                    {
+                        const float fwd[3] = { handH[owner].r[0], handH[owner].r[3], handH[owner].r[6] };
+                        held = TurnInPlace(held, fwd, -90.f);   // seen from behind, looking along +fwd: -90 is counter-clockwise
+                    }
+                    const Rigid gdw = Mul(held, Inv(ent));
                     ownDv = Mul(vw, Mul(gdw, Inv(vw))); useOwnDv = true;
                     g_GadgetDraws[owner]++;
                     if (g_PartsLeft.load() > 0) LOGI("gunparts: hand {} draw n={} posed as a GADGET (palm)", owner, draw);
@@ -3583,7 +3606,10 @@ namespace
     {
         bool on = false; ID3D11Buffer* vs = nullptr; ID3D11Buffer* ps = nullptr; bool psOn = false;
         int palSlot[2] = { -1, -1 }; ID3D11ShaderResourceView* palPrev[2] = {};   // joint palettes swapped for this draw
+        bool drop = false;   // a first-person draw not to be drawn at all (the spyglass up: GpuTrace::SetHideFirstPerson)
     };
+    std::atomic<bool> g_HideFp{ false };
+    std::atomic<unsigned long long> g_FpDropped{ 0 };
     //! Hand a draw a collapsed copy of the palette bound at `slot`: every bone in `mask` becomes "everything to the
     //! socket point", the rest is left as the game wrote it. False when the palette was never seen written.
     bool SwapPalette(ID3D11DeviceContext* ctx, int slot, const std::bitset<256>& mask, const float socket[3], Swap& sw, int which, int side)
@@ -3906,6 +3932,9 @@ namespace
             }
         }
         if (t_DrawProjValid && g_CensusLeft.load() > 0) CensusAdd(t_DrawProj, 0.f, true);
+        // the spyglass up: the player's arms and what they hold are not drawn (their projection was noted above first:
+        // the reticle still projects with it)
+        if (transformed && g_HideFp.load(std::memory_order_relaxed)) { sw.drop = true; g_FpDropped++; }
         if (!moved)
         {
             if (!eyeFixed) { cur->Release(); return; }
@@ -4368,6 +4397,7 @@ namespace
             const int cm = CharMode(c);
             if (cm == 1) return;                          // a character, kept out of the sun's shadow map
             TargetSwap t; BeginTarget(c, n, t);
+            if (t.six.drop) { EndTarget(c, t); return; }   // the spyglass up: no arms, no weapons
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawIndexed, n, sp);
             realDrawIndexed(c, n, s, b);
             StereoTaa::AfterPass(c, KIND, sp);
@@ -4389,6 +4419,7 @@ namespace
             const int cm = CharMode(c);
             if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
+            if (t.six.drop) { EndTarget(c, t); return; }   // the spyglass up: no arms, no weapons
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDraw, n, sp);
             realDraw(c, n, s);
             StereoTaa::AfterPass(c, KIND, sp);
@@ -4409,6 +4440,7 @@ namespace
             const int cm = CharMode(c);
             if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
+            if (t.six.drop) { EndTarget(c, t); return; }   // the spyglass up: no arms, no weapons
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawIndexedInstanced, n, sp);
             realDrawIdxInst(c, n, i, s, b, si);
             StereoTaa::AfterPass(c, KIND, sp);
@@ -4429,6 +4461,7 @@ namespace
             const int cm = CharMode(c);
             if (cm == 1) return;
             TargetSwap t; BeginTarget(c, n, t);
+            if (t.six.drop) { EndTarget(c, t); return; }   // the spyglass up: no arms, no weapons
             StereoTaa::Pass sp; StereoTaa::OnDraw(c, KIND, eDrawInstanced, n, sp);
             realDrawInst(c, n, i, s, si);
             StereoTaa::AfterPass(c, KIND, sp);
@@ -6160,6 +6193,7 @@ namespace
     }
 }
 void GpuTrace::ProjectForSerial(unsigned long long serial) { t_ProjWant = serial; }
+void GpuTrace::SetHideFirstPerson(bool on) { if (g_HideFp.exchange(on) != on) LOGI("GpuTrace: the arms and what they hold {} ({} draws dropped so far)", on ? "hidden (the spyglass is up)" : "drawn again", g_FpDropped.load()); }
 int GpuTrace::LastProjSource() { return t_ProjSrc; }
 void GpuTrace::ProjStats(unsigned long long& own, unsigned long long& matrix, unsigned long long& latest)
 { own = g_ProjForHit.load(); matrix = g_ProjForView.load(); latest = g_ProjForMiss.load(); }

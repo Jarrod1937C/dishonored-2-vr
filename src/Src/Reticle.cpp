@@ -14,6 +14,7 @@
 #include "Collision.h"
 #include "BodyHide.h"
 #include "ViewMatrixHook.h"
+#include "CameraHook.h"
 #include <imgui.h>
 #include <cmath>
 #include <algorithm>
@@ -28,9 +29,13 @@ namespace
     std::atomic<bool> g_Minimal{ false };
     std::atomic<float> g_Opacity{ 0.5f };
     //! `c` with its alpha scaled by ReticleOpacity
+    // The spyglass up (CameraHook::SpyZoom): the picture is magnified and the arms are not drawn, so the aiming reticle is
+    // all there is to aim with -- a larger border and more opaque (asked: easy to lose track of); the right hand's goes
+    thread_local bool t_Zoomed = false;
     ImU32 Op(ImU32 c)
     {
-        const float a = (float)((c >> IM_COL32_A_SHIFT) & 0xFF) * g_Opacity.load(std::memory_order_relaxed);
+        const float o = g_Opacity.load(std::memory_order_relaxed);
+        const float a = (float)((c >> IM_COL32_A_SHIFT) & 0xFF) * (t_Zoomed ? std::min(1.f, o + 0.3f) : o);
         return (c & ~IM_COL32_A_MASK) | ((ImU32)(a + 0.5f) << IM_COL32_A_SHIFT);
     }
     std::mutex g_M; Reticle::Stats g_Stats;
@@ -197,6 +202,8 @@ namespace
     {
         float org[3], fwd[3];
         if (GrabHand::CarryHidesArm(h)) return;    // the hand carrying a corpse is hidden, and so is its ray
+        t_Zoomed = CameraHook::SpyZoom();
+        if (t_Zoomed && h == 1) return;            // the spyglass up: only the left hand's (the gun's, the power's) reticle
         const bool pointer = h == GrabHand::Hand() && GrabHand::Enabled() && PointerRay::Mode() > 0 && PointerRay::Get(h, org, fwd);
         // The hand with a gun or the crossbow: the ray the shot takes, from the muzzle as drawn along the barrel
         // (GunRay), not the controller's -- they differ by the muzzle's offset from the hand and by the grip trim.
@@ -297,7 +304,8 @@ namespace
         {   // MinimalReticle: a white dot ringed in black, a fixed angular size (~0.3 deg across at the headset's density);
             // three times that while the grab hand's ray is on something it can take
             const float grow = picked ? 3.f : 1.f;
-            const float r = std::max(2.5f, size.y * 0.0016f) * grow, edge = std::max(1.5f, size.y * 0.0008f) * (picked ? 1.5f : 1.f);
+            const float r = std::max(2.5f, size.y * 0.0016f) * grow * (t_Zoomed ? 1.3f : 1.f),
+                        edge = std::max(1.5f, size.y * 0.0008f) * (picked ? 1.5f : 1.f) * (t_Zoomed ? 2.5f : 1.f);
             if (takedown)
             {
                 const float thick = std::max(3.f, size.y * 0.0024f) * (picked ? 1.5f : 1.f);   // three times the usual edge
@@ -322,7 +330,8 @@ namespace
             st.drawn++;
             return;
         }
-        dl->AddCircle(c, rad, Op(kCol[h]), 24, 2.0f);
+        if (t_Zoomed) dl->AddCircle(c, rad, Op(IM_COL32(0, 0, 0, 255)), 24, 6.0f);   // a dark border round the ring
+        dl->AddCircle(c, rad, Op(kCol[h]), 24, t_Zoomed ? 3.0f : 2.0f);
         if (engineTarget) dl->AddCircleFilled(c, rad, Op(kColHit[h]), 24);
         dl->AddCircleFilled(c, 1.8f, Op(kCol[h]), 8);
         st.drawn++;

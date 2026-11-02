@@ -104,9 +104,8 @@ Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had
 
 Known bugs (to be fixed):
 
-- **Zoom does not work** (the mask's spyglass, on the Index's right stick click).
 - **The final Void area in Delilah's world renders incompletely.**
-- **The Timepiece in A Crack in the Slab does not render correctly.**
+- **The Timepiece in A Crack in the Slab:** the view of the other era through its lens is not in stereo yet (both eyes see the same flat picture).
 
 Other limitations:
 
@@ -460,7 +459,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `HudSkipEmpty` | The HUD panel is trimmed to the region that shows something (a 64x64 occupancy grid read back without stalls), and not submitted at all when empty. |
 | `SkipSneakOverlay` | The sneak overlay drawn while crouched is skipped: it showed as a small head-locked square in each eye. |
 | `VrGraphicsTweaks`, `DisableMotionBlur` | No depth of field or motion blur in VR (through the view's render flags). |
-| `Fog`, `FogMaps`, `FogMapsResolution` | The game's fog is kept only in the maps named in `FogMaps` (the Void, where it is the atmosphere), and there its quarter-size buffers are raised to full size. |
+| `Fog`, `FogMaps`, `FogMapsResolution` | The game's fog is kept only in the maps named in `FogMaps` (the Void and the return to Dunwall Tower, where it is the atmosphere), and there its quarter-size buffers are raised to full size. |
 | `ShadowMapMinObjectSize` | Moving objects smaller than 30 cm cast no sun shadow-map shadow. |
 | `ShadowLampCacheSlices` | A larger lamp shadow cache (32 slices instead of 12), so stereo's two views stop evicting each other's faces. |
 | `OutOfViewMaskMargin`, `OutOfViewMaskLens`, `OutOfViewMaskCorners` | The mask's margin, the runtime's own hidden-area mesh, and each eye's outer corners outside a rounded outline. |

@@ -181,6 +181,7 @@ namespace
         if (z < 1.01f) z = 1.f;
         const bool was = g_SpyView.exchange(spy);
         const float wz = g_Zoom.exchange(z);
+        if (spy != was) GpuTrace::SetHideFirstPerson(spy);   // no hands or weapons in the zoomed view (asked)
         if (spy != was) LOGI("CameraHook: spyglass {} (game fov {:.1f} deg vertical, {:.1f} without it): {}", spy ? "up" : "down",
                              gameY * 57.29578f, g_ZoomBaseY * 57.29578f, spy ? "both eyes rendered in the head's frame, the zoom magnified" : "per-eye frusta again");
         else if (spy && fabsf(z - wz) > 0.25f) LOGI("CameraHook: spyglass zoom {:.2f}x (game fov {:.1f} deg vertical)", z, gameY * 57.29578f);

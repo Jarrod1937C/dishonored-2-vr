@@ -125,7 +125,7 @@ namespace
         { "display.skipsneakoverlay",   Kind::Bool,   "1", 0, 0, nullptr, true },   // PassProfile / GpuTrace: the sneak mode's screen overlay not drawn in the eyes
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
         { "display.fog",                Kind::Bool,   "0", 0, 0, nullptr, true },   // VrTweaks: 0 = no game fog in VR (but in FogMaps); hidden, core VR
-        { "display.fogmaps",            Kind::Text,   "void", 0, 0, nullptr, true },   // VrTweaks: ...except in maps named so
+        { "display.fogmaps",            Kind::Text,   "void,dunwall_return_tower_p", 0, 0, nullptr, true },   // VrTweaks: ...except in maps named so
         { "display.fogmapsresolution",  Kind::Float,  "1", 0, 1, nullptr, true },      // VrTweaks: the game's fog buffers there (1 full, 0.5, 0.25, 0 = the game's)
         { "display.cheapfog",           Kind::Bool,   "1", 0, 0, nullptr },      // Fog: the mod's own distance fog while the game's is off
         { "display.cheapfogstart",      Kind::Float,  "30", 0, 5000, nullptr },  // m where it begins

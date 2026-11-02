@@ -161,7 +161,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Tap your RIGHT hand against the
      side of your head ............... zoom: the spyglass up; again: zoomed in more (once it is
                                        upgraded); again: back to the normal view (TempleZoom).
-                                       Your hands' pointers aim in the zoomed view
+                                       Your hands and weapons are hidden while zoomed;
+                                       your left hand's pointer aims in the zoomed view
    Walk around your room ............. the character walks with you (Roomscale); small leans
                                        (under 10 cm) leave it where it is
 
@@ -315,7 +316,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SkipSneakOverlay = 1 (hidden: the crouch overlay, a small square in each eye, is not drawn)
                Fog = 0 (hidden: the game's own fog only in the FogMaps maps; its low-resolution blocks show in
                     front of the sky elsewhere)
-               FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
+               FogMaps = void,dunwall_return_tower_p (with Fog = 0, maps named so keep their fog: the Void, the return to Dunwall Tower)
                FogMapsResolution = 1 (hidden: the fog's buffers there at full size; 0.5 half, 0.25 quarter, 0 the game's)
                CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
                CheapFogStart = 160   CheapFogEnd = 400 (m)   CheapFogOpacity = 0.6

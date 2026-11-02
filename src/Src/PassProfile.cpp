@@ -1613,26 +1613,6 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
         }
     }
     if (g_DumpFrame && f >= g_DumpUntil) { DumpFrame(); g_DumpFrame = 0; g_NextDumpAt = nowMs + 30000; }
-    // The crouch square (reported 2026-11-01: a tiny black square fixed in each eye's view, not lining up between the
-    // eyes, while sneaking only): 1.5 s into the session's first crouch the eyes' pictures are saved (DVR_crouch_eye0/1
-    // .png, the game's frame DVR_crouch_frame.png) and a draw-by-draw frame is taken; 3 s after standing up again the
-    // same (DVR_stand_*), to compare.
-    {
-        static ULONGLONG sneakSince = 0, standSince = 0; static int step = 0;
-        const bool sneak = PlayerState::Running("Sneaking");
-        if (sneak) { standSince = 0; if (!sneakSince) sneakSince = nowMs; } else { sneakSince = 0; if (!standSince) standSince = nowMs; }
-        const bool free = !g_DescFrame.load() && !g_DescPrintAt;
-        if (step == 0 && sneak && nowMs - sneakSince > 1500 && free)
-        {
-            step = 1; VRRuntime::RequestCapture("crouch"); g_NextDescAt = nowMs;
-            LOGI("PassProfile: crouched 1.5 s: the eyes' pictures saved (DVR_crouch_*.png) and this frame described draw by draw");
-        }
-        else if (step == 1 && !sneak && nowMs - standSince > 3000 && free)
-        {
-            step = 2; VRRuntime::RequestCapture("stand"); g_NextDescAt = nowMs;
-            LOGI("PassProfile: standing 3 s after the crouch: the eyes' pictures saved (DVR_stand_*.png) and this frame described draw by draw");
-        }
-    }
     // draw by draw: 40 s in, then every 2 minutes, and 20 s into every map; the armed frame moves on until one with
     // left-eye tasks is met
     {

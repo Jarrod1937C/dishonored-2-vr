@@ -327,6 +327,8 @@ what the player's game learns later replaces it.
   game's vertical fov to its fov without the spyglass (tans) divides the projection's tans, while the image is shown
   (`BuiltTans`, the layer's declared fov) at the unzoomed angles: magnified, as on a monitor. The render size stays
   the per-eye one (no resize for a few seconds of zoom).
+  While it is up the first-person draws (arms, hands, weapons: the six-dof draws) are not made
+  (GpuTrace::SetHideFirstPerson), and Reticle shows only the left hand's, larger and more opaque.
 
 [XRSession.cpp](../src/Src/XRSession.cpp) is the OpenXR layer proper (a port of the sister project's session class,
 much extended):

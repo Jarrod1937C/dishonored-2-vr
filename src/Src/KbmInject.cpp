@@ -613,13 +613,15 @@ namespace
     // [Gameplay] TempleZoom: the RIGHT hand TAPPED against the side of the head -- like touching the lens of the mask --
     // is a tap of the game's zoom: the spyglass up, again for the next magnification (when the spyglass is upgraded),
     // again back to the normal view (the game's own cycle). No button. A tap: the hand comes in sideways towards the
-    // head (over 0.35 m/s) into the zone and stops or bounces back there within 0.3 s. A hand that only rests there, or
+    // head (over 0.25 m/s) into the zone and stops or bounces back there within 0.3 s. A hand that only rests there, or
     // passes through (a slash across the face goes on inwards and out), does nothing; a charging power attack neither.
-    // Then the hand must leave the zone before the next tap. The zone, in the head's heading from the eyes: 10 to 26 cm
+    // Then the hand must draw back 2 cm (or leave the zone) before the next tap: small rapid taps (asked; it took a hand
+    // taken well away and back before), while tracking jitter on a resting hand (a few mm) does not re-arm it.
+    // The zone, in the head's heading from the eyes: 10 to 26 cm
     // to the right, 8 cm below to 12 cm above the eyes, 12 cm behind to 8 cm in front of them.
     std::atomic<bool> g_TempleZoom{ true };
     double g_ZoomedAt = -10;
-    struct TapState { bool valid = false, armed = true, pending = false; float rx = 0, vx = 0; double since = 0; int wasIn = 0; } g_Tap;
+    struct TapState { bool valid = false, armed = true, pending = false; float rx = 0, vx = 0, tapRx = 0; double since = 0; int wasIn = 0; } g_Tap;
     //! The right hand relative to the eyes, in the head's heading (right, up, forward). False without tracking.
     bool HandAtHead(const XRInputState& in, float& rx, float& ry, float& rz)
     {
@@ -647,11 +649,13 @@ namespace
         g_Tap.wasIn = inside ? 1 : 0;   // (no buzz on the way in: a power attack's wind-up passes here; the tap itself buzzes)
         if (!inside) { g_Tap.pending = false; if (rx > 0.30f || rx < 0.06f || ry < -0.14f || ry > 0.18f || rz < -0.18f || rz > 0.14f) g_Tap.armed = true; return false; }
         if (!allowed) { g_Tap.pending = false; return false; }
-        if (!g_Tap.pending && g_Tap.armed && g_Tap.vx < -0.35f) { g_Tap.pending = true; g_Tap.since = g_Now; }   // coming in sideways
+        if (!g_Tap.armed && rx > g_Tap.tapRx + 0.02f) g_Tap.armed = true;                                         // drawn back: the next tap
+        if (!g_Tap.armed) g_Tap.tapRx = std::min(g_Tap.tapRx, rx);                                                // (from the closest point)
+        if (!g_Tap.pending && g_Tap.armed && g_Tap.vx < -0.25f) { g_Tap.pending = true; g_Tap.since = g_Now; }   // coming in sideways
         if (g_Tap.pending && g_Now - g_Tap.since > 0.3) g_Tap.pending = false;                                    // it did not stop: a pass
         if (g_Tap.pending && g_Tap.vx > -0.10f)                                                                     // stopped or bounced back
         {
-            g_Tap.pending = false; g_Tap.armed = false;
+            g_Tap.pending = false; g_Tap.armed = false; g_Tap.tapRx = rx;
             return true;
         }
         return false;
@@ -1729,7 +1733,7 @@ void KbmInject::Tick()
     if (g_TempleZoom.load())
     {
         const bool busy = grabHand == 1 && (holding || carrying || g_Carry.on);
-        if (TempleTap(in, !busy && !SwordGesture::Charging()) && g_Now - g_ZoomedAt >= 0.4)
+        if (TempleTap(in, !busy && !SwordGesture::Charging()) && g_Now - g_ZoomedAt >= 0.25)
         {
             g_ZoomedAt = g_Now;
             Tap(kZ);
