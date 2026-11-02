@@ -102,6 +102,12 @@ Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had
   resolution in your headset's PC app (SteamVR's per-application resolution, the Meta Horizon Link app, Virtual
   Desktop).
 
+Known bugs (to be fixed):
+
+- **Zoom does not work** (the mask's spyglass, on the Index's right stick click).
+- **The final Void area in Delilah's world renders incompletely.**
+- **The Timepiece in A Crack in the Slab does not render correctly.**
+
 Other limitations:
 
 - Only the current **Steam** build of Dishonored 2, in **windowed** mode, is supported; the game window must stay in
