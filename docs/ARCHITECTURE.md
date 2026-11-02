@@ -378,8 +378,9 @@ functions, and both are hooked to see the real window while they run: the config
 (exe+0x41770, so the player's `dishonored2Config.cfg` keeps their own window size) and the window placement
 (exe+0x347630). The interface cursor (exe+0xE27DF, `ScreenToClient`) is scaled into the render size. The game's
 dynamic resolution (`rs_enable`, which aims at the monitor's refresh rate) is held off while the headset shows the
-game. The target is capped (4096 per side, 16 megapixels) and scaled by the ini's `RenderScale`; it is not applied in
-fullscreen. Never run the console's `writeConfig` on the player's config: it writes a different, partial file.
+game. The target is scaled by the ini's `RenderScale` and limited only by the runtime's largest swapchain image
+(from `xrGetSystemProperties`; SteamVR 8192 a side) and D3D11's 16384, plus the optional hidden `MaxRenderMegapixels`
+budget (0 = none; `RenderRes::SetRuntimeLimit`); it is not applied in fullscreen. Never run the console's `writeConfig` on the player's config: it writes a different, partial file.
 
 ### Temporal anti-aliasing per eye
 

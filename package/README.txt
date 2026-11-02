@@ -38,6 +38,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
         dinput8.dll
         DishonoredVR.dll
         DishonoredVR.ini
+        the VRControllerBindings folder (one profile per kind of controller)
  3. That's it. If Windows or your antivirus deletes dinput8.dll or DishonoredVR.dll, restore them
     and add an exception: mods like this one load into the game, which antivirus programs
     sometimes dislike.
@@ -167,16 +168,16 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    A or X, held about 3 s ............ skip the cutscene (also a mission's opening video)
    Menu button ....................... journal / pause, as in game
 
- With Reticle = 1 in DishonoredVR.ini (off in this build), two lines show where each hand points:
- the RIGHT one is what the right grip takes or uses, the LEFT one is where a power or shot goes,
- with a ring where it will land. MinimalReticle = 1 shows only a small white dot where each one
- ends (the right one grows when it is on something you can take or use); ReticleOpacity sets how
- see-through they are. When you can take a guard down from behind, the right one turns RED inside a
- thick BLUE border: swing the sword for the kill (red), or choke him (blue: the block button). With
- SwordBloodflyReach (0.3 m) makes bloodflies easier to hit with the blade; bloodfly nests can be struck too.
- KnockoutBlow = 1, hitting the back of his head hard (fist, the sword's pommel, the pistol) knocks him
- out at once instead. KnockoutSpeed sets how hard (in m/s; 4.5 by default), KnockoutAngle how squarely
- behind him you must be (degrees off straight behind; 60), KnockoutRadius how close to his head (m; 0.3).
+ Two pointers show where each hand points: the RIGHT one is what the right trigger uses or takes,
+ the LEFT one is where a power or shot goes. MinimalReticle = 1 (recommended) shows them as a small
+ white dot where each one ends (the right one grows when it is on something you can take or use);
+ 0 = two lines, the left one with a ring where it will land. ReticleOpacity sets how see-through
+ they are. When you can take a guard down from behind, the right one turns RED inside a thick BLUE
+ border: swing the sword for the kill (red), or choke him (blue: the block button).
+ KNOCKOUT BLOW: behind a guard who has not seen you, a BLUE DOT marks the back of his head: hitting
+ it hard (fist, the sword's pommel, the pistol) knocks him out at once. KnockoutSpeed sets how hard
+ (in m/s; 8 recommended), KnockoutSoundVolume the hit's sound (your own DVR_knockout.wav in the game
+ folder replaces it). Bloodflies are easier to hit with the blade, and bloodfly nests can be struck.
 
  IN MENUS
    Sticks: move   A: select   B or menu: back   Grips: next tab   Triggers: previous / next sub-tab
@@ -262,7 +263,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  Their switches stay in the file (@hidden, marked "Core VR") for troubleshooting only. The defaults,
  by main group:
 
-   [Controls]  TurnMode = smooth (or snap)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 45
+   (Where a setting has a recommended value different from its default, the shipped file has the
+    recommended one; the VR tabs show both.)
+   [Controls]  TurnMode = snap (or smooth)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 20
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
                SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
                ControllerBindings = auto (which controller profile, below)   Haptics = 1 (vibration)
@@ -274,8 +277,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                degrees), the trackpads' press force and centre. ControllerBindings = auto picks the profile made
                for the controllers in use, or the first file there is; a file's name (index) forces that one.
                Open them with Notepad; "notes" in each explains its settings.
-   [Gameplay]  SwordGestures = 1   ThrowGestures = 1   GrabObjects = 1
-               HandCollision = 0 / WeaponCollision = 0 (experimental: your hands / the sword and guns stop at
+   [Gameplay]  SwordDamageScale = 1 (the blade's damage)   KnockoutSpeed = 8 (m/s)   KnockoutSoundVolume = 0.8
+               PhysicalCrouchDepth = 30 (cm)   WallFade = 1
+               Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
+               KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
+               HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at
                                  walls, tables, props and, for the blade, people's bodies, instead of passing through)
                PushObjects = 1   PushStrength = 1 (with those: hands and weapons push loose objects; kg)
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
@@ -288,10 +294,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  sword. Again with it in the hand = put it away. A light buzz tells
                                  you the hand is at a holster. An emptied hand stays empty: the
                                  wheel, a quick slot, blocking or a stun no longer bring the sword back)
-               PhysicalPickup = 0 (experimental, with HandCollision: grab items with the right hand and
+               PhysicalPickup = 1 (with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
-   [Display]   Reticle = 0 (1 = the two pointing lines) WristHud = 1  WristHudSize = 8.5 (cm)
-               MinimalReticle = 0 (1 = only a dot where each hand points)  ReticleOpacity = 0.5
+   [Display]   Reticle = 1 (Core VR: the hands' pointers)  WristHud = 1  WristHudSize = 8.5 (cm)
+               MinimalReticle = 1 (only a dot where each hand points; 0 = lines)  ReticleOpacity = 0.4
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)
                HudDistance = 2 (m, how far away that layer floats)
                HudMarkers = 1 (a guard's alert marker and the objective markers placed over them in the headset)
@@ -300,12 +306,14 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CameraPitchFix = 1 (the game's camera does not slide forward / back as you look down / up)
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
-               AmbientOcclusion = 1 (0 = no ambient occlusion in VR: faster)
+               AmbientOcclusion = 0 (no ambient occlusion in VR: faster; 1 = the game's)
+               SkipSneakOverlay = 1 (hidden: the crouch overlay, a small square in each eye, is not drawn)
                Fog = 0 (hidden: the game's own fog only in the FogMaps maps; its low-resolution blocks show in
                     front of the sky elsewhere)
                FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
+               FogMapsResolution = 1 (hidden: the fog's buffers there at full size; 0.5 half, 0.25 quarter, 0 the game's)
                CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
-               CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6
+               CheapFogStart = 160   CheapFogEnd = 400 (m)   CheapFogOpacity = 0.6
                CheapFogColor = auto (night / dusk / day colour by the map's upper sky; sky = the horizon's
                                      average; or R,G,B 0-255)
                CheapFogColorNight / CheapFogColorDusk / CheapFogColorDay = R,G,B[,brightness]
@@ -332,34 +340,34 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  bottom-right of your view; green at the headset's refresh rate, amber below, red
                                  under three quarters of it)
                FpsCounterSize = 1   FpsCounterAngle = 15 (deg from the view's centre: less = nearer the middle)
-               ShadowCullDistance = 0 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
+               ShadowCullDistance = 32 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
                ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
                ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
-               StaticLodZoom = 1 (experimental: >1 = static models switch to simpler versions sooner; 1 = the game's)
-               HudResolution = 1 (the HUD panel's resolution per side: 0.25 / 0.5 / 0.75 / 1; same place and size)
+               StaticLodZoom = 1.5 (>1 = static models switch to simpler versions sooner; 1 = the game's)
+               HudResolution = 0.5 (the HUD panel's resolution per side: 0.25 / 0.5 / 0.75 / 1; same place and size)
                HudSkipEmpty = 1 (the HUD panel only where it shows something, none when empty; the watch's
                                  cluster left off it while the watch holds the HUD on)
                SkipEmptyOutlines = 1 (the outline effect's full-screen passes skipped by the GPU when nothing is outlined)
                StereoExposureReuse = 1 (the right eye adapts its exposure from the left eye's measurement)
                StereoSunShadowReuse = 1 (the right eye keeps the left eye's nearest sun shadow cascade: the same
                                  near shadows and the same switch to the farther ones in both eyes)
-               ViewDistance = -1 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
-               DepthPassDepthOnly = 0 (experimental: the depth pass's main shader drawn depth-only)
+               ViewDistance = 3 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
+               DepthPassDepthOnly = 1 (hidden: the depth pass's main shader drawn depth-only)
                DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)
                ShadowMapMinObjectSize = 0.3 (m across: smaller moving objects cast no sun shadow-map shadow)
                ShadowSunUpdateEvery = 2 (frame pairs between redraws of the sun's shadows beyond the nearest)
-               OutOfViewMask = 0 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
+               OutOfViewMask = 2 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
                OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
                OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime; OutOfViewMask = 1 only)
                OutOfViewMaskCorners = 4 (also each picture's two outer corners outside a rounded outline; 0 = off)
                FoveatedRendering = 0 (NVIDIA only: coarser shading away from each lens's centre; faster)
                FoveatedInner = 35   FoveatedOuter = 50 (deg: full rate, then 2x2, 4x4 beyond)
-               Experimental, 0 by default (1 = the right eye's frame reuses the left eye's work):
+               Hidden, 1 in the shipped file (the right eye's frame reuses the left eye's work):
                                  StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
-               SkipDisabledEffects = 0 (experimental: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
+               SkipDisabledEffects = 1 (hidden: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
    [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 1   InfiniteAmmo = 1
                InfiniteHealth = 1; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
@@ -371,7 +379,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  picture instead of an hourglass)
                NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
                                  Link / Air Link only)
-   [Logging]   LogControllerInput = 1   WriteStatusFile = 0
+   [Logging]   WriteLog = 1 (0 = no DishonoredVR.log, and no logging work at all)
+               LogControllerInput = 1   WriteStatusFile = 0
                ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
                                       the mod's own steps, hitches and a frame draw by draw)
 

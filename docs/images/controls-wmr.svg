@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 518" width="1100" height="518" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" role="img" aria-label="Windows Mixed Reality and Samsung Odyssey controllers">
+<title>Windows Mixed Reality and Samsung Odyssey controllers</title>
+<rect x="1" y="1" width="1098" height="516" rx="14" fill="#fbfbfd" stroke="#d7dbe2" stroke-width="2"/>
+<text x="28" y="42.0" font-size="22" fill="#1f2933" font-weight="bold" text-anchor="start">Windows Mixed Reality and Samsung Odyssey controllers</text>
+<text x="28" y="66.0" font-size="13.5" fill="#5b6670" font-weight="normal" text-anchor="start">Seen from above as you hold them, pointing away from you. Orange: the trigger (under the front, index finger). Green: the grip. The light ring is above.</text>
+<text x="420" y="108.0" font-size="14" fill="#5b6670" font-weight="bold" text-anchor="middle">LEFT</text>
+<text x="680" y="108.0" font-size="14" fill="#5b6670" font-weight="bold" text-anchor="middle">RIGHT</text>
+<g transform="translate(420 234.0) scale(1.0 1.0)"><path d="M -110 -36 C -110 -120 110 -120 110 -36 L 92 -36 C 92 -100 -92 -100 -92 -36 Z" fill="#c3c9d1" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><path d="M -44 30 C -40 100 -24 160 -10 190 C -2 210 34 208 34 186 C 30 150 30 100 34 30 Z" fill="#e3e7ec" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><rect x="-88" y="-38" width="176" height="76" rx="38" fill="#e3e7ec" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><rect x="-18.0" y="-53.0" width="36" height="14" rx="6" fill="#d98a0b" fill-opacity="0.85" stroke="#d98a0b" stroke-width="2" vector-effect="non-scaling-stroke"/><rect x="29" y="84" width="11" height="56" rx="5" fill="#13956b" stroke="#13956b" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="-40" cy="0" r="32" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="42" cy="-2" r="22" fill="#eef1f4" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="42" cy="-2" r="15" fill="#cfd5dc" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="14" cy="30" r="6" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="-14" cy="60" r="6" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/></g>
+<g transform="translate(680 234.0) scale(-1.0 1.0)"><path d="M -110 -36 C -110 -120 110 -120 110 -36 L 92 -36 C 92 -100 -92 -100 -92 -36 Z" fill="#c3c9d1" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><path d="M -44 30 C -40 100 -24 160 -10 190 C -2 210 34 208 34 186 C 30 150 30 100 34 30 Z" fill="#e3e7ec" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><rect x="-88" y="-38" width="176" height="76" rx="38" fill="#e3e7ec" stroke="#6f7883" stroke-width="2.2" vector-effect="non-scaling-stroke"/><rect x="-18.0" y="-53.0" width="36" height="14" rx="6" fill="#d98a0b" fill-opacity="0.85" stroke="#d98a0b" stroke-width="2" vector-effect="non-scaling-stroke"/><rect x="29" y="84" width="11" height="56" rx="5" fill="#13956b" stroke="#13956b" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="-40" cy="0" r="32" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="42" cy="-2" r="22" fill="#eef1f4" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="42" cy="-2" r="15" fill="#cfd5dc" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="14" cy="30" r="6" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/><circle cx="-14" cy="60" r="6" fill="#ffffff" stroke="#6f7883" stroke-width="2" vector-effect="non-scaling-stroke"/></g>
+<text x="30" y="140.0" font-size="14.5" fill="#d98a0b" font-weight="bold" text-anchor="start">Left trigger</text>
+<text x="30" y="158.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">power, pistol or crossbow - grenade:</text>
+<text x="30" y="174.2" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">hold, swing, let go</text>
+<line x1="292" y1="136" x2="420.0" y2="188.0" stroke="#d98a0b" stroke-width="1.3"/>
+<circle cx="292" cy="136" r="2.5" fill="#d98a0b"/><circle cx="420.0" cy="188.0" r="2.5" fill="#d98a0b"/>
+<text x="30" y="202.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Left trackpad, press</text>
+<text x="30" y="220.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">edges: quick slots 1 (top), 2 (right),</text>
+<text x="30" y="236.2" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">3 (bottom), 4 (left) - middle: menu</text>
+<text x="30" y="252.5" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">(short: journal, hold: pause)</text>
+<line x1="292" y1="198" x2="380.0" y2="234.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="292" cy="198" r="2.5" fill="#2f6fdf"/><circle cx="380.0" cy="234.0" r="2.5" fill="#2f6fdf"/>
+<text x="30" y="280.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Left stick</text>
+<text x="30" y="298.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">move - click: sprint</text>
+<line x1="292" y1="276" x2="462.0" y2="232.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="292" cy="276" r="2.5" fill="#2f6fdf"/><circle cx="462.0" cy="232.0" r="2.5" fill="#2f6fdf"/>
+<text x="30" y="326.0" font-size="14.5" fill="#9aa3ad" font-weight="bold" text-anchor="start">Left menu button</text>
+<text x="30" y="344.0" font-size="13" fill="#5b6670" font-weight="normal" text-anchor="start">not used</text>
+<line x1="292" y1="322" x2="434.0" y2="264.0" stroke="#9aa3ad" stroke-width="1.3"/>
+<circle cx="292" cy="322" r="2.5" fill="#9aa3ad"/><circle cx="434.0" cy="264.0" r="2.5" fill="#9aa3ad"/>
+<text x="30" y="372.0" font-size="14.5" fill="#13956b" font-weight="bold" text-anchor="start">Left grip</text>
+<text x="30" y="390.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">hold: power wheel - holsters</text>
+<line x1="292" y1="368" x2="455.0" y2="346.0" stroke="#13956b" stroke-width="1.3"/>
+<circle cx="292" cy="368" r="2.5" fill="#13956b"/><circle cx="455.0" cy="346.0" r="2.5" fill="#13956b"/>
+<text x="820" y="140.0" font-size="14.5" fill="#d98a0b" font-weight="bold" text-anchor="start">Right trigger</text>
+<text x="820" y="158.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">interact: use, open, take</text>
+<line x1="810" y1="136" x2="680.0" y2="188.0" stroke="#d98a0b" stroke-width="1.3"/>
+<circle cx="810" cy="136" r="2.5" fill="#d98a0b"/><circle cx="680.0" cy="188.0" r="2.5" fill="#d98a0b"/>
+<text x="820" y="186.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Right trackpad, press</text>
+<text x="820" y="204.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">the sword's button (hold: power attack)</text>
+<line x1="810" y1="182" x2="720.0" y2="234.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="810" cy="182" r="2.5" fill="#2f6fdf"/><circle cx="720.0" cy="234.0" r="2.5" fill="#2f6fdf"/>
+<text x="820" y="232.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Right stick</text>
+<text x="820" y="250.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">turn - click: jump</text>
+<line x1="810" y1="228" x2="638.0" y2="232.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="810" cy="228" r="2.5" fill="#2f6fdf"/><circle cx="638.0" cy="232.0" r="2.5" fill="#2f6fdf"/>
+<text x="820" y="278.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Right menu button</text>
+<text x="820" y="296.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">crouch (toggle)</text>
+<line x1="810" y1="274" x2="666.0" y2="264.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="810" cy="274" r="2.5" fill="#2f6fdf"/><circle cx="666.0" cy="264.0" r="2.5" fill="#2f6fdf"/>
+<text x="820" y="324.0" font-size="14.5" fill="#13956b" font-weight="bold" text-anchor="start">Right grip</text>
+<text x="820" y="342.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">grab, carry, pull open - blocks with</text>
+<text x="820" y="358.2" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">the sword out - left hip: sword</text>
+<line x1="810" y1="320" x2="645.0" y2="346.0" stroke="#13956b" stroke-width="1.3"/>
+<circle cx="810" cy="320" r="2.5" fill="#13956b"/><circle cx="645.0" cy="346.0" r="2.5" fill="#13956b"/>
+<line x1="24" y1="438" x2="1076" y2="438" stroke="#d7dbe2" stroke-width="1.5"/>
+<text x="28" y="460.0" font-size="13.5" fill="#1f2933" font-weight="normal" text-anchor="start">Elixirs: bring a hand to your mouth and squeeze its grip (left = health, right = mana). No zoom. The Windows buttons are the system's.</text>
+<text x="28" y="482.0" font-size="13.5" fill="#5b6670" font-weight="normal" text-anchor="start">Everywhere: swing to strike, fist by the ear + thrust = power attack, fist at the left shoulder = block.</text>
+</svg>
