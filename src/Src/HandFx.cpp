@@ -28,6 +28,7 @@ namespace
     // The research bookkeeping (a stack walk per arm query) runs only once `vr handfxlog` has been asked for.
     std::atomic<bool> g_Research{ false };
     std::atomic<unsigned long long> g_Calls{ 0 }, g_ArmCalls{ 0 }, g_Corrected{ 0 }, g_NoFrame{ 0 };
+    std::atomic<unsigned long long> g_ItemCalls{ 0 }, g_ItemCorrected{ 0 };
     // Research: one entity's binds and the joint queries inside them (HandFx::ProbeEntity).
     std::atomic<void*> g_ProbeEnt{ nullptr };
     std::atomic<int> g_ProbeLeft{ 0 };
@@ -168,11 +169,64 @@ namespace
         }
     }
 
+    //! Which hand's held item this skeleton object draws, or -1 (only items whose effects hang off their own joints:
+    //! the Timepiece, whose light spins inside its glass dome).
+    int ItemSide(void* obj)
+    {
+        if (!obj) return -1;
+        void* model = *(void**)((uint8_t*)obj + HandFx::kObjModel);
+        if (!model) return -1;
+        for (int s = 0; s < 2; s++)
+            if (BodyHide::HeldItemClass(s) == BodyHide::kTimeShiftCpntVtable)
+                for (int k = 0; k < 2; k++) if (model == BodyHide::WeaponModel(s, k)) return s;
+        return -1;
+    }
+    //! A joint of a held item's model, asked for by something hung off it (an effect, a light): the GPU draws the item at
+    //! the hand (GpuTrace::WeaponTargetPose) while the engine keeps it where the animation holds it, so whatever the
+    //! engine places by that joint floated where the flat game's item would be. The answer is the joint as the DRAWN
+    //! item has it, given back in the model's current frame: p' = M^-1 * D * p (M the model's transform now, D the drawn
+    //! pose; the item's draws sit at its entity, so its model frame is the entity's). When WeaponPose already put the
+    //! drawn pose into the model's transform, M = D and nothing changes. The item's own bind (the equipment entity on the
+    //! hand) is left alone: the draws are identified by that entity's real position.
+    bool CorrectItem(void* obj, int side, float* outPos, float* outAxis)
+    {
+        g_ItemCalls++;
+        if (g_Mode.load() < 2 || (t_InBind && IsEquipment(t_BindEnt))) return false;
+        uint8_t* model = *(uint8_t**)((uint8_t*)obj + HandFx::kObjModel);
+        if (!Readable(model + HandFx::kModelOrigin, 48)) return false;
+        float dorg[3], dax[9];
+        if (!GpuTrace::WeaponTargetPose(side, dorg, dax)) return false;
+        const float* mo = (const float*)(model + HandFx::kModelOrigin); const float* ma = (const float*)(model + HandFx::kModelAxis);
+        // world (drawn) = dorg + sum_k p_k dax[k]; back into the model's frame: p'_k = dot(ma[k], world - mo)
+        float w[3];
+        for (int i = 0; i < 3; i++) w[i] = dorg[i] + outPos[0] * dax[0 * 3 + i] + outPos[1] * dax[1 * 3 + i] + outPos[2] * dax[2 * 3 + i];
+        const float d[3] = { w[0] - mo[0], w[1] - mo[1], w[2] - mo[2] };
+        float p[3], r[9];
+        for (int k = 0; k < 3; k++) p[k] = ma[k * 3] * d[0] + ma[k * 3 + 1] * d[1] + ma[k * 3 + 2] * d[2];
+        // the joint's axis rows: in the world by the drawn frame, back by the model's
+        for (int i = 0; i < 3; i++)
+        {
+            float rw[3];
+            for (int c = 0; c < 3; c++) rw[c] = outAxis[i * 3] * dax[c] + outAxis[i * 3 + 1] * dax[3 + c] + outAxis[i * 3 + 2] * dax[6 + c];
+            for (int k = 0; k < 3; k++) r[i * 3 + k] = rw[0] * ma[k * 3] + rw[1] * ma[k * 3 + 1] + rw[2] * ma[k * 3 + 2];
+        }
+        for (float v : p) if (!std::isfinite(v)) return false;
+        const float moved = sqrtf((p[0] - outPos[0]) * (p[0] - outPos[0]) + (p[1] - outPos[1]) * (p[1] - outPos[1]) + (p[2] - outPos[2]) * (p[2] - outPos[2]));
+        static std::atomic<int> logged{ 0 };
+        if (logged.fetch_add(1) < 12)
+            LOGI("HandFx: held item (side {}) joint asked {} -> moved {:.3f} m to the drawn item (bound entity {} vt exe+0x{:X})", side,
+                 t_InBind ? "in a bind" : "directly", moved, t_InBind ? t_BindEnt : nullptr,
+                 t_InBind && t_BindEnt && Readable(t_BindEnt, 8) ? *(uintptr_t*)t_BindEnt - GameInfo::Base() : 0);
+        memcpy(outPos, p, 12); memcpy(outAxis, r, 36);
+        g_ItemCorrected++;
+        return true;
+    }
     bool Correct(int fn, void* obj, short joint, float* outPos, float* outAxis)
     {
         g_Calls++;
         const int mode = g_Mode.load();
         if (!mode || !outPos || !outAxis) return false;
+        if (const int is = ItemSide(obj); is >= 0) return CorrectItem(obj, is, outPos, outAxis);
         const int side = ArmSide(obj);
         if (side < 0) return false;
         g_ArmCalls++;
@@ -276,5 +330,6 @@ void* HandFx::BoundEntity() { return t_InBind ? t_BindEnt : nullptr; }
 void HandFx::ProbeEntity(void* entity, int n) { g_ProbeLeft = n; g_ProbeEnt = entity; LOGI("HandFx: probing {} binds of entity {}", n, entity); }
 std::string HandFx::Stats()
 {
-    return fmt::format("mode {} calls {} arm {} corrected {} noframe {}", g_Mode.load(), g_Calls.load(), g_ArmCalls.load(), g_Corrected.load(), g_NoFrame.load());
+    return fmt::format("mode {} calls {} arm {} corrected {} noframe {} item {} itemcorrected {}", g_Mode.load(), g_Calls.load(), g_ArmCalls.load(), g_Corrected.load(), g_NoFrame.load(),
+                       g_ItemCalls.load(), g_ItemCorrected.load());
 }

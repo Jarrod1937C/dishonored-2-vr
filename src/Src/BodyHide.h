@@ -40,11 +40,12 @@ namespace BodyHide
     void* LeftWeaponEntity();   //!< PlayerLeftEquipment (arkWeapon) entity, null when unknown
     //! What a hand holds, by the class of the inventory item's component (item+0x10; item = equipment cpnt +0x70 L /
     //! +0x68 R): arkCpntHeart, arkCpntWeaponThrowable (grenades, mines, razors), arkCpntWeaponGun / Crossbow...
-    //! The vtable RVA, 0 when unknown. HoldsGadget: the Heart or a throwable -- held in the palm, not aimed.
+    //! The vtable RVA, 0 when unknown. HoldsGadget: the Heart, the Timepiece or a throwable -- held in the palm, not aimed.
     constexpr uint32_t kItemCpnt          = 0x10;
     constexpr uint32_t kHeartCpntVtable   = 0x1B99C68;  //!< arkCpntHeart
     constexpr uint32_t kThrowableCpntVtable = 0x1B9D8B8; //!< arkCpntWeaponThrowable
     constexpr uint32_t kPlaceableCpntVtable = 0x1B54538; //!< arkCpntWeaponPlaceable (stun mine, spring razor)
+    constexpr uint32_t kTimeShiftCpntVtable = 0x1B53AE8; //!< arkCpntTimeShiftDevice: the Timepiece (A Crack in the Slab)
     uint32_t HeldItemClass(int side);
     constexpr uint32_t kGunCpntVtable      = 0x1B53F58; //!< the pistol's gun component
     constexpr uint32_t kCrossbowCpntVtable = 0x1B9CBF8; //!< the crossbow's

@@ -761,7 +761,7 @@ Which pose the palm takes depends on what the hand holds (what it holds comes fr
   own idle (standing still, no power in use); its fist is the empty hand's sprinting fist, else the weapon's grip
   (`g_Fist`, or the fingers saved with a grip in `DVR_grips.txt`). The heartbeat's `handrest` line shows the curls,
   their source and the bones per finger.
-- **Gadgets** (grenades, mines, the Heart): the hand takes the anatomical pose and the gadget is kept in the palm where
+- **Gadgets** (grenades, mines, the Heart, the Timepiece): the hand takes the anatomical pose and the gadget is kept in the palm where
   it sits at the closest point of the equip animation (`gpugadget 2`).
 - **Holding an object**: the fist learned from the weapon grip (`vr grabfist`).
 - `DVR_hands.txt` keeps the hand socket and hold learned per side.
@@ -791,7 +791,9 @@ The GPU rewrite does not change where the ENGINE thinks things are. Two modules 
   rewrite gives that point of the arm (chosen by position along the arm: the engine's joint indices are not the
   palette's). So Far Reach's tendril, Blink's smoke and power glows come out of the drawn hand. Entities bound to an
   arm joint (the equipment) are left alone, because the weapon identification matches draws against their real
-  position. GrabHand answers held-object queries through the same hook.
+  position. GrabHand answers held-object queries through the same hook. The Timepiece's model joints (its light spins
+  inside the glass dome, hung off the model) are answered as the DRAWN item has them: `p' = M^-1 * D * p`, M the
+  model's transform now, D `GpuTrace::WeaponTargetPose` (a no-op once WeaponPose has put D into the model).
 
 ### BodyView
 

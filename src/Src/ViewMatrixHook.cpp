@@ -655,6 +655,7 @@ namespace
         // lives at view + 0x39D0 + 0xA8.
         uint8_t* mainView = (uint8_t*)CameraHook::MainView();
         bool isMain = mainView && org == (const float*)(mainView + CameraHook::kRenderRV + CameraHook::kRV_ViewOrg);
+        if (CameraHook::SurveyOn()) CameraHook::Survey("vm", (const uint8_t*)org - CameraHook::kRenderRV - CameraHook::kRV_ViewOrg, org, axis, 0.f, 0.f, 0, 0, isMain);
         if (isMain) VrTweaks::OnMainView(mainView);   // its render flags, set by now for this frame (VrTweaks)
         if (isMain && g_Enabled.load() && ScreenMode::FlatRender())
         {   // a menu, a loading screen or a cutscene on the screen in the room: the flat game's own view, no head in it

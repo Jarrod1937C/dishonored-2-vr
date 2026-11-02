@@ -150,7 +150,7 @@ namespace
             for (int a = 0; a < 2; a++)
                 if (g_ItemClass[a].exchange(cls[a]) != cls[a])
                     LOGI("BodyHide: {} hand item component vtable exe+0x{:X} ({})", a ? "R" : "L", cls[a],
-                         cls[a] == BodyHide::kHeartCpntVtable ? "the Heart" : cls[a] == BodyHide::kThrowableCpntVtable ? "a throwable" : cls[a] == BodyHide::kPlaceableCpntVtable ? "a placeable (mine / razor)" : cls[a] ? "other" : "none");
+                         cls[a] == BodyHide::kHeartCpntVtable ? "the Heart" : cls[a] == BodyHide::kTimeShiftCpntVtable ? "the Timepiece" : cls[a] == BodyHide::kThrowableCpntVtable ? "a throwable" : cls[a] == BodyHide::kPlaceableCpntVtable ? "a placeable (mine / razor)" : cls[a] ? "other" : "none");
             for (int a = 0; a < 2; a++) for (int k = 0; k < 2; k++)
             {
                 uint8_t* m = w[a] ? ModelOf((uint8_t*)w[a], k == 0 ? BodyHide::kEntityModelA : BodyHide::kWeaponModelB) : nullptr;
@@ -252,7 +252,9 @@ void* BodyHide::WeaponTransformSet(int hand, int idx) { return g_WeaponTset[hand
 void* BodyHide::WeaponModel(int hand, int idx) { return g_WeaponModel[hand & 1][idx & 1].load(); }
 void* BodyHide::LeftWeaponEntity() { return g_LeftWeapon.load(); }
 uint32_t BodyHide::HeldItemClass(int side) { return g_ItemClass[side & 1].load(); }
-bool BodyHide::HoldsGadget(int side) { const uint32_t c = g_ItemClass[side & 1].load(); return c == kHeartCpntVtable || c == kThrowableCpntVtable || c == kPlaceableCpntVtable; }
+// The Timepiece is held like the Heart: in the palm as the equip animation puts it (aimed like a pistol, along the
+// controller, it came out at a sharp angle: its model's forward is not a barrel's)
+bool BodyHide::HoldsGadget(int side) { const uint32_t c = g_ItemClass[side & 1].load(); return c == kHeartCpntVtable || c == kThrowableCpntVtable || c == kPlaceableCpntVtable || c == kTimeShiftCpntVtable; }
 bool BodyHide::HoldsGun(int side) { const uint32_t c = g_ItemClass[side & 1].load(); return c == kGunCpntVtable || c == kCrossbowCpntVtable; }
 void* BodyHide::RightWeaponEntity() { return g_RightWeapon.load(); }
 BodyHide::Stats BodyHide::GetStats() { std::lock_guard lk(g_M); return g_Stats; }

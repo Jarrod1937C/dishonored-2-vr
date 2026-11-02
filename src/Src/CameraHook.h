@@ -79,6 +79,12 @@ namespace CameraHook
     //! is applied to the projection while the image keeps being shown at the unzoomed angles: magnified, as on a
     //! monitor. `zoom` = the magnification now (1 = none); returns whether the spyglass view is on.
     bool SpyZoom(float* zoom = nullptr);
+    //! Research for a stereo Timepiece (A Crack in the Slab: its lens shows the other era, rendered by a view of its
+    //! own): while it is in hand, the first few hundred view builds after it is drawn are logged -- which views, in
+    //! which order, their size, fov, origin and axis -- from ComputeMatrices ("cm"), the projection builder ("proj") and
+    //! CreateViewMatrix ("vm"). Only with the log on. `main` = what the caller took it for.
+    void Survey(const char* where, const void* obj, const float* org, const float* axis, float fovX, float fovY, int w, int h, bool main);
+    bool SurveyOn();   //!< a survey is running (checked before reading anything for it)
     //! The tan extents (r - l, u - d) the render target must hold at the eye's pixel density (RenderRes): the per-eye
     //! frustum while it is in effect, else the symmetric fov override's. False = neither.
     bool RenderExtent(float& ex, float& ey);

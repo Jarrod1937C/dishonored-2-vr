@@ -6,6 +6,9 @@
 #include "VRMath.h"
 #include "ViewMatrixHook.h"
 #include "PlayerState.h"
+#include "BodyHide.h"
+#include "GpuTrace.h"
+#include "StereoSync.h"
 #include <detours/detours.h>
 #include <cmath>
 #include <algorithm>
@@ -76,6 +79,7 @@ namespace
         int h = *(int*)((uint8_t*)view + CameraHook::kView_RenderH);
         // Main view heuristic: the largest render target (UI/portal/shadow views are smaller).
         bool main = w >= 1024 && h >= 576;
+        CameraHook::Survey("cm", view, org, axis, *(float*)(rv + CameraHook::kRV_FovX), *(float*)(rv + CameraHook::kRV_FovY), w, h, main);
         if (main)
         {
             g_MainView.store(view);
@@ -184,11 +188,15 @@ namespace
     void ProjHook(void* rv, float* out, float a, float b, void* e, int f, int g)
     {
         uint8_t* mv = (uint8_t*)g_MainView.load();
+        if (!(mv && rv == mv + CameraHook::kRenderRV) && CameraHook::SurveyOn())
+            CameraHook::Survey("proj", (uint8_t*)rv - CameraHook::kRenderRV, (const float*)((uint8_t*)rv + CameraHook::kRV_ViewOrg), (const float*)((uint8_t*)rv + CameraHook::kRV_ViewAxis),
+                               *(float*)((uint8_t*)rv + CameraHook::kRV_FovX), *(float*)((uint8_t*)rv + CameraHook::kRV_FovY), 0, 0, false);
         if (mv && rv == mv + CameraHook::kRenderRV && *((uint8_t*)rv + CameraHook::kRV_UseExplicit)) g_ExplicitBuilds++;
         if (mv && rv == mv + CameraHook::kRenderRV && !*((uint8_t*)rv + CameraHook::kRV_UseExplicit))
         {
             float* fx = (float*)((uint8_t*)rv + CameraHook::kRV_FovX);
             float* fy = (float*)((uint8_t*)rv + CameraHook::kRV_FovY);
+            if (CameraHook::SurveyOn()) CameraHook::Survey("proj", (uint8_t*)rv - CameraHook::kRenderRV, (const float*)((uint8_t*)rv + CameraHook::kRV_ViewOrg), (const float*)((uint8_t*)rv + CameraHook::kRV_ViewAxis), *fx, *fy, 0, 0, true);
             const bool ours = *fx == g_WroteX && *fy == g_WroteY;   // our own numbers from an earlier build: not the game's
             if (!ours) { g_GameFovX = *fx * 57.29578f; g_GameFovY = *fy * 57.29578f; UpdateSpy(*fy); }
             float ox = g_FovOvX.load(), oy = g_FovOvY.load();
@@ -484,6 +492,25 @@ std::string CameraHook::EyeProjStatus()
     if (hu) s += fmt::format(" | union {:.1f} {:.1f} {:.1f} {:.1f}", deg(u.l), deg(u.r), deg(u.u), deg(u.d));
     s += fmt::format(" | spyglass {} zoom {:.2f} base {:.1f} deg zoomedviews {}", g_SpyView.load() ? 1 : 0, g_Zoom.load(), g_ZoomBaseY * 57.29578f, g_ZoomViews.load());
     return s;
+}
+
+namespace { std::atomic<int> g_SurveyBudget{ 0 }; }
+bool CameraHook::SurveyOn() { return g_SurveyBudget.load(std::memory_order_relaxed) > 0; }
+void CameraHook::Survey(const char* where, const void* obj, const float* org, const float* axis, float fovX, float fovY, int w, int h, bool main)
+{
+    std::atomic<int>& budget = g_SurveyBudget;
+    static std::atomic<bool> held{ false };
+    const bool now = BodyHide::HeldItemClass(0) == BodyHide::kTimeShiftCpntVtable || BodyHide::HeldItemClass(1) == BodyHide::kTimeShiftCpntVtable;
+    if (now != held.exchange(now) && now && Log::Enabled())
+    {
+        budget = 600;
+        LOGI("CameraHook: the Timepiece in hand: surveying the next 600 view builds (main view {})", g_MainView.load());
+    }
+    if (!now || budget.load() <= 0 || budget.fetch_sub(1) <= 0) return;
+    const bool okO = org && !IsBadReadPtr(org, 12), okA = axis && !IsBadReadPtr(axis, 36);
+    LOGI("view survey: {} obj {} {} frame {} held {} | {}x{} fov {:.2f} x {:.2f} deg | org ({:.2f},{:.2f},{:.2f}) fwd ({:.3f},{:.3f},{:.3f}) | main view {}",
+         where, obj, main ? "MAIN" : "other", GpuTrace::PresentFrame(), StereoSync::LastFrameHeld() ? 1 : 0, w, h, fovX * 57.29578f, fovY * 57.29578f,
+         okO ? org[0] : 0.f, okO ? org[1] : 0.f, okO ? org[2] : 0.f, okA ? axis[0] : 0.f, okA ? axis[1] : 0.f, okA ? axis[2] : 0.f, g_MainView.load());
 }
 
 bool CameraHook::SpyZoom(float* zoom)
