@@ -155,7 +155,9 @@ pistol with an empty right hand.
 - **Swing to strike.** What the blade touches is hit, at once and harder the faster it moves (`SwordDamageScale`, 1 =
   a firm swing does what the game's attack does). A guard who is blocking still blocks or parries it, as in the game.
 - **Power attack:** fist by your right ear with the blade forward, then thrust. Lower the blade to cancel it.
-- **Block:** fist at your left shoulder, or squeeze the right grip with the sword out.
+- **Block:** bring your right fist, holding the sword with the blade up, to your left shoulder (within about 20 cm);
+  you block for as long as it stays there. Or squeeze the right grip with the sword out. The gesture is off while you
+  are crouched (sneaking), where the grip still blocks.
 - **No finishing-move animations or kill cam:** a blow that would trigger one is an ordinary blow that still lands, so
   the view never leaves your head. Stealth takedowns keep theirs.
 - **Bloodflies** are easier to hit (the blade reaches 30 cm further for them), and their nests can be struck too.
@@ -281,7 +283,7 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 |---|---|
 | Swing your right arm | Strike with the sword |
 | Fist by your right ear, blade forward, then thrust | Power attack (lower the blade to cancel) |
-| Fist at your left shoulder (or the right grip, sword out) | Block |
+| Right fist at your left shoulder, blade up (or the right grip, sword out) | Block |
 | Hit the back of a guard's head, from behind | Knock him out |
 | Left trigger held, swing, let go | Throw a grenade or springrazor |
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
