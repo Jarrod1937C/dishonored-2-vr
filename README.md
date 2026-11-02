@@ -7,7 +7,8 @@ This mod is only possible thanks to the initial work by **The Cosmic Tangerine**
 it builds on.
 
 - **The view follows your head** in 6DOF; walk around your room, lean, peek and crouch with your body.
-- **Two independent hands**: the sword in the right, the pistol, crossbow, powers and grenades in the left, each one
+- **Two independent hands**: in the flat game both hands are armed or both are empty; here each hand is drawn and
+  holstered on its own. The sword goes in the right, the pistol, crossbow, powers and grenades in the left, each one
   aimed exactly where that hand points, on full arms with inverse kinematics.
 - **A physical sword**: the blade hits what it touches, harder the faster you swing; gestures charge the power attack
   and block.
@@ -123,7 +124,10 @@ Other limitations:
 
 ### Two independent hands
 
-Each hand is its own weapon slot, as in a game made for VR:
+Each hand is its own weapon slot, as in a game made for VR. In the flat game the hands go together: both are empty
+(weapons sheathed) or both are equipped. Here each hand is armed or empty on its own: draw or holster either one
+independently (see [Holsters](#holsters)), so you can hold the sword with an empty left hand, or a power or the
+pistol with an empty right hand.
 
 - **Right hand:** the sword, interacting (the right trigger uses what the right hand points at), grabbing and carrying.
 - **Left hand:** powers, the pistol, the crossbow, grenades, springrazors, mines.
