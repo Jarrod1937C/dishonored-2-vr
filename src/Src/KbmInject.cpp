@@ -613,15 +613,22 @@ namespace
     // [Gameplay] TempleZoom: the RIGHT hand TAPPED against the side of the head -- like touching the lens of the mask --
     // is a tap of the game's zoom: the spyglass up, again for the next magnification (when the spyglass is upgraded),
     // again back to the normal view (the game's own cycle). No button. A tap: the hand comes in sideways towards the
-    // head (over 0.25 m/s) into the zone and stops or bounces back there within 0.3 s. A hand that only rests there, or
+    // head (over 0.2 m/s) into the zone and stops or bounces back there within 0.3 s. A hand that only rests there, or
     // passes through (a slash across the face goes on inwards and out), does nothing; a charging power attack neither.
     // Then the hand must draw back 2 cm (or leave the zone) before the next tap: small rapid taps (asked; it took a hand
     // taken well away and back before), while tracking jitter on a resting hand (a few mm) does not re-arm it.
-    // The zone, in the head's heading from the eyes: 10 to 26 cm
-    // to the right, 8 cm below to 12 cm above the eyes, 12 cm behind to 8 cm in front of them.
+    // The zone, in the head's heading from the eyes: 3 to 30 cm to the right, 16 cm below to 16 cm above the eyes, 16 cm
+    // behind to 12 cm in front of them. The point is the controller's aim pose (the front of a Touch's ring), so a hand
+    // that really touches the head or the headset has it 6-10 cm from the eyes' middle: the zone began at 10 cm before,
+    // and a real tap went in past it and counted as a pass -- reported as having to tap the air beside the face. It goes
+    // in to 3 cm now (a slash across the face still crosses it and goes on). Not further back: from 12 cm behind the
+    // eyes is the sword over the shoulder.
     std::atomic<bool> g_TempleZoom{ true };
     double g_ZoomedAt = -10;
     struct TapState { bool valid = false, armed = true, pending = false; float rx = 0, vx = 0, tapRx = 0; double since = 0; int wasIn = 0; } g_Tap;
+    // What a motion towards the head ended as, for the log: where it stopped, and why it was or was not a tap
+    struct TapDiag { bool on = false; float peak = 0; const char* why = nullptr; } g_TapDiag;
+    int g_TapDiagLeft = 60;
     //! The right hand relative to the eyes, in the head's heading (right, up, forward). False without tracking.
     bool HandAtHead(const XRInputState& in, float& rx, float& ry, float& rz)
     {
@@ -636,29 +643,52 @@ namespace
         rx = rel[0] * right[0] + rel[2] * right[2]; ry = rel[1]; rz = rel[0] * f[0] + rel[2] * f[2];
         return true;
     }
-    bool InTemple(float rx, float ry, float rz) { return rx > 0.10f && rx < 0.26f && ry > -0.08f && ry < 0.12f && rz > -0.12f && rz < 0.08f; }
+    bool InTemple(float rx, float ry, float rz) { return rx > 0.03f && rx < 0.30f && ry > -0.16f && ry < 0.16f && rz > -0.16f && rz < 0.12f; }
     //! One tick of the tap detector: true on the tick a tap lands.
-    bool TempleTap(const XRInputState& in, bool allowed)
+    bool TempleTapStep(const XRInputState& in, bool allowed, float& rx, float& ry, float& rz, bool& have)
     {
-        float rx, ry, rz;
+        have = false;
         if (!HandAtHead(in, rx, ry, rz) || g_Dt <= 0) { g_Tap = TapState(); return false; }
+        have = true;
         const float v = g_Tap.valid ? (rx - g_Tap.rx) / (float)g_Dt : 0.f;          // + outwards, - towards the head
         g_Tap.vx = g_Tap.valid ? g_Tap.vx * 0.4f + v * 0.6f : 0.f;
         g_Tap.rx = rx; g_Tap.valid = true;
         const bool inside = InTemple(rx, ry, rz);
-        g_Tap.wasIn = inside ? 1 : 0;   // (no buzz on the way in: a power attack's wind-up passes here; the tap itself buzzes)
-        if (!inside) { g_Tap.pending = false; if (rx > 0.30f || rx < 0.06f || ry < -0.14f || ry > 0.18f || rz < -0.18f || rz > 0.14f) g_Tap.armed = true; return false; }
+        if (!inside) { g_Tap.pending = false; if (rx > 0.34f || rx < 0.0f || ry < -0.22f || ry > 0.22f || rz < -0.22f || rz > 0.18f) g_Tap.armed = true; return false; }
         if (!allowed) { g_Tap.pending = false; return false; }
         if (!g_Tap.armed && rx > g_Tap.tapRx + 0.02f) g_Tap.armed = true;                                         // drawn back: the next tap
         if (!g_Tap.armed) g_Tap.tapRx = std::min(g_Tap.tapRx, rx);                                                // (from the closest point)
-        if (!g_Tap.pending && g_Tap.armed && g_Tap.vx < -0.25f) { g_Tap.pending = true; g_Tap.since = g_Now; }   // coming in sideways
-        if (g_Tap.pending && g_Now - g_Tap.since > 0.3) g_Tap.pending = false;                                    // it did not stop: a pass
+        if (!g_Tap.pending && g_Tap.armed && g_Tap.vx < -0.20f) { g_Tap.pending = true; g_Tap.since = g_Now; }   // coming in sideways
+        if (g_Tap.pending && g_Now - g_Tap.since > 0.3) { g_Tap.pending = false; g_TapDiag.why = "did not stop within 0.3 s"; }   // a pass
         if (g_Tap.pending && g_Tap.vx > -0.10f)                                                                     // stopped or bounced back
         {
             g_Tap.pending = false; g_Tap.armed = false; g_Tap.tapRx = rx;
             return true;
         }
         return false;
+    }
+    bool TempleTap(const XRInputState& in, bool allowed)
+    {
+        float rx = 0, ry = 0, rz = 0; bool have = false;
+        const bool tap = TempleTapStep(in, allowed, rx, ry, rz, have);
+        if (!have) { g_TapDiag.on = false; return tap; }
+        // the log: each quick motion of the right hand in towards the head, near it, once it ends (the first 60)
+        TapDiag& d = g_TapDiag;
+        const bool close = rx > -0.05f && rx < 0.40f && ry > -0.30f && ry < 0.30f && rz > -0.30f && rz < 0.25f;
+        if (!d.on && close && g_Tap.vx < -0.20f && !tap) { d = TapDiag(); d.on = true; }
+        if (d.on)
+        {
+            d.peak = std::min(d.peak, g_Tap.vx);
+            if (tap || g_Tap.vx > -0.10f || !close)
+            {
+                if (g_TapDiagLeft > 0 && g_TapDiagLeft-- > 0)
+                    LOGI("KbmInject: right hand in towards the head (peak {:.2f} m/s) ended at {:.3f} right, {:.3f} up, {:.3f} forward of the eyes: {}",
+                         -d.peak, rx, ry, rz, tap ? "a TAP" : d.why ? d.why : !close ? "went on past" : !InTemple(rx, ry, rz) ? "outside the zone"
+                         : !allowed ? "not now (busy / charging)" : !g_Tap.armed ? "not re-armed (draw back 2 cm)" : "too slow");
+                d.on = false;
+            }
+        }
+        return tap;
     }
     bool g_SwordGrip = false;                     //!< this squeeze of the right grip drew / put away the sword: the same
     int g_HolsterZoneWas = 0, g_SwordZoneWas = 0;
@@ -1733,7 +1763,9 @@ void KbmInject::Tick()
     if (g_TempleZoom.load())
     {
         const bool busy = grabHand == 1 && (holding || carrying || g_Carry.on);
-        if (TempleTap(in, !busy && !SwordGesture::Charging()) && g_Now - g_ZoomedAt >= 0.25)
+        const bool tap = TempleTap(in, !busy && !SwordGesture::Charging());
+        if (tap && g_Now - g_ZoomedAt < 0.25) LOGI("KbmInject: a tap {:.2f} s after the last zoom: too soon, not zoomed", g_Now - g_ZoomedAt);
+        if (tap && g_Now - g_ZoomedAt >= 0.25)
         {
             g_ZoomedAt = g_Now;
             Tap(kZ);
