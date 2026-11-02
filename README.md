@@ -165,12 +165,14 @@ pistol with an empty right hand.
 
 ### Takedowns and knockout blows
 
-- **From behind**, when the game offers a takedown, the right pointer turns red inside a thick blue border: **swing the
-  sword** for the lethal takedown (red), or **press block** for the non-lethal choke (blue).
-- **Knockout blow (new):** a game mechanic of the mod's own, not in the original game. It is a VR-friendly way to take
-  someone out non-lethally with your own hands, instead of a choke animation that takes the view and your hands away.
-  Sneak up behind a guard who has not seen you and a **blue dot** marks the back of his head. Hit it firmly with your
-  fist (open or closed), the sword's pommel or the pistol and he is knocked out at once.
+- **The takedown marker:** sneak up behind a guard who has not seen you and a small **red-and-blue marker** appears on
+  the back of his neck: a takedown is possible. (The pointers stay white.)
+- **Lethal (red):** swing the sword at him for the game's stealth kill. The game's non-lethal choke is still on the
+  block button.
+- **Knockout blow (new, blue):** a game mechanic of the mod's own, not in the original game. It is a VR-friendly way to
+  take someone out non-lethally with your own hands, instead of a choke animation that takes the view and your hands
+  away. Hit the marker firmly with your fist (open or closed), the sword's pommel or the pistol and he is knocked out
+  at once.
   - How hard: `KnockoutSpeed` (8 m/s in the shipped ini; a firm punch is about 4 to 6 m/s).
   - How squarely behind him (60° off straight behind) and how close to his head (30 cm) are hidden settings.
   - A hit sound plays (`KnockoutSoundVolume`); put your own `DVR_knockout.wav` in the game folder to replace it.

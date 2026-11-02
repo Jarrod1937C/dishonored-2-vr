@@ -172,10 +172,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  the LEFT one is where a power or shot goes. MinimalReticle = 1 (recommended) shows them as a small
  white dot where each one ends (the right one grows when it is on something you can take or use);
  0 = two lines, the left one with a ring where it will land. ReticleOpacity sets how see-through
- they are. When you can take a guard down from behind, the right one turns RED inside a thick BLUE
- border: swing the sword for the kill (red), or choke him (blue: the block button).
- KNOCKOUT BLOW: behind a guard who has not seen you, a BLUE DOT marks the back of his head: hitting
- it hard (fist, the sword's pommel, the pistol) knocks him out at once. KnockoutSpeed sets how hard
+ they are.
+ TAKEDOWNS: behind a guard who has not seen you, a small RED-AND-BLUE MARKER shows on the back of
+ his neck (the pointers stay white). Swing the sword for the kill (red), or choke him with the block
+ button. KNOCKOUT BLOW (blue): hitting the marker hard (fist, the sword's pommel, the pistol)
+ knocks him out at once, no animation. KnockoutSpeed sets how hard
  (in m/s; 8 recommended), KnockoutSoundVolume the hit's sound (your own DVR_knockout.wav in the game
  folder replaces it). Bloodflies are easier to hit with the blade, and bloodfly nests can be struck.
 
