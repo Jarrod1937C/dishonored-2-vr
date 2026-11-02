@@ -141,6 +141,7 @@ static std::string ReadOneLine(const wchar_t* name)
 static void ApplySettings(const std::vector<std::string>& changed)
 {
     Log::SetFileEnabled(Settings::WriteLog());
+    CrashLog::SetInfo(CrashLog::kSettings, Settings::Summary());
     auto has = [&](std::initializer_list<const char*> keys)
     {
         for (const char* k : keys) for (const std::string& c : changed) if (c == k) return true;
@@ -207,6 +208,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
 
 static DWORD WINAPI InitThread(LPVOID)
 {
+    CrashLog::Prepare();             // outside the loader lock: dbghelp for the minidump, our crash filter kept first
     GameInfo::Init();
     SysInfo::LogStartup();
     if (!GameInfo::IsSupportedBuild())
@@ -222,7 +224,11 @@ static DWORD WINAPI InitThread(LPVOID)
     Log::SetFileEnabled(Settings::WriteLog());   // [Logging.Files] WriteLog = 0: no DishonoredVR.log at all
     ControllerBindings::Load();      // VRControllerBindings\*.json: the controller's settings over the ini's
     ControllerBindings::SetApply(ApplySettings);
-    LOGI("settings: {}", Settings::Summary());
+    {
+        const std::string s = Settings::Summary();
+        LOGI("settings: {}", s);
+        CrashLog::SetInfo(CrashLog::kSettings, s);
+    }
     VrTweaks::SetEnabled(Settings::VrGraphicsTweaks());
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     VrTweaks::SetFog(Settings::Fog());
@@ -361,6 +367,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved)
         LOGI("DishonoredVR {} loaded", DVR_VERSION_FULL);
         // Before anything else hooks anything: a crash we cannot see is a crash we cannot fix.
         CrashLog::Install();
+        CrashLog::SetInfo(CrashLog::kMod, fmt::format("Dishonored 2 VR {} (built {} {})", DVR_VERSION_FULL, __DATE__, __TIME__));
         // Do the real work outside the loader lock.
         HANDLE h = CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr);
         if (h) CloseHandle(h);

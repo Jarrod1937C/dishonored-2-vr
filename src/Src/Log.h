@@ -15,6 +15,8 @@ namespace Log
     void ForceFile();                     //!< a crash before the ini was read: write the file anyway
     void Write(const std::string& line);
     std::vector<std::string> Tail(size_t n); //!< last n lines (for the overlay)
+    //! The kept last lines (up to 400), each handed to `out` -- for the crash report: never waits, allocates nothing.
+    void CrashTail(void (*out)(const char*, size_t, void*), void* ctx);
     template <class... A> void Info(fmt::format_string<A...> f, A&&... a) { Write(fmt::format(f, std::forward<A>(a)...)); }
 }
 #define LOGI(...) (::Log::Enabled() ? ::Log::Info(__VA_ARGS__) : (void)0)

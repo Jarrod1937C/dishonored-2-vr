@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "RenderRes.h"
+#include "CrashLog.h"
 #include "GameInfo.h"
 #include "CVars.h"
 #include "CameraHook.h"
@@ -387,6 +388,7 @@ void RenderRes::OnPresent(IDXGISwapChain* sc)
             g_TW = w; g_TH = h; g_WantFrames = 0; g_Applies++;
             if (w > 0) LOGI("RenderRes: the game renders at {}x{} ({}; window {}x{}, scale {:.2f})", w, h, why, rw, rh, g_Scale.load());
             else LOGI("RenderRes: the game renders at its window's size {}x{} ({})", rw, rh, why);
+            CrashLog::SetInfo(CrashLog::kRender, w > 0 ? fmt::format("{}x{} per image ({}), scale {:.2f}", w, h, why, g_Scale.load()) : std::string("the window's size"));
             g_Reapply = true;
         }
     }

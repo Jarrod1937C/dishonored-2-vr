@@ -104,6 +104,14 @@ void Log::Write(const std::string& line)
     if (g_Ring.size() > 400) g_Ring.pop_front();
 }
 
+void Log::CrashTail(void (*out)(const char*, size_t, void*), void* ctx)
+{
+    // the crash report: no waiting (the crashed thread may hold the lock) and nothing allocated
+    if (!g_Mutex.try_lock()) { out("(the log was busy: its last lines are in DishonoredVR.log)", 58, ctx); return; }
+    for (const std::string& s : g_Ring) out(s.data(), s.size(), ctx);
+    g_Mutex.unlock();
+}
+
 std::vector<std::string> Log::Tail(size_t n)
 {
     std::lock_guard lk(g_Mutex);

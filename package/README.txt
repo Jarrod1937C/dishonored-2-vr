@@ -466,6 +466,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  Send, right after it happened (before starting the game again if you can):
    - DishonoredVR.log and DishonoredVR.prev.log from the game folder
      (if they are not there: %LOCALAPPDATA%\DishonoredVR)
+   - after a CRASH: the newest crash_log-<date>_<time>.log and its .dmp from the same folder. The
+     game's Options > VR System/Cheats > Crash log > "Copy to desktop" copies both to your
+     desktop: switch it on, go back, answer Yes. (They are written only when the game crashes.)
    - your headset, and how it is connected (Link, Air Link, Virtual Desktop, SteamVR)
    - what you did, what you expected, what happened (a photo or video helps a lot)
  The log contains your PC's hardware and the mod's state; it does not contain personal data

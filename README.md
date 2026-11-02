@@ -492,7 +492,9 @@ Build: Visual Studio 2022 (or its Build Tools), CMake 3.25+, vcpkg; then `script
 Details in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 Bug reports are welcome in the Issues: attach `DishonoredVR.log` and `DishonoredVR.prev.log` from the game folder,
-your headset and how it is connected, and say what you were doing.
+your headset and how it is connected, and say what you were doing. After a crash, also attach the newest
+`crash_log-<date>_<time>.log` and its `.dmp` from the game folder (written only when the game crashes; Options > VR
+System/Cheats > Crash log > "Copy to desktop" copies both to your desktop).
 
 ## License and credits
 

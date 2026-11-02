@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "CrashLog.h"
 #include "VrTweaks.h"
 #include "VRRuntime.h"
 #include "CVars.h"
@@ -203,6 +204,7 @@ void VrTweaks::OnPresent()
                 if (m != g_Map)
                 {
                     { std::lock_guard lk(g_MapM); g_Map = m; }
+                    CrashLog::SetInfo(CrashLog::kMap, buf);
                     Fog::SetMap(m);
                     g_MapFog = false;
                     const char* hit = nullptr;

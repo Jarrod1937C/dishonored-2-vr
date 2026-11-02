@@ -9,6 +9,7 @@
 #include <openxr/openxr_platform.h>
 #include "XRSession.h"
 #include "RenderRes.h"
+#include "CrashLog.h"
 #include "MetaAsw.h"
 #include "SysInfo.h"
 #include "Watchdog.h"
@@ -1176,6 +1177,8 @@ bool XRSession::Init(ID3D11Device* device)
         if (XR_SUCCEEDED(xrGetInstanceProperties(g.instance, &ip)))
         {
             m_RuntimeName = ip.runtimeName;
+            CrashLog::SetInfo(CrashLog::kRuntime, fmt::format("OpenXR runtime '{}' {}.{}.{}", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion),
+                                                              XR_VERSION_MINOR(ip.runtimeVersion), XR_VERSION_PATCH(ip.runtimeVersion)));
             LOGI("XRSession: OpenXR runtime '{}' version {}.{}.{}", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion),
                  XR_VERSION_MINOR(ip.runtimeVersion), XR_VERSION_PATCH(ip.runtimeVersion));
         }
@@ -1206,6 +1209,8 @@ bool XRSession::Init(ID3D11Device* device)
         g.handSupported = g.handExt && htp.supportsHandTracking;
         LOGI("XRSession: hand tracking {}", !g.handExt ? "not offered by the runtime" : g.handSupported ? "available (XR_EXT_hand_tracking)" : "offered, but not for this system");
         m_SystemName = sp.systemName;
+        CrashLog::SetInfo(CrashLog::kHeadset, fmt::format("'{}' (vendor {:#x}), max swapchain {}x{}", sp.systemName, sp.vendorId,
+                                                          sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight));
         LOGI("XRSession: headset '{}' (vendor {:#x}), max swapchain {}x{}, orientation tracking {}, position tracking {}", sp.systemName,
              sp.vendorId, sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight,
              (bool)sp.trackingProperties.orientationTracking, (bool)sp.trackingProperties.positionTracking);

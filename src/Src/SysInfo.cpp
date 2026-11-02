@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "CrashLog.h"
 #include "SysInfo.h"
 #include "GameInfo.h"
 #include "CVars.h"
@@ -56,6 +57,9 @@ namespace
         SYSTEM_INFO si; GetNativeSystemInfo(&si);
         LOGI("sys: CPU {} ({} logical), RAM {:.1f} GB", Narrow(RegString(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", L"ProcessorNameString")),
              si.dwNumberOfProcessors, ms.ullTotalPhys / 1073741824.0);
+        CrashLog::SetInfo(CrashLog::kSystem, fmt::format("Windows {}.{} build {}.{}, CPU {} ({} logical), RAM {:.1f} GB", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber,
+            RegDword(HKEY_LOCAL_MACHINE, cv, L"UBR"), Narrow(RegString(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", L"ProcessorNameString")),
+            si.dwNumberOfProcessors, ms.ullTotalPhys / 1073741824.0));
         wchar_t kl[KL_NAMELENGTH] = {}; GetKeyboardLayoutNameW(kl);
         LOGI("sys: keyboard layout {} (the mod sends keys by physical position, so the layout does not matter)", Narrow(kl));
     }
@@ -157,6 +161,7 @@ void SysInfo::LogFirstPresent(IDXGISwapChain* sc)
             DXGI_ADAPTER_DESC d{}; ad->GetDesc(&d);
             LOGI("sys: the game renders on {} (LUID {:08X}:{:08X}), feature level {:X}", Narrow(d.Description),
                  (unsigned)d.AdapterLuid.HighPart, (unsigned)d.AdapterLuid.LowPart, (unsigned)dev->GetFeatureLevel());
+            CrashLog::SetInfo(CrashLog::kGpu, fmt::format("{} ({} MB, vendor {:04X} device {:04X})", Narrow(d.Description), d.DedicatedVideoMemory >> 20, d.VendorId, d.DeviceId));
             ad->Release();
         }
         if (dd) dd->Release();

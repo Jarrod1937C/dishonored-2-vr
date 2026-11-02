@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "GameInfo.h"
 #include "ControllerBindings.h"
+#include "CrashLog.h"
 #include <detours/detours.h>
 #include <atomic>
 #include <climits>
@@ -319,6 +320,15 @@ namespace
     const char* WidgetName(const Widget& w) { return w.type == Widget::kBool ? "optionStepperBoolean" : w.type == Widget::kSlider ? "slider" : "optionStepper"; }
     struct Shown { int tab = -1; std::vector<Item> items; } g_Shown;   // the menu's thread only
     void (*g_Apply)(const std::vector<std::string>&) = nullptr;
+    // Actions: a row that is not a setting (its key starts with '@'), a switch turned on and confirmed on Back like a
+    // change. "@savecrashlog": the newest crash report (CrashLog) and its minidump copied to the desktop.
+    std::string g_ActionResult;   // what the last action did (the log has it)
+    int g_ActionOk = -1;          // -1 not done yet, 0 failed, 1 done: shown on its row the next time the page opens
+    void RunAction(const std::string& key)
+    {
+        if (key == "@savecrashlog") { g_ActionOk = CrashLog::SaveLatestToDesktop(g_ActionResult) ? 1 : 0; return; }
+        LOGI("VrMenu: unknown action {}", key);
+    }
 
     //! VR tab t's page, then the AS3 method that shows it
     void Page(void* file, int t)
@@ -329,6 +339,7 @@ namespace
         std::vector<std::string> cats, catSrc;
         std::vector<Item> items;
         for (const char* g : tab.groups)
+        {
         for (const VrRow& r : kVrRows)
         {
             if (!g || strcmp(r.main, g) != 0) continue;
@@ -347,6 +358,17 @@ namespace
             if (k.restart) notes += (notes.empty() ? "" : ", ") + std::string("restart");
             if (!rec.empty()) notes += (notes.empty() ? "" : ", ") + std::string("recommended: ") + rec;
             items.push_back({ Words(r.key) + (notes.empty() ? "" : " (" + notes + ")"), (unsigned)(cats.size() - 1), w, r.key, k.value, k.kind });
+        }
+        if (g && strcmp(g, "System") == 0)
+        {   // the crash report: switch it on and confirm on Back to copy the newest one to the desktop
+            cats.push_back(several ? std::string(g) + ": Crash log" : std::string("Crash log")); catSrc.push_back("");
+            const std::string latest = CrashLog::LatestReport();
+            Widget w; w.type = Widget::kBool; w.index = 0;
+            // short (a long label is cut off in the row; the section's name says what it copies): the file's name and the
+            // result are in the log
+            std::string label = latest.empty() ? "Copy to desktop (none)" : g_ActionOk == 1 ? "Copy to desktop (copied)" : g_ActionOk == 0 ? "Copy to desktop (failed)" : "Copy to desktop";
+            items.push_back({ label, (unsigned)(cats.size() - 1), w, "@savecrashlog", "0", 0 });
+        }
         }
         {
             Obj s(file, "optionsData.currentSection");
@@ -422,8 +444,13 @@ namespace
     struct Pending { bool waiting = false; void* file = nullptr; std::vector<std::pair<std::string, std::string>> changes; } g_Pending;
     std::atomic<unsigned long long> g_Saves{ 0 }, g_Cancels{ 0 }, g_Boxes{ 0 };
     void Leave(void* file) { if (!CallAs3(file, "_C_BackFromOptionSection")) g_Fail++; }
-    void Commit(const std::vector<std::pair<std::string, std::string>>& changes)
+    void Commit(const std::vector<std::pair<std::string, std::string>>& all)
     {
+        std::vector<std::pair<std::string, std::string>> changes;
+        for (const auto& c : all)
+            if (!c.first.empty() && c.first[0] == '@') { if (Truthy(c.second)) RunAction(c.first); }
+            else changes.push_back(c);
+        if (changes.empty()) return;
         std::vector<std::string> live; std::string err;
         if (!Settings::Save(changes, live, err)) { LOGI("VrMenu: the settings could not be saved: {}", err); return; }
         g_Saves++;
