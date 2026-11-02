@@ -70,8 +70,15 @@ namespace CameraHook
     //! Mode 2: the main view's projection rewritten to eye `eye`'s frustum (ViewMatrixHook, after CreateViewMatrix). `out`
     //! = the tans the view is rendered with now: the eye's, or the symmetric ones it was built with when nothing was applied.
     bool ApplyEyeProjection(void* view, int eye, Tans& out);
-    //! The symmetric frustum the main view's projection was last built with (its fov).
+    //! The symmetric frustum the main view's image is SHOWN at (its fov as built, before the spyglass's magnification:
+    //! a zoomed image is rendered narrower and shown over these angles, see SpyZoom).
     Tans BuiltTans();
+    //! The mask's spyglass (PlayerState Spyglass / SpyglassZoom): while it is up, both stereo eyes are rendered in the
+    //! HEAD's frame (no per-eye turn, no cant) with one symmetric cover of both eyes, so the game's lens overlay -- drawn
+    //! at each image's centre -- is at the same direction in both eyes and fuses. Its zoom (the game narrowing its fov)
+    //! is applied to the projection while the image keeps being shown at the unzoomed angles: magnified, as on a
+    //! monitor. `zoom` = the magnification now (1 = none); returns whether the spyglass view is on.
+    bool SpyZoom(float* zoom = nullptr);
     //! The tan extents (r - l, u - d) the render target must hold at the eye's pixel density (RenderRes): the per-eye
     //! frustum while it is in effect, else the symmetric fov override's. False = neither.
     bool RenderExtent(float& ex, float& ey);

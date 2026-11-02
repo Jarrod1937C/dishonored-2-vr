@@ -44,6 +44,7 @@ namespace
     unsigned long long g_Applies = 0, g_Spoofed = 0, g_Buffers = 0, g_CfgGuards = 0, g_PlaceGuards = 0;
     int g_BufW = 0, g_BufH = 0;                     // the swapchain's buffers, last seen
     int g_RsSaved = -1;                             // rs_enable as the game had it before the mod held it off
+    int g_TbSaved = -1;                             // r_swapChainTripleBufferEnable, likewise
     // Present rate, for measuring what the resolution costs
     LARGE_INTEGER g_FpsT{}; int g_FpsN = 0; float g_Fps = 0.f;
     // GPU time per frame: a timestamp at every Present (inside a disjoint query per frame), read back 8 frames later.
@@ -264,23 +265,35 @@ namespace
         SetWindowPos(g_Hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
-    //! The game's dynamic resolution aims at the MONITOR's refresh rate and dropped to 85% under the headset's pacing.
-    //! Only the live int is written (no modified flag, the string untouched): nothing of it reaches the config.
-    void HoldDynamicResolution(bool hold)
+    //! A game option held at 0 while the headset shows the game, and the player's value put back after. Only the live int
+    //! is written (no modified flag, the string untouched): nothing of it reaches the config.
+    void HoldOff(const char* name, int& saved, bool hold, const char* what)
     {
-        const uintptr_t a = CVars::Address("rs_enable");
+        const uintptr_t a = CVars::Address(name);
         if (!a) return;
         const int v = *(int*)(a + 0x28);
         if (hold)
         {
-            if (v != 0) { if (g_RsSaved < 0) g_RsSaved = v; CVars::SetInt("rs_enable", 0); LOGI("RenderRes: the game's dynamic resolution held off (rs_enable was {})", v); }
+            if (v != 0) { if (saved < 0) saved = v; CVars::SetInt(name, 0); LOGI("RenderRes: the game's {} held off ({} was {})", what, name, v); }
         }
-        else if (g_RsSaved >= 0)
+        else if (saved >= 0)
         {
-            if (v == 0) CVars::SetInt("rs_enable", g_RsSaved);
-            LOGI("RenderRes: the game's dynamic resolution back (rs_enable {})", CVars::GetInt("rs_enable", -1));
-            g_RsSaved = -1;
+            if (v == 0) CVars::SetInt(name, saved);
+            LOGI("RenderRes: the game's {} back ({} {})", what, name, CVars::GetInt(name, -1));
+            saved = -1;
         }
+    }
+    //! The game's dynamic resolution aims at the MONITOR's refresh rate and dropped to 85% under the headset's pacing.
+    //! Its triple buffering (r_swapChainTripleBufferEnable, read where the swapchain is made and resized: exe+0x368C09,
+    //! exe+0x36AD3C) gives the swapchain 2 + 1 buffers and the device a maximum frame latency of 1 + 1 (set before the
+    //! ResizeBuffers, exe+0x36AD66). In VR the swapchain's buffers and latency are the mod's (D3D11Hook: 3 and 3, the
+    //! measured need of synchronised stereo); with the option on the game asked 3 itself and the latency stayed at its 2,
+    //! so VR ran differently with the option on and off. The option trades latency for even frame pacing on a monitor;
+    //! in VR the headset paces the frames. Held off: every player gets the pipeline the mod was tested with.
+    void HoldGameOptions(bool hold)
+    {
+        HoldOff("rs_enable", g_RsSaved, hold, "dynamic resolution");
+        HoldOff("r_swapChainTripleBufferEnable", g_TbSaved, hold, "triple buffering");
     }
 }
 
@@ -379,7 +392,7 @@ void RenderRes::OnPresent(IDXGISwapChain* sc)
     }
     // held off whenever the headset shows the game, with or without a target: with the game's own fov the window can
     // already be dense enough (no target), and the 85% would still be there
-    HoldDynamicResolution(g_Mode.load() != 0 && VRRuntime::GetStatus().running);
+    HoldGameOptions(g_Mode.load() != 0 && VRRuntime::GetStatus().running);
     if (g_Reapply.exchange(false)) Trigger();
 }
 
@@ -387,9 +400,9 @@ std::string RenderRes::Status()
 {
     int rw = 0, rh = 0; RealClient(rw, rh);
     const int* ds = g_Base ? (const int*)(g_Base + kDisplaySize) : nullptr;
-    return fmt::format("renderres target {}x{} ({}) engine {}x{} buffers {}x{} window {}x{} scale {:.2f} rs {} fps {:.1f} gpu {:.2f} ms applies {} spoofed {} bufs {} cfgguard {} placeguard {}",
+    return fmt::format("renderres target {}x{} ({}) engine {}x{} buffers {}x{} window {}x{} scale {:.2f} rs {} tb {} fps {:.1f} gpu {:.2f} ms applies {} spoofed {} bufs {} cfgguard {} placeguard {}",
                        g_TW.load(), g_TH.load(), g_Why, ds ? ds[0] : 0, ds ? ds[1] : 0, g_BufW, g_BufH, rw, rh, g_Scale.load(),
-                       CVars::GetInt("rs_enable", -1), g_Fps, g_GpuMs, g_Applies, g_Spoofed, g_Buffers, g_CfgGuards, g_PlaceGuards);
+                       CVars::GetInt("rs_enable", -1), CVars::GetInt("r_swapChainTripleBufferEnable", -1), g_Fps, g_GpuMs, g_Applies, g_Spoofed, g_Buffers, g_CfgGuards, g_PlaceGuards);
 }
 
 bool RenderRes::Command(const std::string& what, std::istringstream& ss)

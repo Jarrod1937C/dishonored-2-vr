@@ -5,6 +5,7 @@
 #include "ScreenMode.h"
 #include "VRMath.h"
 #include "ViewMatrixHook.h"
+#include "PlayerState.h"
 #include <detours/detours.h>
 #include <cmath>
 #include <algorithm>
@@ -157,6 +158,29 @@ namespace
     std::atomic<float> g_GameFovX{ 0.f }, g_GameFovY{ 0.f }, g_BuiltFovX{ 0.f }, g_BuiltFovY{ 0.f };
     std::atomic<unsigned long long> g_FovOverrides{ 0 }, g_FlatWidened{ 0 }, g_ExplicitBuilds{ 0 };
     std::atomic<unsigned long long> g_EyeFovViews[2] = {};   // views built with a stereo eye's own fov (per-eye frustum, mode 1)
+
+    // ---- the spyglass (see CameraHook::SpyZoom) ----
+    std::atomic<bool> g_SpyView{ false };      // the spyglass is up: stereo eyes in the head's frame (EyeTansBoth)
+    std::atomic<float> g_Zoom{ 1.f };          // its magnification: the game's fov now against its fov without the spyglass
+    float g_ZoomBaseY = 0.f;                   // the game's vertical fov without the spyglass (radians), last seen
+    float g_WroteX = -1.f, g_WroteY = -1.f;    // what this hook last wrote into the renderView: a second build of the same
+                                               // frame finds those there, not the game's
+    std::atomic<unsigned long long> g_ZoomViews{ 0 };
+    //! The spyglass's state from the game's fov (vertical, radians) as the game asked for it this build.
+    void UpdateSpy(float gameY)
+    {
+        const bool spy = PlayerState::Running("Spyglass") || PlayerState::Running("SpyglassZoom");
+        if (!spy && gameY > 0.2f && gameY < 2.9f) g_ZoomBaseY = gameY;
+        float z = 1.f;
+        if (spy && g_ZoomBaseY > 0.f && gameY > 0.02f && gameY < g_ZoomBaseY)
+            z = std::clamp(tanf(g_ZoomBaseY * 0.5f) / tanf(gameY * 0.5f), 1.f, 12.f);
+        if (z < 1.01f) z = 1.f;
+        const bool was = g_SpyView.exchange(spy);
+        const float wz = g_Zoom.exchange(z);
+        if (spy != was) LOGI("CameraHook: spyglass {} (game fov {:.1f} deg vertical, {:.1f} without it): {}", spy ? "up" : "down",
+                             gameY * 57.29578f, g_ZoomBaseY * 57.29578f, spy ? "both eyes rendered in the head's frame, the zoom magnified" : "per-eye frusta again");
+        else if (spy && fabsf(z - wz) > 0.25f) LOGI("CameraHook: spyglass zoom {:.2f}x (game fov {:.1f} deg vertical)", z, gameY * 57.29578f);
+    }
     void ProjHook(void* rv, float* out, float a, float b, void* e, int f, int g)
     {
         uint8_t* mv = (uint8_t*)g_MainView.load();
@@ -165,7 +189,8 @@ namespace
         {
             float* fx = (float*)((uint8_t*)rv + CameraHook::kRV_FovX);
             float* fy = (float*)((uint8_t*)rv + CameraHook::kRV_FovY);
-            g_GameFovX = *fx * 57.29578f; g_GameFovY = *fy * 57.29578f;
+            const bool ours = *fx == g_WroteX && *fy == g_WroteY;   // our own numbers from an earlier build: not the game's
+            if (!ours) { g_GameFovX = *fx * 57.29578f; g_GameFovY = *fy * 57.29578f; UpdateSpy(*fy); }
             float ox = g_FovOvX.load(), oy = g_FovOvY.load();
             // A stereo eye's view (CameraHook::EyeTans, mode 1): its own symmetric fov, in the frame ViewMatrixHook turns it
             // to. Which view this is comes from the same state ViewMatrixHook decides by a moment later, on this thread.
@@ -178,10 +203,19 @@ namespace
             // On the menu screen (ScreenMode) the picture is the flat game's: its own fov (the title screen's camera is
             // a 19-degree shot; at the headset's 108 degrees it was a wide view of a set). The game's fov follows the
             // render size's aspect from its horizontal, so the 16:9 band shown is exactly the flat game's 16:9 view.
+            float showX = 0.f, showY = 0.f;   // the angles the image is shown at, when they differ from those it is rendered with
             if (ox > 1.f && oy > 1.f && ox < 170.f && oy < 170.f && !ScreenMode::FlatRender())
             {   // written into the view's own renderView, not just the matrix: whatever reads the fov later this frame
-                // (culling, the shader parms) sees the same frustum
+                // (culling, the shader parms, the level of detail) sees the same frustum
                 *fx = ox / 57.29578f; *fy = oy / 57.29578f;
+                const float z = g_Zoom.load();
+                if (z > 1.f)
+                {   // the spyglass's zoom: rendered z times narrower, shown at the unzoomed angles (BuiltTans)
+                    showX = ox; showY = oy;
+                    *fx = 2.f * atanf(tanf(*fx * 0.5f) / z); *fy = 2.f * atanf(tanf(*fy * 0.5f) / z);
+                    g_ZoomViews++;
+                }
+                g_WroteX = *fx; g_WroteY = *fy;
                 g_FovOverrides++;
             }
             else if (ScreenMode::FlatRender())
@@ -200,7 +234,7 @@ namespace
                     g_FlatWidened++;
                 }
             }
-            g_BuiltFovX = *fx * 57.29578f; g_BuiltFovY = *fy * 57.29578f;
+            g_BuiltFovX = showX > 0.f ? showX : *fx * 57.29578f; g_BuiltFovY = showY > 0.f ? showY : *fy * 57.29578f;
         }
         g_RealProj(rv, out, a, b, e, f, g);
     }
@@ -285,11 +319,24 @@ namespace
         if (!c.valid || memcmp(c.f, f, 16) != 0) { TurnedFrame(f, c.rot, c.hx, c.hy); memcpy(c.f, f, 16); c.valid = true; }
         memcpy(rot, c.rot, 16); hx = c.hx; hy = c.hy;
     }
-    //! Both eyes' frusta with the margin, padded to one extent (rot: the render frame in the eye's, mode 1).
-    bool EyeTansBoth(CameraHook::Tans t[2], float rot[2][4])
+    //! Both eyes' frusta with the margin, padded to one extent (rot: the render frame in the eye's, mode 1). With the
+    //! spyglass up (`spy`), both in the head's frame: rot = the head's frame in each eye's, one symmetric cover of both.
+    bool EyeTansBoth(CameraHook::Tans t[2], float rot[2][4], bool spy = true)
     {
         const float m = std::clamp(g_EyeMargin.load(), 0.f, 15.f) / 57.29578f;
         const int mode = g_EyeProj.load();
+        if (spy && mode == 1 && g_SpyView.load())
+        {
+            CameraHook::Tans u; if (!CameraHook::UnionTans(u)) return false;
+            const float x = tanf(std::min(atanf(std::max(-u.l, u.r)) + m, kMaxSide)), y = tanf(std::min(atanf(std::max(u.u, -u.d)) + m, kMaxSide));
+            for (int e = 0; e < 2; e++)
+            {
+                float rel[4] = { 0, 0, 0, 1 }; VRRuntime::EyeRelative(e, rel);   // v_head = rel * v_eye
+                rot[e][0] = -rel[0]; rot[e][1] = -rel[1]; rot[e][2] = -rel[2]; rot[e][3] = rel[3];   // v_eye = conj(rel) * v_head
+                t[e].l = -x; t[e].r = x; t[e].u = y; t[e].d = -y; t[e].valid = true;
+            }
+            return true;
+        }
         float hx[2] = {}, hy[2] = {};
         for (int e = 0; e < 2; e++)
         {
@@ -411,8 +458,10 @@ bool CameraHook::ApplyEyeProjection(void* view, int eye, Tans& out)
 
 bool CameraHook::RenderExtent(float& ex, float& ey)
 {
-    Tans t;
-    if (g_EyeProj.load() && (g_EyeProj.load() == 1 || g_EyeLayoutOk.load()) && VRRuntime::Stereo() && EyeTans(0, t)) { ex = t.r - t.l; ey = t.u - t.d; return true; }
+    // the eyes' own frusta even while the spyglass's view is up: its few seconds are not worth two resizes (the cover
+    // of both eyes is then rendered at a little less density)
+    Tans b[2]; float r[2][4];
+    if (g_EyeProj.load() && (g_EyeProj.load() == 1 || g_EyeLayoutOk.load()) && VRRuntime::Stereo() && EyeTansBoth(b, r, false)) { ex = b[0].r - b[0].l; ey = b[0].u - b[0].d; return true; }
     const float ox = g_FovOvX.load(), oy = g_FovOvY.load();
     if (ox > 1.f && oy > 1.f) { ex = 2.f * tanf(ox * 0.5f / 57.29578f); ey = 2.f * tanf(oy * 0.5f / 57.29578f); return true; }
     return false;
@@ -433,7 +482,14 @@ std::string CameraHook::EyeProjStatus()
     if (hl) s += fmt::format(" | eye0 deg {:.1f} {:.1f} {:.1f} {:.1f} turn {}", deg(l.l), deg(l.r), deg(l.u), deg(l.d), turn(rl));
     if (hr) s += fmt::format(" eye1 {:.1f} {:.1f} {:.1f} {:.1f} turn {}", deg(r.l), deg(r.r), deg(r.u), deg(r.d), turn(rr));
     if (hu) s += fmt::format(" | union {:.1f} {:.1f} {:.1f} {:.1f}", deg(u.l), deg(u.r), deg(u.u), deg(u.d));
+    s += fmt::format(" | spyglass {} zoom {:.2f} base {:.1f} deg zoomedviews {}", g_SpyView.load() ? 1 : 0, g_Zoom.load(), g_ZoomBaseY * 57.29578f, g_ZoomViews.load());
     return s;
+}
+
+bool CameraHook::SpyZoom(float* zoom)
+{
+    if (zoom) *zoom = g_Zoom.load();
+    return g_SpyView.load();
 }
 
 void CameraHook::SetFovOverride(float x, float y) { g_FovOvX = x; g_FovOvY = y; LOGI("CameraHook: fov override {:.1f} x {:.1f} deg{}", x, y, x > 1.f ? "" : " (off: the game's own)"); }

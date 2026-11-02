@@ -319,6 +319,14 @@ what the player's game learns later replaces it.
   engine's tiled lighting (`eyeproj 2`, research). The projection layer declares each image's own pose and fov
   (`vr layerfov 1`, default); `layerfov 0` keeps each eye's native pose and fov and warps the turned image into it.
   The head's orientation is the VIEW space, not the left eye (canted displays).
+- **The spyglass** (the mask's zoom: PlayerState `Spyglass` / `SpyglassZoom`; CameraHook::SpyZoom). The game draws its
+  lens overlay at the centre of the image, and with the per-eye turn (and canted displays) each eye's centre is a
+  different direction, so the two overlays never fused. While it is up, both eyes are rendered in the HEAD's frame
+  (turn = the head's frame in the eye's, one symmetric cover of both eyes with the margin): the image centres are the
+  same direction. Its zoom is the game narrowing its fov, which the fov override used to replace: now the ratio of the
+  game's vertical fov to its fov without the spyglass (tans) divides the projection's tans, while the image is shown
+  (`BuiltTans`, the layer's declared fov) at the unzoomed angles: magnified, as on a monitor. The render size stays
+  the per-eye one (no resize for a few seconds of zoom).
 
 [XRSession.cpp](../src/Src/XRSession.cpp) is the OpenXR layer proper (a port of the sister project's session class,
 much extended):
@@ -377,8 +385,9 @@ the render targets and swapchain). The `GetClientRect` hook answers those two ca
 functions, and both are hooked to see the real window while they run: the config writer `WriteConfigToFile`
 (exe+0x41770, so the player's `dishonored2Config.cfg` keeps their own window size) and the window placement
 (exe+0x347630). The interface cursor (exe+0xE27DF, `ScreenToClient`) is scaled into the render size. The game's
-dynamic resolution (`rs_enable`, which aims at the monitor's refresh rate) is held off while the headset shows the
-game. The target is scaled by the ini's `RenderScale` and limited only by the runtime's largest swapchain image
+dynamic resolution (`rs_enable`, which aims at the monitor's refresh rate) and its triple buffering
+(`r_swapChainTripleBufferEnable`: 3 buffers and a maximum frame latency of 2 instead of the mod's 3 and 3, see
+D3D11Hook) are held off while the headset shows the game (live values only: the config keeps the player's). The target is scaled by the ini's `RenderScale` and limited only by the runtime's largest swapchain image
 (from `xrGetSystemProperties`; SteamVR 8192 a side) and D3D11's 16384, plus the optional hidden `MaxRenderMegapixels`
 budget (0 = none; `RenderRes::SetRuntimeLimit`); it is not applied in fullscreen. Never run the console's `writeConfig` on the player's config: it writes a different, partial file.
 

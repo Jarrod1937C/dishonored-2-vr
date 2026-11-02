@@ -463,7 +463,8 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `FoveatedInner`, `FoveatedOuter` | The foveation's ring angles. |
 | `MaxRenderMegapixels` | An optional cap on the render size, for a card short of video memory (0 = none). |
 
-Also always on in stereo: the game's dynamic resolution is held off, and the light probes' update budget is halved
+Also always on in stereo: the game's dynamic resolution and triple buffering options are held off (the mod keeps
+its own swapchain setup), and the light probes' update budget is halved
 per rendered frame (the same rate per second as flat play). Logging costs nothing when off: `WriteLog = 0` stops the
 log file and skips building the messages.
 
