@@ -178,6 +178,17 @@ bool CVars::SetInt(const char* n, int v)
     *(int*)(a + kIntOff) = v; *(float*)(a + kFloatOff) = (float)v;
     return true;
 }
+//! As the engine's own set does for the numbers: the int and float values, and the "modified" flag (flags bit 0x40000)
+//! that the renderer checks once a frame for the cvars whose change needs work -- r_downsampleQuality: exe+0x3519A4
+//! tests it, rebuilds the reduced-size render targets (exe+0x372DB0) and clears it. The string stays: the config the
+//! game writes keeps the player's value.
+bool CVars::SetIntModified(const char* n, int v)
+{
+    uintptr_t a = Address(n); if (!a) return false;
+    *(int*)(a + kIntOff) = v; *(float*)(a + kFloatOff) = (float)v;
+    *(volatile uint32_t*)(a + kFlagsOff) |= 0x40000u;
+    return true;
+}
 bool CVars::SetFloat(const char* n, float v)
 {
     uintptr_t a = Address(n); if (!a) return false;

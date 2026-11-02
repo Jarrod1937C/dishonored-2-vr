@@ -86,6 +86,7 @@ namespace
             detail = fmt::format(" {} 0x{:016X}", kind == 0 ? "reading" : kind == 1 ? "writing" : "executing",
                                  (uintptr_t)er->ExceptionInformation[1]);
         }
+        Log::ForceFile();   // before the ini was read (WriteLog decides only then): a crash is always written
         LOGI("CRASH [{}] {} (0x{:08X}){} at {} - phase '{}' thread {}",
              what, CodeName(er->ExceptionCode), (unsigned)er->ExceptionCode, detail,
              Where(er->ExceptionAddress), g_Phase, GetCurrentThreadId());

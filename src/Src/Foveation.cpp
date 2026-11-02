@@ -34,6 +34,20 @@ namespace
     std::string g_Why = "off";
     struct EyeMask { ID3D11Texture2D* tex = nullptr; IUnknown* srrv = nullptr; UINT w = 0, h = 0; float cx = -9, cy = -9; ULONGLONG builtAt = 0; };
     EyeMask g_Eye[2];
+    // A mask replaced while command lists recorded with it may not have run yet (the game's tasks record on deferred
+    // contexts, run a frame later): the shading-rate view is bound through NVAPI, which takes no reference the way
+    // D3D's own Set calls do, so the old view and texture are kept a few seconds before they are released.
+    struct Retired { ID3D11Texture2D* tex; IUnknown* srrv; ULONGLONG at; };
+    std::vector<Retired> g_Retired;
+    void ReleaseRetired(bool all)
+    {
+        const ULONGLONG now = GetTickCount64();
+        for (size_t i = 0; i < g_Retired.size();)
+            if (all || now - g_Retired[i].at > 5000) { if (g_Retired[i].srrv) g_Retired[i].srrv->Release(); if (g_Retired[i].tex) g_Retired[i].tex->Release(); g_Retired.erase(g_Retired.begin() + i); }
+            else i++;
+    }
+    //! the shading rates off for the context: one viewport with variable rate shading disabled (not 0 viewports)
+    void RatesOff(ID3D11DeviceContext* c);
     UINT g_W = 0, g_H = 0;                                 // the eye's render size (learned from the depth buffer bound by the tasks)
     std::atomic<unsigned long long> g_Begun{ 0 }, g_Fails{ 0 }, g_NoSize{ 0 };
     int g_Coverage[3] = {};                                // tiles at full, 2x2, 4x4 in the last mask built
@@ -88,7 +102,7 @@ namespace
                 const uint8_t v = t <= tin ? 0 : t <= tout ? 1 : 2;
                 px[(size_t)y * tw + x] = v; cov[v]++;
             }
-        Rel(e.srrv); Rel(e.tex);
+        if (e.srrv || e.tex) { g_Retired.push_back({ e.tex, e.srrv, GetTickCount64() }); e.srrv = nullptr; e.tex = nullptr; }
         D3D11_TEXTURE2D_DESC td{}; td.Width = tw; td.Height = th; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R8_UINT;
         td.SampleDesc = { 1, 0 }; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA sd{ px.data(), tw, 0 };
@@ -127,6 +141,7 @@ bool Foveation::Begin(ID3D11DeviceContext* c, const void* view, int eye)
     if (!g_W || !g_H) { g_NoSize++; return false; }
     Proj pr;
     if (!ReadProj(view, pr)) return false;
+    if (!g_Retired.empty()) ReleaseRetired(false);
     EyeMask& e = g_Eye[eye];
     const float cx = pr.offx * pr.s, cy = pr.offy * pr.s;
     const bool moved = fabsf(cx - e.cx) * g_W * 0.5f > 2.f * kTile || fabsf(cy - e.cy) * g_H * 0.5f > 2.f * kTile;
@@ -148,8 +163,7 @@ bool Foveation::Begin(ID3D11DeviceContext* c, const void* view, int eye)
         if (g_Fails.load() <= 3) LOGI("Foveation: setting the shading rates on a {} context failed ({} / {})",
                                       c->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED ? "deferred" : "immediate", a, b);
         if (g_Fails.load() > 8) { g_Want = false; g_Why = "the driver refused the shading rates"; LOGI("Foveation: {}: off", g_Why); }
-        NvViewportsRates off{ Ver(sizeof(NvViewportsRates), 1), 0, nullptr };
-        g_SetRates(c, &off); g_SetSrrv(c, nullptr);
+        RatesOff(c);
         return false;
     }
     if (g_Begun.fetch_add(1) == 0) LOGI("Foveation: first foveated task (eye {}, {} context)", eye, c->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED ? "deferred" : "immediate");
@@ -181,9 +195,22 @@ void Foveation::End(ID3D11DeviceContext* c, bool begun)
     }
     if (rtv) rtv->Release();
     if (!begun || !g_SetRates) return;
-    NvViewportsRates off{ Ver(sizeof(NvViewportsRates), 1), 0, nullptr };
-    g_SetRates(c, &off);
-    g_SetSrrv(c, nullptr);
+    // every NVAPI call under the one lock: the game's worker threads record their tasks at the same time, and the
+    // first hardware run (2026-11-01, RTX 5090) crashed in the driver (heap corruption) with only Begin's calls locked
+    std::lock_guard lk(g_M);
+    RatesOff(c);
+}
+
+namespace
+{
+    void RatesOff(ID3D11DeviceContext* c)
+    {
+        NvViewportRates vr{}; vr.enable = false;
+        for (int i = 0; i < 16; i++) vr.table[i] = kX1PerPixel;
+        NvViewportsRates off{ Ver(sizeof(NvViewportsRates), 1), 1, &vr };
+        g_SetRates(c, &off);
+        g_SetSrrv(c, nullptr);
+    }
 }
 
 std::string Foveation::Status()

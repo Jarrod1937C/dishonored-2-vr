@@ -14,6 +14,7 @@ namespace Settings
     std::vector<std::string> StartupCommands();   //!< run at the first Present (input layout, turning)
     std::vector<std::string> PackageCommands();   //!< run when the VR package switches on in a game
     bool StatusFile();                            //!< write DVR_heartbeat.txt once a second (diagnostics)
+    bool WriteLog();                              //!< [Logging] WriteLog: DishonoredVR.log written at all
     bool LogInput();                              //!< log every controller button change (diagnostics)
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
@@ -90,6 +91,8 @@ namespace Settings
     float HudDistance();                          //!< [Display] HudDistance: that panel's distance, m
     bool CameraPitchFix();                        //!< [Display] CameraPitchFix: the game's neck out of the view (ViewMatrixHook)
     float MaxRenderMegapixels();                  //!< [Display] MaxRenderMegapixels: the render size's budget, MP per eye (0 = none)
+    bool SkipSneakOverlay();                      //!< [Display] SkipSneakOverlay: the sneak mode's screen overlay not drawn in the eyes
+    float FogMapsResolution();                    //!< [Display] FogMapsResolution: the game's fog buffers in FogMaps maps (share of the eye)
     float SnapTurnBlankOpacity();                 //!< [Controls] SnapTurnBlankOpacity: 0..1, 1 = black
     bool MinimalReticle();                        //!< [Display] MinimalReticle: the reticle is only a dot (Reticle)
     float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)

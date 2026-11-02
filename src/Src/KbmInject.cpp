@@ -255,17 +255,55 @@ namespace
     //! the cursor was a few pixels above the prompt's "Allow" button. So before a button goes out, the cursor must be
     //! over the game: if it is not, move it to a point of the game's client area that the game itself is visible at;
     //! if there is none, the click is not sent at all.
+    //! DWM's cloaking (a window on another virtual desktop, or hidden by the shell while still "visible")
+    bool Cloaked(HWND w)
+    {
+        using Fn = HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD);
+        static Fn fn = [] { HMODULE m = LoadLibraryA("dwmapi.dll"); return m ? (Fn)GetProcAddress(m, "DwmGetWindowAttribute") : (Fn)nullptr; }();
+        DWORD c = 0;
+        return fn && SUCCEEDED(fn(w, 14 /*DWMWA_CLOAKED*/, &c, sizeof c)) && c != 0;
+    }
+    //! Whether `p` is on the game's window with no other process's window above it, by the windows' z-order and
+    //! rectangles (not by WindowFromPoint, which skips a DISABLED window and asks the window's own hit test).
+    bool GameOnTopAt(HWND game, POINT p)
+    {
+        RECT wr; if (!GetWindowRect(game, &wr) || !PtInRect(&wr, p)) return false;
+        int n = 0;
+        for (HWND w = GetWindow(game, GW_HWNDPREV); w && n < 512; w = GetWindow(w, GW_HWNDPREV), n++)
+        {
+            if (!IsWindowVisible(w) || IsIconic(w) || Cloaked(w)) continue;
+            DWORD pid = 0; GetWindowThreadProcessId(w, &pid);
+            if (pid == GetCurrentProcessId()) continue;
+            if (GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TRANSPARENT) continue;   // click-through overlays
+            RECT r; if (GetWindowRect(w, &r) && PtInRect(&r, p)) return false;
+        }
+        return true;
+    }
     bool CursorOnGame()
     {
         HWND fg = GetForegroundWindow(); if (!fg) return false;
         POINT pt; if (!GetCursorPos(&pt)) return false;
+        HWND fgRoot = GetAncestor(fg, GA_ROOT); if (!fgRoot) fgRoot = fg;
+        // A DISABLED game window: WindowFromPoint skips it and answers with what lies beneath -- reported 2026-11-01,
+        // after starting the game "some buttons do nothing" (the mouse ones: every click refused, the game in front, the
+        // desktop 'Program Manager' found at the middle of its client area on a 3840x2160 screen). A click on a disabled
+        // window activates nothing else, and the game reads its mouse by raw input, which the foreground window gets
+        // wherever the cursor is: so there the z-order decides (nothing of another process above the game at that point).
+        const bool disabled = !IsWindowEnabled(fgRoot);
         // By PROCESS, not by window: the foreground window and the one under the cursor are both the game's but need
         // not be the same top-level window (measured: comparing the roots refused every click on the game itself).
         auto ownedByGame = [&](POINT p)
         {
-            HWND w = WindowFromPoint(p); if (!w) return false;
-            DWORD pid = 0; GetWindowThreadProcessId(GetAncestor(w, GA_ROOT), &pid);
-            return pid == GetCurrentProcessId();
+            HWND w = WindowFromPoint(p);
+            DWORD pid = 0; if (w) GetWindowThreadProcessId(GetAncestor(w, GA_ROOT), &pid);
+            if (pid == GetCurrentProcessId()) return true;
+            if (disabled && GameOnTopAt(fgRoot, p))
+            {
+                static int told = 0;
+                if (told++ < 3) LOGI("KbmInject: the game's window is disabled (WindowFromPoint passes over it): a click at ({},{}) goes out, nothing else is above the game there", p.x, p.y);
+                return true;
+            }
+            return false;
         };
         // ...and inside its CLIENT area, not on the frame. The servo's mouse motion walks the system cursor to the screen's
         // edge, and with the window at (0,0) x = 0 is the game's own left sizing border: a click there starts Windows'
@@ -291,6 +329,21 @@ namespace
                 return true;
             }
         }
+        // The game is the foreground window but other windows are drawn over it (reported 2026-11-01: seen in a VR desktop
+        // viewer after starting the game -- the game had the focus, not the top of the z-order): raise it to the top of
+        // the (non-topmost) windows without activating anything, at most once a second; the next click finds it. It is
+        // already the foreground process, so Windows allows it.
+        {
+            DWORD fgPid = 0; GetWindowThreadProcessId(fgRoot, &fgPid);
+            static ULONGLONG raisedAt = 0; static int raised = 0;
+            const ULONGLONG nowMs = GetTickCount64();
+            if (fgPid == GetCurrentProcessId() && nowMs - raisedAt > 1000)
+            {
+                raisedAt = nowMs;
+                SetWindowPos(fgRoot, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS);
+                if (raised++ < 10) LOGI("KbmInject: the game is in front but covered by other windows: raised to the top of the windows (a click waits for it)");
+            }
+        }
         static int logged = 0;
         if (logged < 20 || logged % 100 == 0)
         {   // what is in the way: the foreground window, and the window covering the middle of its client area
@@ -307,8 +360,17 @@ namespace
                 return fmt::format("'{}' ({}{}{})", title, base[0] ? base : "?", pid == GetCurrentProcessId() ? ", the game" : "", top ? ", always on top" : "");
             };
             POINT mid{ (cl.left + cl.right) / 2, (cl.top + cl.bottom) / 2 };
-            LOGI("KbmInject: mouse click NOT sent ({} so far): no point of the game window is visible under the cursor -- foreground {} (client {}x{} at {},{}), the cursor at ({},{}) over {}, its middle covered by {}",
-                 logged + 1, describe(fg), cl.right - cl.left, cl.bottom - cl.top, cl.left, cl.top, pt.x, pt.y, describe(WindowFromPoint(pt)), describe(WindowFromPoint(mid)));
+            // why the game is not found there: its window's state, its own hit test at the middle, an owned popup
+            DWORD_PTR hit = 0;
+            const bool answered = SendMessageTimeoutW(fgRoot, WM_NCHITTEST, 0, MAKELPARAM(mid.x, mid.y), SMTO_ABORTIFHUNG | SMTO_BLOCK, 50, &hit) != 0;
+            HWND popup = GetWindow(fgRoot, GW_ENABLEDPOPUP);
+            char cls[64] = {}; if (popup) GetClassNameA(popup, cls, sizeof cls);
+            LOGI("KbmInject: mouse click NOT sent ({} so far): no point of the game window is visible under the cursor -- foreground {} (client {}x{} at {},{}), the cursor at ({},{}) over {}, its middle covered by {}; "
+                 "the game's window: enabled {} visible {} minimised {} cloaked {} hung {}, its hit test at the middle {}, nothing of another process above it there {}, an owned popup {}",
+                 logged + 1, describe(fg), cl.right - cl.left, cl.bottom - cl.top, cl.left, cl.top, pt.x, pt.y, describe(WindowFromPoint(pt)), describe(WindowFromPoint(mid)),
+                 disabled ? 0 : 1, IsWindowVisible(fgRoot) ? 1 : 0, IsIconic(fgRoot) ? 1 : 0, Cloaked(fgRoot) ? 1 : 0, IsHungAppWindow(fgRoot) ? 1 : 0,
+                 answered ? fmt::format("{}", (long long)(LRESULT)hit) : std::string("no answer in 50 ms"), GameOnTopAt(fgRoot, mid) ? 1 : 0,
+                 popup ? fmt::format("{} ({})", describe(popup), cls) : std::string("none"));
         }
         logged++;
         return false;
@@ -1157,6 +1219,25 @@ void KbmInject::Tick()
         if (playWhenLost && g_AutoFocus.load()) { unpauseFrom = g_Now + 0.4; unpauseUntil = g_Now + 2.5; }
     }
     { std::lock_guard lk(g_M); g_Stats.fgTicks++; }
+    {   // in front but covered (see CursorOnGame): checked every 2 s by the windows' z-order, so the first click is not lost
+        static double nextCover = 0;
+        if (g_Now >= nextCover)
+        {
+            nextCover = g_Now + 2.0;
+            HWND root = GetAncestor(fg, GA_ROOT); if (!root) root = fg;
+            WINDOWINFO wi{}; wi.cbSize = sizeof wi;
+            if (GetWindowInfo(root, &wi) && !IsIconic(root))
+            {
+                const POINT mid{ (wi.rcClient.left + wi.rcClient.right) / 2, (wi.rcClient.top + wi.rcClient.bottom) / 2 };
+                if (!GameOnTopAt(root, mid))
+                {
+                    static int told = 0;
+                    SetWindowPos(root, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS);
+                    if (told++ < 10) LOGI("KbmInject: the game is in front but another window covers the middle of it: raised to the top of the windows");
+                }
+            }
+        }
+    }
     ReadMouseSettings();
 
     // Is the game actually simulating? The engine's player-camera aim update stops dead in the pause menu, in a

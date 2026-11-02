@@ -47,8 +47,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  UNINSTALL: delete dinput8.dll, DishonoredVR.dll, DishonoredVR.ini, DishonoredVR*.log and the
  DVR_*.txt files from the game folder. The game itself is never modified.
  DVR_hands.txt and DVR_grips.txt are not logs: they hold how your hands grip each weapon, kept
- between sessions (delete them to learn the grips again). DishonoredVR.log is always written; the
- other DVR_*.txt files appear only with the [Logging] settings on.
+ between sessions (delete them to learn the grips again). DishonoredVR.log is written unless
+ [Logging] WriteLog = 0; the other DVR_*.txt files appear only with the [Logging] settings on.
 
 
 ------------------------------------------------------------------------------------------------
@@ -301,7 +301,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
                AmbientOcclusion = 1 (0 = no ambient occlusion in VR: faster)
-               Fog = 1 (0 = no fog in VR: its low-resolution blocks show in front of the sky; faster)
+               Fog = 0 (hidden: the game's own fog only in the FogMaps maps; its low-resolution blocks show in
+                    front of the sky elsewhere)
                FogMaps = void (with Fog = 0, maps named so keep their fog: the Void)
                CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
                CheapFogStart = 30   CheapFogEnd = 300 (m)   CheapFogOpacity = 0.6

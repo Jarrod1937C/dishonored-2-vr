@@ -23,12 +23,14 @@ namespace VrTweaks
     //! [Display] Fog (default 1): 0 = no fog while the headset shows the game (r_skipFog, live value only).
     void SetFog(bool on);
     void SetFogMaps(const std::string& words);   //!< [Display] FogMaps, from the ini
+    void SetFogMapsResolution(float share);      //!< [Display] FogMapsResolution: 1 full, 0.5 half, 0.25 quarter, 0 the game's
     //! [Display] StaticLodZoom (experimental, default 1 = untouched): the game's r_lodZoomMultiplicator ("zoom
     //! multiplicator for static LODs") held at this, checked every second
     void SetLodZoom(float z);
     //! [Display] ViewDistance: the game's view-distance level used instead of the menu's (0 very low .. 5 ultra; -1 =
     //! the game's); InstallViewDistance hooks where the game applies it (at init, before the game sets its settings up)
     void SetViewDistance(int level);
+    bool GameFogOff();                      //!< r_skipFog is 1 now: the game's FOG pass does not run (Fog = 0 outside FogMaps)
     bool DofOff();                          //!< the main views' depth of field is off now (VrGraphicsTweaks, headset showing the game)
     void InstallViewDistance();
     std::string MapName();                  //!< the loaded map's name as the game has it ("" between maps)

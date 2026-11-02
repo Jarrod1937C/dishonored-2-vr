@@ -4087,8 +4087,7 @@ namespace
     // in between -- the second changes nothing. Tracked per task on its own context: the last copy made, invalidated by
     // any draw into (or depth-tested against) its source or target, any copy, update or clear of either; a copy equal to
     // it (views, viewport, depth-stencil state and reference, rasterizer state) while it still holds is not made. And
-    // with the depth of field off (VrGraphicsTweaks), the downsample of depth for its autofocus (PS b152af85c03cbbaf,
-    // 4 Mpx into an RG16F read only by DOF_AUTOFOCUS) is not made either.
+    // with the depth of field and the game's fog both off, the depth downsample only the autofocus then reads (below).
     constexpr uint64_t kPsDepthCopy = 0x904e7f2d94d6f085ull, kPsDofDepth = 0xb152af85c03cbbafull;
     std::atomic<unsigned long long> g_CopiesSeen{ 0 }, g_CopiesSkipped{ 0 }, g_DofDepthSkipped{ 0 };
     std::atomic<bool> g_ClearHooked{ false };
@@ -4110,6 +4109,25 @@ namespace
     {   // a copy, update or clear into `res` (pointers compared only)
         if (t_DC.valid && res && (res == t_DC.srcRes || res == t_DC.dstRes)) t_DC.valid = false;
     }
+    //! SkipSneakOverlay: at a draw of an eye's POSTPROC task, true = the sneak mode's screen overlay, not to be made.
+    //! Reported 2026-11-01: crouched, a tiny black square fixed in each eye's view (lighter in one eye), not lining up
+    //! between the eyes. The draw-by-draw frames crouched / standing differ by this one full-screen draw (PS
+    //! 2ee2b9822f61d7d1, VS 6b73f68586d24765, reads only ro_fx_opacity, written just before by DISTORTION's PS
+    //! 7f0150a21f29e29c): the game's sneak overlay, laid over the flat screen; in the eyes only the square was left.
+    constexpr uint64_t kPsSneakOverlay = 0x2ee2b9822f61d7d1ull;
+    std::atomic<unsigned long long> g_SneakFxSkipped{ 0 };
+    bool SneakFxSkip(ID3D11DeviceContext* c)
+    {
+        if (!PassProfile::SneakOverlayNow()) return false;
+        ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+        if (!ps) return false;
+        thread_local const void* lastPs = nullptr; thread_local uint64_t lastHash = 0;
+        if (ps != lastPs) { lastPs = ps; lastHash = GpuTrace::ShaderHashOf(ps); }
+        ps->Release();
+        if (lastHash != kPsSneakOverlay) return false;
+        if (g_SneakFxSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: SkipSneakOverlay: the sneak mode's screen overlay not drawn over an eye's picture (from now on)");
+        return true;
+    }
     //! at a draw of an eye's depth pass: true = not to be made
     bool DepthCopySkip(ID3D11DeviceContext* c)
     {
@@ -4127,10 +4145,14 @@ namespace
         const uint64_t h = ps ? lastHash : 0;
         if (ps) ps->Release();
         bool skip = false;
-        if (h == kPsDofDepth && nrt == 1 && !dsv && VrTweaks::DofOff())
+        // The depth downsample PS b152af85c03cbbaf (an RG16F) is not made with the depth of field off AND the game's fog
+        // off: then only DOF_AUTOFOCUS reads it. With the game's fog on (the Void: FogMaps, or Fog = 1) the FOG pass reads
+        // it too (ro_water_downsampleddepthbuffer2, the fog's distances): unwritten, the whole fog buffer came out zero
+        // (2026-11-01, "no game fog in the Void").
+        if (h == kPsDofDepth && nrt == 1 && !dsv && VrTweaks::DofOff() && VrTweaks::GameFogOff())
         {
             skip = true;
-            if (g_DofDepthSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: DepthPassSkipRedundantCopies: the depth downsample for the (off) depth of field's autofocus skipped");
+            if (g_DofDepthSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: DepthPassSkipRedundantCopies: the depth downsample for the (off) depth of field's autofocus skipped (the game's fog is off too)");
         }
         else if (h == kPsDepthCopy && nrt == 0 && dsv)
         {
@@ -4330,7 +4352,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
@@ -4351,7 +4373,7 @@ namespace
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
@@ -4371,7 +4393,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
@@ -4391,7 +4413,7 @@ namespace
         {
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
@@ -4409,7 +4431,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawIdxInstIndirect(c, b, o);
@@ -4417,7 +4439,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawInstIndirect(c, b, o);
@@ -5774,7 +5796,7 @@ uint64_t GpuTrace::ShaderHashOf(const void* sh)
 }
 std::string GpuTrace::DepthCopyStats()
 {
-    return fmt::format("depth copies {} seen, {} skipped (they changed nothing); autofocus depth downsamples skipped {}", g_CopiesSeen.load(), g_CopiesSkipped.load(), g_DofDepthSkipped.load());
+    return fmt::format("depth copies {} seen, {} skipped (they changed nothing); autofocus depth downsamples skipped {} (with the game's fog off)", g_CopiesSeen.load(), g_CopiesSkipped.load(), g_DofDepthSkipped.load());
 }
 bool GpuTrace::ShaderBytecode(const void* sh, std::vector<uint8_t>& out)
 {

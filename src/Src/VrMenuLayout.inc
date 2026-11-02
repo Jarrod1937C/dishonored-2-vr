@@ -27,7 +27,6 @@ static const VrRow kVrRows[] = {
     { "Display", "Menus", "MenuScreenSize" },
     { "Display", "Menus", "MenuScreenDistance" },
     { "Display", "Menus", "MenuBackground" },
-    { "Display", "Fog", "Fog" },
     { "Display", "Fog", "CheapFog" },
     { "Display", "Fog", "CheapFogStart" },
     { "Display", "Fog", "CheapFogEnd" },

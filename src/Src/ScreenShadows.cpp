@@ -960,7 +960,7 @@ namespace
         const uintptr_t r = g_RealDyn(task);
         const double now = NowS();
         double at = g_DynAt.load();
-        if (now - at < 10.0 || g_DynLogs.load() >= 60 || !g_DynAt.compare_exchange_strong(at, now)) return r;
+        if (!Log::Enabled() || now - at < 10.0 || g_DynLogs.load() >= 60 || !g_DynAt.compare_exchange_strong(at, now)) return r;   // a log line only
         g_DynLogs++;
         const uint8_t* list = nullptr; uint32_t n = 0;
         if (!Rd(list, task) || !list || !Rd(n, list + 8)) return r;

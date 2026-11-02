@@ -19,6 +19,7 @@ namespace CVars
     std::string GetString(const char* name);     //!< live string value (idStr)
     bool SetInt(const char* name, int v);          //!< writes the int value slot
     bool SetFloat(const char* name, float v);
+    bool SetIntModified(const char* name, int v);  //!< the int value and the engine's "modified" flag (the renderer reacts)
     uintptr_t Address(const char* name);          //!< object address or 0
     void DumpObject(const char* name);            //!< research: log the raw object + pointed-to blocks
 }

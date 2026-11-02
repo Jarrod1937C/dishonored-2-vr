@@ -24,6 +24,8 @@ namespace
     std::vector<std::string> g_FogMaps;
     std::mutex g_MapM; std::string g_Map;   // the current map's name, lower case (written on the render thread)
     std::atomic<bool> g_MapFog{ false };   // the current map is one of FogMaps
+    std::atomic<bool> g_GameFogOff{ false };   // r_skipFog is 1 now (the game's fog pass does not run)
+    std::atomic<int> g_FogMapsShift{ -1 };    // FogMapsResolution as r_downsampleQuality (0 full, 1 half, 2 quarter; -1 the game's)
     std::atomic<float> g_LodZoom{ 1.f };   // StaticLodZoom (1 = the game's own, never written)
 
     // ViewDistance: the game's view-distance preset (ARK_VISUALSETTING_VIEW_DISTANCE, r_viewDistPreset; set by the
@@ -136,6 +138,7 @@ void VrTweaks::SetLodZoom(float z)
     g_LodZoom = z;
     if (fabsf(z - 1.f) > 1e-3f) LOGI("VrTweaks: StaticLodZoom {:g}: the game's r_lodZoomMultiplicator held at it (the static models' level of detail; experimental)", z);
 }
+bool VrTweaks::GameFogOff() { return g_GameFogOff.load(std::memory_order_relaxed); }
 bool VrTweaks::DofOff() { return g_Active.load(std::memory_order_relaxed) && g_Enabled.load(std::memory_order_relaxed); }
 void VrTweaks::SetViewDistance(int level)
 {
@@ -156,6 +159,12 @@ void VrTweaks::InstallViewDistance()
     const int v = g_ViewDist.load();
     LOGI("VrTweaks: ViewDistance {}", v < 0 ? std::string("-1: the game's own view distance (its levels are logged when it applies one)")
                                           : fmt::format("{}: the game's view-distance level {} (0 very low .. 5 ultra) whatever its menu says", v, v));
+}
+void VrTweaks::SetFogMapsResolution(float share)
+{
+    const int s = share <= 0.f ? -1 : share >= 0.75f ? 0 : share >= 0.375f ? 1 : 2;
+    g_FogMapsShift = s;
+    LOGI("VrTweaks: FogMapsResolution {:g}: {}", share, s < 0 ? std::string("the game's own size for its fog in FogMaps maps") : fmt::format("in FogMaps maps the game's fog (and its other reduced-size buffers) at 1/{} of the eye's size", 1 << s));
 }
 void VrTweaks::SetFog(bool on)
 {
@@ -219,6 +228,28 @@ void VrTweaks::OnPresent()
         const int cur = CVars::GetInt("r_skipFog", -1);
         if (want && cur == 0) { g_UserSkipFog = cur; CVars::SetInt("r_skipFog", 1); LOGI("VrTweaks: fog off (r_skipFog 1) while the headset shows the game"); }
         else if (!want && g_UserSkipFog >= 0) { CVars::SetInt("r_skipFog", g_UserSkipFog); g_UserSkipFog = -1; LOGI("VrTweaks: fog back{}", g_MapFog ? " (FogMaps)" : ""); }
+        g_GameFogOff = CVars::GetInt("r_skipFog", 0) != 0;   // after the change above: whatever set it (the mod, the player's config)
+        {   // FogMapsResolution: in the maps whose fog stays (the Void) the game's reduced-size buffers -- the fog's, and the
+            // depth downsample it measures with -- at this share of the eye's size. r_downsampleQuality is the shift the
+            // renderer divides the size by ((w + 1) >> q, exe+0x30776A for the fog); its "modified" flag makes it rebuild
+            // those targets the next frame (exe+0x3519A4). Put back on leaving such a map. Also sizes the depth of
+            // field's, the distortion's and the bloom's buffers, in those maps only.
+            static int saved = -1;
+            const int shift = g_FogMapsShift.load();
+            const int cur = CVars::GetInt("r_downsampleQuality", -1);
+            if (active && g_MapFog && shift >= 0 && cur >= 0)
+            {
+                if (saved < 0) saved = cur;
+                if (cur != shift && CVars::SetIntModified("r_downsampleQuality", shift))
+                    LOGI("VrTweaks: FogMapsResolution: the game's reduced-size buffers (its fog's among them) at 1/{} of the eye's size here (r_downsampleQuality {} -> {})", 1 << shift, cur, shift);
+            }
+            else if (saved >= 0)
+            {
+                if (cur != saved && CVars::SetIntModified("r_downsampleQuality", saved))
+                    LOGI("VrTweaks: FogMapsResolution: r_downsampleQuality back to {}", saved);
+                saved = -1;
+            }
+        }
     }
 }
 

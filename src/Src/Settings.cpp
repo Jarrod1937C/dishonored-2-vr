@@ -121,9 +121,11 @@ namespace
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
         { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: no depth of field in VR
+        { "display.skipsneakoverlay",   Kind::Bool,   "1", 0, 0, nullptr, true },   // PassProfile / GpuTrace: the sneak mode's screen overlay not drawn in the eyes
         { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
-        { "display.fog",                Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no fog in VR
+        { "display.fog",                Kind::Bool,   "0", 0, 0, nullptr, true },   // VrTweaks: 0 = no game fog in VR (but in FogMaps); hidden, core VR
         { "display.fogmaps",            Kind::Text,   "void", 0, 0, nullptr, true },   // VrTweaks: ...except in maps named so
+        { "display.fogmapsresolution",  Kind::Float,  "1", 0, 1, nullptr, true },      // VrTweaks: the game's fog buffers there (1 full, 0.5, 0.25, 0 = the game's)
         { "display.cheapfog",           Kind::Bool,   "1", 0, 0, nullptr },      // Fog: the mod's own distance fog while the game's is off
         { "display.cheapfogstart",      Kind::Float,  "30", 0, 5000, nullptr },  // m where it begins
         { "display.cheapfogend",        Kind::Float,  "300", 1, 20000, nullptr },// m where it is at full opacity
@@ -189,6 +191,7 @@ namespace
         { "advanced.stereosunshadowreuse", Kind::Bool, "1", 0, 0, nullptr, true },   // StereoSync: the right eye keeps the left's nearest sun cascade
         { "advanced.skipdisabledeffects", Kind::Float, "0", 0, 2, nullptr, true },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
         // [Logging] (2026-11-01: moved from [Advanced]; the old place is still read: kMoved)
+        { "logging.writelog",           Kind::Bool,   "1", 0, 0, nullptr, true },   // Log: DishonoredVR.log at all (0 = no file)
         { "logging.logcontrollerinput", Kind::Bool,   "1", 0, 0, nullptr, true },
         { "logging.writestatusfile",    Kind::Bool,   "1", 0, 0, nullptr, true },
         { "logging.profilerenderpasses", Kind::Bool,  "0", 0, 0, nullptr, true },
@@ -358,6 +361,7 @@ std::vector<std::string> Settings::PackageCommands()
 }
 
 bool Settings::StatusFile() { return B("logging.writestatusfile"); }
+bool Settings::WriteLog() { return B("logging.writelog"); }
 bool Settings::LogInput() { return B("logging.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
@@ -467,6 +471,8 @@ bool Settings::HudSkipEmpty() { return B("display.hudskipempty"); }
 float Settings::HudMarkerSize() { return F("display.hudmarkersize"); }
 bool Settings::CameraPitchFix() { return B("display.camerapitchfix"); }
 float Settings::MaxRenderMegapixels() { return F("display.maxrendermegapixels"); }
+bool Settings::SkipSneakOverlay() { return B("display.skipsneakoverlay"); }
+float Settings::FogMapsResolution() { return F("display.fogmapsresolution"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
@@ -595,7 +601,6 @@ namespace
         { "menuscreensize", "62" },
         { "menuscreendistance", "2.4" },
         { "menubackground", "0.22" },
-        { "fog", "0" },
         { "cheapfog", "1" },
         { "cheapfogstart", "160" },
         { "cheapfogend", "400" },

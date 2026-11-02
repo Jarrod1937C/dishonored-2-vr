@@ -23,6 +23,8 @@
 #include <d3d11shader.h>
 #include "GpuTrace.h"
 #include "PostShare.h"
+#include "PlayerState.h"
+#include "VRRuntime.h"
 
 namespace
 {
@@ -75,6 +77,10 @@ namespace
     thread_local bool t_DepthOnly = false;
     std::atomic<bool> g_DepthCopies{ false };     // DepthPassSkipRedundantCopies: GpuTrace skips a depth copy that changes nothing
     thread_local bool t_DepthCopies = false;
+    // SkipSneakOverlay: the POSTPROC draw that lays the sneak mode's screen overlay (PS 2ee2b9822f61d7d1, reading
+    // ro_fx_opacity) over each eye's picture -- in the headset a tiny black square fixed in each eye's view
+    std::atomic<bool> g_SneakFx{ false };
+    thread_local bool t_PostFx = false;
     thread_local unsigned long long t_DepthSerial = 0;   // which depth task (GpuTrace's copy tracking starts over with each)
     std::atomic<unsigned long long> g_DepthSerial{ 0 };
     int g_RowDepth = -1;                          // DEPTHPASS
@@ -566,13 +572,14 @@ namespace
     std::atomic<unsigned long long> g_DNext{ 0 };
     std::atomic<unsigned long long> g_DescFrame{ 0 };       // the frame being described (0 none)
     std::atomic<int> g_DescDrops{ 0 };
-    int g_RowPost = -1, g_RowEmissive = -1, g_RowTonemap = -1, g_RowClear = -1;
+    int g_RowPost = -1, g_RowEmissive = -1, g_RowTonemap = -1, g_RowClear = -1, g_RowFogPass = -1;
+    bool g_DescExtra[64] = {};   // more passes described draw by draw: the screen-space ones that could draw a square into an eye
     struct Desc { bool on = false; ID3D11DeviceContext* c = nullptr; int row = -1, open = -1, idx = 0; unsigned long long frame = 0; };
     thread_local Desc t_Desc;
     bool DescRow(int row)
     {
         return row >= 0 && (row == g_RowDepth || row == g_RowPost || row == g_RowEmissive || row == g_RowTonemap || row == g_RowSsao
-                            || row == g_RowDof || row == g_RowClear);
+                            || row == g_RowDof || row == g_RowClear || row == g_RowFogPass || (row < 64 && g_DescExtra[row]));   // FOG: what the game's fog reads (2026-11-01: none in the Void)
     }
     void DescClose()
     {
@@ -682,6 +689,164 @@ namespace
         return out;
     }
 
+    // ---- FogProbe (ProfileRenderPasses): what the game's own FOG pass wrote, read back once in a while ----
+    // Reported 2026-11-01: no game fog in the Void although r_skipFog is back to 0 there (FogMaps) and the FOG pass runs.
+    // In the left eye's FOG task every target its draws write (colour and depth, up to 6) is noted at its draws; at the
+    // end of the task each is copied (on the task's own context) into a staging texture, mapped a few Presents later and
+    // summarised: an all-zero fog buffer (nothing to fog, or the fog's parameters zero) reads differently from a fog that
+    // is there but never put on the scene. The view's own fog-skip flag (view+0x3A36 bit 0) and r_skipFog go with it.
+    // (2026-11-01, first run: only the target bound at the task's end was read -- a 1/4-size RGBA16F, all zero.)
+    namespace FogProbe
+    {
+        constexpr int kMax = 6;
+        std::mutex m;
+        struct Img { ID3D11Texture2D* st = nullptr; D3D11_TEXTURE2D_DESC d{}; int draws = 0; bool depth = false; };
+        Img img[kMax]; int nImg = 0;
+        std::atomic<int> state{ 0 };     // 0 idle, 1 copies recorded
+        unsigned long long recordedAt = 0;
+        std::atomic<unsigned long long> presentCount{ 0 };
+        int count = 0, viewFlag = -1, skipFog = -1, draws = 0;
+        ULONGLONG lastAt = 0, armedAt = 0;
+        struct T { bool on = false; ID3D11Resource* res[kMax] = {}; bool depth[kMax] = {}; int uses[kMax] = {}; int n = 0, draws = 0; };
+        thread_local T t_T;
+        int ByteAt(const void* p) { __try { return *(const volatile uint8_t*)p; } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; } }
+        //! at the start of the left eye's FOG task: whether this one is read back
+        bool Want()
+        {
+            if (state.load(std::memory_order_relaxed)) return false;
+            const ULONGLONG now = GetTickCount64();
+            std::lock_guard lk(m);
+            if (count >= 12) return false;
+            static std::string lastMap;
+            if (std::string map = VrTweaks::MapName(); map != lastMap) { lastMap = map; armedAt = now; lastAt = 0; return false; }   // a new map: 15 s to settle
+            if (now - armedAt < 15000 || (lastAt && now - lastAt < 90000)) return false;
+            lastAt = now;
+            return true;
+        }
+        void Begin() { t_T = T{}; t_T.on = true; }
+        void Note(ID3D11Resource* r, bool depth)
+        {
+            for (int i = 0; i < t_T.n; i++) if (t_T.res[i] == r) { t_T.uses[i]++; return; }
+            if (t_T.n >= kMax) return;
+            r->AddRef(); t_T.res[t_T.n] = r; t_T.depth[t_T.n] = depth; t_T.uses[t_T.n] = 1; t_T.n++;
+        }
+        //! at each draw of that task: the targets it writes
+        void AtDraw(ID3D11DeviceContext* c)
+        {
+            if (!t_T.on) return;
+            t_T.draws++;
+            ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
+            c->OMGetRenderTargets(8, rtv, &dsv);
+            for (int k = 0; k < 8; k++) if (rtv[k]) { ID3D11Resource* r = nullptr; rtv[k]->GetResource(&r); if (r) { Note(r, false); r->Release(); } rtv[k]->Release(); }
+            if (dsv) { ID3D11Resource* r = nullptr; dsv->GetResource(&r); if (r) { Note(r, true); r->Release(); } dsv->Release(); }
+        }
+        bool Copy(ID3D11DeviceContext* c, ID3D11Resource* r, Img& o)
+        {
+            D3D11_RESOURCE_DIMENSION dim{}; r->GetType(&dim);
+            if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
+            D3D11_TEXTURE2D_DESC d{}; static_cast<ID3D11Texture2D*>(r)->GetDesc(&d);
+            if (d.SampleDesc.Count != 1) return false;
+            D3D11_TEXTURE2D_DESC s = d; s.MipLevels = 1; s.ArraySize = 1; s.Usage = D3D11_USAGE_STAGING; s.BindFlags = 0;
+            s.CPUAccessFlags = D3D11_CPU_ACCESS_READ; s.MiscFlags = 0;
+            ID3D11Device* dev = nullptr; c->GetDevice(&dev);
+            if (!dev) return false;
+            const bool ok = SUCCEEDED(dev->CreateTexture2D(&s, nullptr, &o.st)) && o.st;
+            dev->Release();
+            if (!ok) { LOGI("FogProbe: no staging copy of a {}x{} format {} texture", d.Width, d.Height, (int)d.Format); return false; }
+            c->CopySubresourceRegion(o.st, 0, 0, 0, 0, r, 0, nullptr);
+            o.d = s;
+            return true;
+        }
+        //! at the end of that task (the game's worker thread)
+        void AtEnd(ID3D11DeviceContext* c, const void* view)
+        {
+            T tt = t_T; t_T = T{};
+            std::lock_guard lk(m);
+            nImg = 0;
+            for (int i = 0; i < tt.n; i++)
+            {
+                Img& o = img[nImg];
+                if (!state.load() && Copy(c, tt.res[i], o)) { o.draws = tt.uses[i]; o.depth = tt.depth[i]; nImg++; }
+                tt.res[i]->Release();
+            }
+            if (state.load() || !nImg) return;
+            draws = tt.draws;
+            viewFlag = view ? ByteAt((const uint8_t*)view + 0x3A36) : -1;
+            skipFog = CVars::GetInt("r_skipFog", -1);
+            state = 1; recordedAt = presentCount.load();
+        }
+        float Half(uint16_t h)
+        {
+            const uint32_t s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023;
+            float v = e == 0 ? ldexpf((float)f, -24) : e == 31 ? (f ? NAN : INFINITY) : ldexpf((float)(f | 1024), (int)e - 25);
+            return s ? -v : v;
+        }
+        std::string Summary(ID3D11DeviceContext* imm, const Img& o)
+        {
+            D3D11_MAPPED_SUBRESOURCE ms{};
+            if (FAILED(imm->Map(o.st, 0, D3D11_MAP_READ, 0, &ms)) || !ms.pData) return "could not be read";
+            const DXGI_FORMAT f = o.d.Format;
+            const UINT W = o.d.Width, H = o.d.Height;
+            std::string s;
+            if (f == DXGI_FORMAT_R16G16B16A16_FLOAT || f == DXGI_FORMAT_R16G16B16A16_TYPELESS)
+            {
+                double sum[4] = {}; float mx[4] = { -1e30f, -1e30f, -1e30f, -1e30f }, mn[4] = { 1e30f, 1e30f, 1e30f, 1e30f };
+                unsigned long long n = 0, zero = 0, bad = 0;
+                for (UINT y = 0; y < H; y += 4)
+                {
+                    const uint16_t* row = (const uint16_t*)((const uint8_t*)ms.pData + (size_t)y * ms.RowPitch);
+                    for (UINT x = 0; x < W; x += 4)
+                    {
+                        float v[4]; bool allZero = true, nan = false;
+                        for (int k = 0; k < 4; k++) { v[k] = Half(row[x * 4 + k]); if (v[k] != 0.f) allZero = false; if (!std::isfinite(v[k])) nan = true; }
+                        n++; if (allZero) zero++; if (nan) { bad++; continue; }
+                        for (int k = 0; k < 4; k++) { sum[k] += v[k]; mx[k] = std::max(mx[k], v[k]); mn[k] = std::min(mn[k], v[k]); }
+                    }
+                }
+                const double g = (double)std::max<unsigned long long>(1, n - bad);
+                s = fmt::format("{}x{} RGBA16F: mean ({:.4f}, {:.4f}, {:.4f}, {:.4f}), min ({:.3f}, {:.3f}, {:.3f}, {:.3f}), max ({:.3f}, {:.3f}, {:.3f}, {:.3f}); {:.1f}% all zero, {:.1f}% not finite",
+                                W, H, sum[0] / g, sum[1] / g, sum[2] / g, sum[3] / g, mn[0], mn[1], mn[2], mn[3], mx[0], mx[1], mx[2], mx[3],
+                                100.0 * zero / std::max<unsigned long long>(1, n), 100.0 * bad / std::max<unsigned long long>(1, n));
+            }
+            else if (f == DXGI_FORMAT_R24G8_TYPELESS || f == DXGI_FORMAT_D24_UNORM_S8_UINT)
+            {
+                double sum = 0; float mn = 2.f, mx = -1.f; unsigned long long n = 0, at0 = 0, at1 = 0;
+                for (UINT y = 0; y < H; y += 4)
+                {
+                    const uint32_t* row = (const uint32_t*)((const uint8_t*)ms.pData + (size_t)y * ms.RowPitch);
+                    for (UINT x = 0; x < W; x += 4)
+                    {
+                        const uint32_t raw = row[x] & 0xFFFFFF;
+                        const float d = raw / 16777215.f;
+                        n++; sum += d; mn = std::min(mn, d); mx = std::max(mx, d);
+                        if (raw == 0) at0++; else if (raw == 0xFFFFFF) at1++;
+                    }
+                }
+                s = fmt::format("{}x{} D24S8: depth mean {:.5f}, min {:.5f}, max {:.5f}; {:.1f}% exactly 0, {:.1f}% exactly 1", W, H, sum / std::max<unsigned long long>(1, n),
+                                mn, mx, 100.0 * at0 / std::max<unsigned long long>(1, n), 100.0 * at1 / std::max<unsigned long long>(1, n));
+            }
+            else s = fmt::format("{}x{} format {}: not summarised", W, H, (int)f);
+            imm->Unmap(o.st, 0);
+            return s;
+        }
+        //! at Present (the render thread): the copies are read once their command lists have run
+        void OnPresent(ID3D11DeviceContext* imm)
+        {
+            const unsigned long long presentsNow = presentCount.fetch_add(1) + 1;
+            if (state != 1) return;   // (read unlocked: only this thread clears it)
+            std::lock_guard lk(m);
+            if (state != 1 || presentsNow < recordedAt + 4) return;
+            count++;
+            LOGI("FogProbe #{}: the left eye's FOG pass: {} draws into {} targets; the view's fog-skip flag (view+0x3A36 bit 0) {}, r_skipFog {}; map '{}'", count,
+                 draws, nImg, viewFlag < 0 ? std::string("?") : std::to_string(viewFlag & 1), skipFog, VrTweaks::MapName());
+            for (int i = 0; i < nImg; i++)
+                LOGI("FogProbe #{}:   {} {} (drawn into by {} of its draws): {}", count, img[i].depth ? "depth" : "target", i, img[i].draws, Summary(imm, img[i]));
+            for (Img& i : img) { if (i.st) i.st->Release(); i = Img{}; }
+            nImg = 0;
+            state = 0;
+        }
+    }
+
     uintptr_t Thunk(void* task)
     {
         const TaskFn real = t_Real; const int row = t_Pass;
@@ -730,6 +895,8 @@ namespace
         const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
         // SkipEmptyOutlines / StereoExposureReuse (PostShare): GpuTrace's draw / dispatch hooks act inside these tasks
         const bool shared = c && mainView && ((row == g_RowEmissive && PostShare::OutlinesOn()) || (row == g_RowPost && PostShare::ExposureOn()));
+        const bool savedPostFx = t_PostFx;
+        t_PostFx = c && mainView && row == g_RowPost && g_SneakFx.load(std::memory_order_relaxed);
         if (shared) PostShare::Enter(c, row == g_RowEmissive ? 1 : 2, eye);
         const Acc saved = t_Acc;
         t_Acc = Acc{}; t_Acc.on = prof;
@@ -745,6 +912,8 @@ namespace
                 if (kind == kLeft && DescRow(row)) { t_Desc.on = true; t_Desc.c = c; t_Desc.row = row; t_Desc.frame = df; }
             }
         }
+        const bool fogProbe = prof && c && kind == kLeft && row == g_RowFogPass && FogProbe::Want();
+        if (fogProbe) FogProbe::Begin();
         LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
         const uintptr_t ret = real(task);
         LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
@@ -755,6 +924,7 @@ namespace
         t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
+        if (fogProbe) FogProbe::AtEnd(c, view);
         if (shared) PostShare::Leave(c);
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
@@ -762,6 +932,7 @@ namespace
         t_SssCtx = savedSss; t_SssView = savedSssView; t_SssEye = savedSssEye;
         t_CharTask = savedCharTask; t_CharEye = savedCharEye;
         t_DepthOnly = savedDepthOnly; t_DepthCopies = savedDepthCopies; t_DepthSerial = savedDepthSerial;
+        t_PostFx = savedPostFx;
         if (c && mainView && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed)) ScreenShadows::AfterMask(c, view, eye);
         if (slot >= 0)
         {
@@ -790,7 +961,7 @@ namespace
         const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
         const bool mask = g_MaskHook.load(std::memory_order_relaxed) || g_DepthOnly.load(std::memory_order_relaxed) || g_DepthCopies.load(std::memory_order_relaxed);
         const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
-        const bool share = PostShare::OutlinesOn() || PostShare::ExposureOn();
+        const bool share = PostShare::OutlinesOn() || PostShare::ExposureOn() || g_SneakFx.load(std::memory_order_relaxed);
         if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars && !share)) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
@@ -1116,6 +1287,10 @@ namespace
                  o.dispatch ? "CS" : "PS", o.ps, o.dispatch ? fmt::format("{} groups", o.elems) : fmt::format("VS {:016x}", o.vs),
                  o.dispatch ? (o.indirect ? "indirect" : "") : fmt::format("{} x{}", o.elems, o.inst), o.stats ? (o.dispatch ? o.st.CSInvocations : o.st.PSInvocations) / 1e6 : -1.0,
                  o.rtN, o.rtW, o.rtH, Fmt(o.rtFmt), o.depth ? " + depth" : "", ShaderReads(o.dispatch ? o.cs : o.psPtr, o.ps));
+            if (o.row == g_RowFogPass)   // where the game's fog goes: which passes read what the FOG pass wrote
+                LOGI("PassProfile:     FOG #{} reads {} ({}x{} {}); writes target {} (read by: {}; drawn into by: {}); depth {} ({}x{} {}; read by: {}; tested into by: {})",
+                     o.idx, o.srcRes, o.srcW, o.srcH, Fmt(o.srcFmt), o.rtvRes, o.rtvRes ? ReadersOf(o.rtvRes) : std::string("-"), o.rtvRes ? ReadersOf(o.rtvRes, true) : std::string("-"),
+                     o.dsvRes, o.dsW, o.dsH, Fmt(o.dsFmt), o.dsvRes ? ReadersOf(o.dsvRes) : std::string("-"), o.dsvRes ? ReadersOf(o.dsvRes, true) : std::string("-"));
         }
         LOGI("PassProfile: ===== end of the draw-by-draw frame #{} =====", frame);
         { std::lock_guard lk(g_ReadM); g_Reads.clear(); g_Targets.clear(); }
@@ -1209,6 +1384,9 @@ void PassProfile::Install()
         if (!strcmp(kPasses[i].name, "EMISSIVE_ONLY")) g_RowEmissive = i;
         if (!strcmp(kPasses[i].name, "POST_TONEMAP")) g_RowTonemap = i;
         if (!strcmp(kPasses[i].name, "CLEAR")) g_RowClear = i;
+        if (!strcmp(kPasses[i].name, "FOG")) g_RowFogPass = i;
+        for (const char* n : { "IGGY_3D", "IGGY_FULLSCREEN", "DARKVISION", "DISTORTION", "EMISSIVE", "POST_IGGY" })
+            if (!strcmp(kPasses[i].name, n) && i < 64) g_DescExtra[i] = true;
         if (!strcmp(kPasses[i].name, "SCREENSHADOWS")) g_RowScreenShadows = i;
         if (!strcmp(kPasses[i].name, "SHADOWS_WORLD lamps")) g_RowShWorld = i;
         if (!strcmp(kPasses[i].name, "SHADOWS_DYNAMIC lamps")) g_RowShDyn = i;
@@ -1224,7 +1402,7 @@ void PassProfile::Install()
     g_SssHook = ScreenShadows::Wanted();
     g_CharHook = ScreenShadows::CharactersWanted();
     if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load() && !g_DepthOnly.load() && !g_DepthCopies.load()
-         && !PostShare::OutlinesOn() && !PostShare::ExposureOn()) || g_Exec) return;
+         && !PostShare::OutlinesOn() && !PostShare::ExposureOn() && !g_SneakFx.load()) || g_Exec) return;
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -1256,8 +1434,15 @@ void PassProfile::SetDepthCopies(bool on)
 {
     g_DepthCopies = on;
     if (on) LOGI("PassProfile: DepthPassSkipRedundantCopies: in the eyes' depth pass, a depth copy whose target already holds what it would copy (the same copy "
-                 "earlier in the task, nothing drawn, cleared or copied into either since) is skipped, and with the depth of field off its depth downsample for the autofocus");
+                 "earlier in the task, nothing drawn, cleared or copied into either since) is skipped, and with the depth of field and the game's fog off the depth downsample only the autofocus then reads");
 }
+void PassProfile::SetSkipSneakOverlay(bool on)
+{
+    g_SneakFx = on;
+    if (on) LOGI("PassProfile: SkipSneakOverlay: the sneak mode's screen overlay (PS 2ee2b9822f61d7d1) is not drawn over the eyes' pictures");
+}
+bool PassProfile::SneakOverlayNow() { return t_PostFx; }
+
 void PassProfile::SetDepthOnly(bool on)
 {
     g_DepthOnly = on;
@@ -1275,6 +1460,7 @@ void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned i
     if (t_Caps.on) CaptureTargets();
     if (t_SssCtx) ScreenShadows::AtTaskDraw(t_SssCtx, t_SssView, t_SssEye);
     if (t_Desc.on) DescDraw(c, elements, instances, indirect, false);   // (after the mod's own draws above)
+    if (FogProbe::t_T.on) FogProbe::AtDraw(c);
     if (t_Rd.on) NoteReads(c, false);
     if (!t_Acc.on) return;
     t_Acc.draws++; if (indirect) t_Acc.indirect++;
@@ -1342,6 +1528,7 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
     if (!imm) return;
     const unsigned long long f = g_Frame.load();
     g_Presents++;
+    FogProbe::OnPresent(imm);
     {
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         if (g_LastPresent.QuadPart)
@@ -1426,16 +1613,49 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
         }
     }
     if (g_DumpFrame && f >= g_DumpUntil) { DumpFrame(); g_DumpFrame = 0; g_NextDumpAt = nowMs + 30000; }
-    // draw by draw: 40 s in, then every 2 minutes; the armed frame moves on until one with left-eye tasks is met
+    // The crouch square (reported 2026-11-01: a tiny black square fixed in each eye's view, not lining up between the
+    // eyes, while sneaking only): 1.5 s into the session's first crouch the eyes' pictures are saved (DVR_crouch_eye0/1
+    // .png, the game's frame DVR_crouch_frame.png) and a draw-by-draw frame is taken; 3 s after standing up again the
+    // same (DVR_stand_*), to compare.
+    {
+        static ULONGLONG sneakSince = 0, standSince = 0; static int step = 0;
+        const bool sneak = PlayerState::Running("Sneaking");
+        if (sneak) { standSince = 0; if (!sneakSince) sneakSince = nowMs; } else { sneakSince = 0; if (!standSince) standSince = nowMs; }
+        const bool free = !g_DescFrame.load() && !g_DescPrintAt;
+        if (step == 0 && sneak && nowMs - sneakSince > 1500 && free)
+        {
+            step = 1; VRRuntime::RequestCapture("crouch"); g_NextDescAt = nowMs;
+            LOGI("PassProfile: crouched 1.5 s: the eyes' pictures saved (DVR_crouch_*.png) and this frame described draw by draw");
+        }
+        else if (step == 1 && !sneak && nowMs - standSince > 3000 && free)
+        {
+            step = 2; VRRuntime::RequestCapture("stand"); g_NextDescAt = nowMs;
+            LOGI("PassProfile: standing 3 s after the crouch: the eyes' pictures saved (DVR_stand_*.png) and this frame described draw by draw");
+        }
+    }
+    // draw by draw: 40 s in, then every 2 minutes, and 20 s into every map; the armed frame moves on until one with
+    // left-eye tasks is met
     {
         if (!g_NextDescAt) g_NextDescAt = nowMs + 40000;
+        {
+            static ULONGLONG checkAt = 0; static std::string map;
+            if (nowMs >= checkAt)
+            {
+                checkAt = nowMs + 1000;
+                std::string m = VrTweaks::MapName();
+                if (m != map) { map = m; if (!m.empty() && g_NextDescAt > nowMs + 20000) g_NextDescAt = nowMs + 20000; }
+            }
+        }
         const unsigned long long df = g_DescFrame.load();
         if (!df && !g_DescPrintAt && nowMs >= g_NextDescAt) { g_DescCount = 0; g_DescTries = 0; g_DescFrame = f + 1; }
         else if (df && f > df)
         {
             bool seen = false;
             for (int i = 0; i < kDSlots && !seen; i++) if (g_D[i].state.load(std::memory_order_relaxed) == 2 && g_D[i].frame == df) seen = true;
-            if (!seen && ++g_DescTries < 40) g_DescFrame = f + 1;
+            // the next try one frame later every other time: the game presents the left and the right eye's frames in
+            // turn, and arming f + 1 each time checked only every other frame -- always the same eye's (2026-11-01: four
+            // dumps in a row with 0 draws)
+            if (!seen && ++g_DescTries < 40) g_DescFrame = f + 1 + (g_DescTries & 1);
             else { g_DescFrame = 0; g_DescPrinted = df; g_DescPrintAt = f + 10; }
         }
         if (g_DescPrintAt && f >= g_DescPrintAt) { DescReport(g_DescPrinted); g_DescPrintAt = 0; g_NextDescAt = nowMs + 120000; }

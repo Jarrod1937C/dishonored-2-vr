@@ -95,7 +95,7 @@ namespace
     void SampleRenderThread(const char* tag)
     {
         const DWORD tid = g_Tid[0].load();
-        if (!tid) return;
+        if (!tid || !Log::Enabled()) return;   // the stuck thread's calls are for the log only
         HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
         if (!th) { LOGI("Watchdog: {}: cannot open the render thread ({})", tag, GetLastError()); return; }
         CONTEXT cx = {}; cx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;

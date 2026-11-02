@@ -140,6 +140,7 @@ static std::string ReadOneLine(const wchar_t* name)
 //! for nothing (MeleeAim::SetFinishers patches code). The setters store atomics / take their own locks.
 static void ApplySettings(const std::vector<std::string>& changed)
 {
+    Log::SetFileEnabled(Settings::WriteLog());
     auto has = [&](std::initializer_list<const char*> keys)
     {
         for (const char* k : keys) for (const std::string& c : changed) if (c == k) return true;
@@ -213,10 +214,12 @@ static DWORD WINAPI InitThread(LPVOID)
         // Every hook sits at an offset of the supported exe; on another build those bytes are other code. Touch nothing.
         LOGI("init: unsupported game build -- the mod stays inactive (no hooks, no VR)");
         CrashLog::SetPhase("inactive (unsupported build)");
+        Log::SetFileEnabled(true);   // the ini is not read on an unsupported build: the log says why nothing happens
         if (HANDLE h = CreateThread(nullptr, 0, UnsupportedBox, nullptr, 0, nullptr)) CloseHandle(h);
         return 0;
     }
     Settings::Load();
+    Log::SetFileEnabled(Settings::WriteLog());   // [Logging.Files] WriteLog = 0: no DishonoredVR.log at all
     ControllerBindings::Load();      // VRControllerBindings\*.json: the controller's settings over the ini's
     ControllerBindings::SetApply(ApplySettings);
     LOGI("settings: {}", Settings::Summary());
@@ -224,6 +227,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     VrTweaks::SetFog(Settings::Fog());
     VrTweaks::SetFogMaps(Settings::FogMaps());
+    VrTweaks::SetFogMapsResolution(Settings::FogMapsResolution());
     VrTweaks::SetLodZoom(Settings::StaticLodZoom());
     VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     VrTweaks::SetViewDistance(Settings::ViewDistance());
@@ -267,6 +271,7 @@ static DWORD WINAPI InitThread(LPVOID)
     PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // before PassProfile::Install
     PassProfile::SetSkipEffects(Settings::SkipDisabledEffects());
     PassProfile::SetDepthOnly(Settings::DepthPassDepthOnly());
+    PassProfile::SetSkipSneakOverlay(Settings::SkipSneakOverlay());
     PassProfile::SetDepthCopies(Settings::DepthPassSkipRedundantCopies());
     PostShare::SetOutlines(Settings::SkipEmptyOutlines());      // before PassProfile::Install
     PostShare::SetExposure(Settings::StereoExposureReuse());
