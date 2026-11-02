@@ -158,6 +158,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        There is no lean button.
    Hand to your mouth, squeeze grip .. drink an elixir: left hand health, right hand Addermire
                                        Solution (mana) (MouthPotions; a light buzz at the mouth)
+   Tap your RIGHT hand against the
+     side of your head ............... zoom: the spyglass up; again: zoomed in more (once it is
+                                       upgraded); again: back to the normal view (TempleZoom).
+                                       Your hands' pointers aim in the zoomed view
    Walk around your room ............. the character walks with you (Roomscale); small leans
                                        (under 10 cm) leave it where it is
 

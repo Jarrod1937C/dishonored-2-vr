@@ -610,6 +610,52 @@ namespace
         const float rel[3] = { h.posX - hp.pos[0], h.posY - hp.pos[1], h.posZ - hp.pos[2] };
         return AtMouth(rel[0] * right[0] + rel[2] * right[2], rel[1], rel[0] * f[0] + rel[2] * f[2]);
     }
+    // [Gameplay] TempleZoom: the RIGHT hand TAPPED against the side of the head -- like touching the lens of the mask --
+    // is a tap of the game's zoom: the spyglass up, again for the next magnification (when the spyglass is upgraded),
+    // again back to the normal view (the game's own cycle). No button. A tap: the hand comes in sideways towards the
+    // head (over 0.35 m/s) into the zone and stops or bounces back there within 0.3 s. A hand that only rests there, or
+    // passes through (a slash across the face goes on inwards and out), does nothing; a charging power attack neither.
+    // Then the hand must leave the zone before the next tap. The zone, in the head's heading from the eyes: 10 to 26 cm
+    // to the right, 8 cm below to 12 cm above the eyes, 12 cm behind to 8 cm in front of them.
+    std::atomic<bool> g_TempleZoom{ true };
+    double g_ZoomedAt = -10;
+    struct TapState { bool valid = false, armed = true, pending = false; float rx = 0, vx = 0; double since = 0; int wasIn = 0; } g_Tap;
+    //! The right hand relative to the eyes, in the head's heading (right, up, forward). False without tracking.
+    bool HandAtHead(const XRInputState& in, float& rx, float& ry, float& rz)
+    {
+        const XRHandPose& h = in.hand[1];
+        const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
+        if (!h.valid || h.held || !hp.valid) return false;
+        float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
+        float f[3] = { hf[0], 0.f, hf[2] }; float n = sqrtf(f[0] * f[0] + f[2] * f[2]); if (n < 1e-3f) { f[0] = 0; f[2] = -1; n = 1; }
+        f[0] /= n; f[2] /= n;
+        const float right[3] = { -f[2], 0.f, f[0] };
+        const float rel[3] = { h.posX - hp.pos[0], h.posY - hp.pos[1], h.posZ - hp.pos[2] };
+        rx = rel[0] * right[0] + rel[2] * right[2]; ry = rel[1]; rz = rel[0] * f[0] + rel[2] * f[2];
+        return true;
+    }
+    bool InTemple(float rx, float ry, float rz) { return rx > 0.10f && rx < 0.26f && ry > -0.08f && ry < 0.12f && rz > -0.12f && rz < 0.08f; }
+    //! One tick of the tap detector: true on the tick a tap lands.
+    bool TempleTap(const XRInputState& in, bool allowed)
+    {
+        float rx, ry, rz;
+        if (!HandAtHead(in, rx, ry, rz) || g_Dt <= 0) { g_Tap = TapState(); return false; }
+        const float v = g_Tap.valid ? (rx - g_Tap.rx) / (float)g_Dt : 0.f;          // + outwards, - towards the head
+        g_Tap.vx = g_Tap.valid ? g_Tap.vx * 0.4f + v * 0.6f : 0.f;
+        g_Tap.rx = rx; g_Tap.valid = true;
+        const bool inside = InTemple(rx, ry, rz);
+        g_Tap.wasIn = inside ? 1 : 0;   // (no buzz on the way in: a power attack's wind-up passes here; the tap itself buzzes)
+        if (!inside) { g_Tap.pending = false; if (rx > 0.30f || rx < 0.06f || ry < -0.14f || ry > 0.18f || rz < -0.18f || rz > 0.14f) g_Tap.armed = true; return false; }
+        if (!allowed) { g_Tap.pending = false; return false; }
+        if (!g_Tap.pending && g_Tap.armed && g_Tap.vx < -0.35f) { g_Tap.pending = true; g_Tap.since = g_Now; }   // coming in sideways
+        if (g_Tap.pending && g_Now - g_Tap.since > 0.3) g_Tap.pending = false;                                    // it did not stop: a pass
+        if (g_Tap.pending && g_Tap.vx > -0.10f)                                                                     // stopped or bounced back
+        {
+            g_Tap.pending = false; g_Tap.armed = false;
+            return true;
+        }
+        return false;
+    }
     bool g_SwordGrip = false;                     //!< this squeeze of the right grip drew / put away the sword: the same
     int g_HolsterZoneWas = 0, g_SwordZoneWas = 0;
     double g_HolsterLogAt = -10;
@@ -1679,6 +1725,19 @@ void KbmInject::Tick()
         }
         if (!(live & gripBit)) g_DrinkGrip[h] = false;
     }
+    // [Gameplay] TempleZoom (above): the right hand tapped against the side of the head taps the zoom
+    if (g_TempleZoom.load())
+    {
+        const bool busy = grabHand == 1 && (holding || carrying || g_Carry.on);
+        if (TempleTap(in, !busy && !SwordGesture::Charging()) && g_Now - g_ZoomedAt >= 0.4)
+        {
+            g_ZoomedAt = g_Now;
+            Tap(kZ);
+            VRRuntime::Vibrate(1, 0.35f, 0.04f);
+            LOGI("KbmInject: right hand tapped at the side of the head: zoom (the spyglass {} before)",
+                 PlayerState::Running("Spyglass") || PlayerState::Running("SpyglassZoom") ? "was up" : "was down");
+        }
+    }
     // With the Index layout the grip is for PHYSICAL interaction only -- reported from the headset: the grip opening
     // drawers and taking things like a button made pulling and grabbing impossible to try. It takes what the hand is AT:
     // an item (by hand), an object the game holds (a bottle, a glass), a body to carry, a drawer / cabinet to pull --
@@ -2028,6 +2087,12 @@ void KbmInject::SetPadParams(float pressForce, float releaseForce, float centreR
     g_PadOn = std::clamp(pressForce, 0.05f, 1.f); g_PadOff = std::clamp(releaseForce, 0.02f, g_PadOn.load() - 0.01f); g_PadCentre = std::clamp(centreRadius, 0.1f, 0.9f);
     LOGI("KbmInject: trackpad presses past {:.2f} force, let go below {:.2f}; the left pad's centre (menu) within {:.2f}", g_PadOn.load(), g_PadOff.load(), g_PadCentre.load());
 }
+void KbmInject::SetTempleZoom(bool on)
+{
+    g_TempleZoom = on;
+    LOGI("KbmInject: zoom at the side of the head {}", on ? "on: the right hand tapped against the side of your head taps the zoom (TempleZoom = 1)" : "off");
+}
+
 void KbmInject::SetMouthPotions(bool on)
 {
     g_MouthPotions = on;

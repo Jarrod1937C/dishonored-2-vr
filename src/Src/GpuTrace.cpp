@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "GpuTrace.h"
+#include "CameraHook.h"
 #include "PassProfile.h"
 #include "Collision.h"
 #include "PipeTrace.h"
@@ -731,7 +732,12 @@ namespace
     {   // (caller holds g_ProjM)
         if (ownView) g_ProjOwnFrame = frame;
         if (!ownView && frame - g_ProjOwnFrame < 180) { g_ProjRejNoView++; return false; }
-        const float a = fabsf(P[0][0]), b = fabsf(P[1][1]);
+        // The spyglass's zoom (CameraHook::SpyZoom) scales the main views' projection by the magnification: compared at the
+        // unzoomed scale, or every zoomed draw was "another scale" and the reticle kept the unzoomed projection -- its
+        // dots and rings a magnification away from what they point at in the zoomed picture
+        float zoom = 1.f; CameraHook::SpyZoom(&zoom);
+        if (!(zoom >= 1.f && zoom < 20.f)) zoom = 1.f;
+        const float a = fabsf(P[0][0]) / zoom, b = fabsf(P[1][1]) / zoom;
         if (!(a > 1e-3f && b > 1e-3f && a < 100.f && b < 100.f)) { g_ProjRejScale++; return false; }
         auto same = [](float x, float y) { return fabsf(x - y) <= 0.02f * std::max(x, y); };
         ProjClass* hit = nullptr; ProjClass* low = &g_ProjClass[0];

@@ -179,6 +179,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "slidewindows" })) Collision::SetWindows(Settings::SlideWindows());
     if (has({ "holsterweapons" })) Holster::SetEnabled(Settings::HolsterWeapons());
     if (has({ "mouthpotions" })) KbmInject::SetMouthPotions(Settings::MouthPotions());
+    if (has({ "templezoom" })) KbmInject::SetTempleZoom(Settings::TempleZoom());
     if (has({ "unlockeverything", "unlockoutsidersmark", "unlockpowers", "unlockpowerupgrades", "unlockblackmarketupgrades", "unlockweapons",
               "fillammoandgadgets", "fillelixirs" }))
         TestAids::SetAutoUnlock(Settings::Unlocks());   // the current player gets the new ones in a few seconds
@@ -266,6 +267,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetWindows(Settings::SlideWindows());
     Holster::SetEnabled(Settings::HolsterWeapons());
     KbmInject::SetMouthPotions(Settings::MouthPotions());
+    KbmInject::SetTempleZoom(Settings::TempleZoom());
     TestAids::SetAutoUnlock(Settings::Unlocks());   // [Cheats]: given to every save loaded, ~3 s into play
     if (const std::string p = Settings::PowerUnlocks(); !p.empty()) TestAids::SetAutoPowers(p);   // [Cheats.Powers]: the mark and those
     ViewMatrixHook::SetPitchFix(Settings::CameraPitchFix());

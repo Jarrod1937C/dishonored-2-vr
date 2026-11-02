@@ -183,6 +183,9 @@ pistol with an empty right hand.
 - Powers come out of your hand: Blink, Far Reach, Domino, Mesmerize and the rest go where your left hand points.
 - The **power wheel** (hold the left grip) opens on a panel in front of you while the world stays put: pick with the
   stick, let go to equip.
+- **Zoom (the mask's spyglass):** tap your right hand against the side of your head. Tap again for more zoom once
+  the spyglass is upgraded, again to go back. The zoomed view is in stereo, and your hands' pointers aim
+  in it, so you can line up a shot through the zoom.
 
 ### Throwing
 
@@ -290,6 +293,7 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Left trigger held, swing, let go | Throw a grenade or springrazor |
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
+| Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |
 | Look at the back of your left wrist | The watch: health, mana, ammo |
 | Crouch, lean, walk for real | The character does too |
 
