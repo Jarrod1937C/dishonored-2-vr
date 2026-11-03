@@ -48,8 +48,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  UNINSTALL: delete dinput8.dll, DishonoredVR.dll, DishonoredVR.ini, DishonoredVR*.log and the
  DVR_*.txt files from the game folder. The game itself is never modified.
  DVR_hands.txt and DVR_grips.txt are not logs: they hold how your hands grip each weapon, kept
- between sessions (delete them to learn the grips again). DishonoredVR.log is written unless
- [Logging] WriteLog = 0; the other DVR_*.txt files appear only with the [Logging] settings on.
+ between sessions (delete them to learn the grips again). DishonoredVR.log is written only with
+ Debug logging on (below); the other DVR_*.txt files appear only with the [Logging] settings on.
 
 
 ------------------------------------------------------------------------------------------------
@@ -279,9 +279,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
 
    (Where a setting has a recommended value different from its default, the shipped file has the
     recommended one; the VR tabs show both.)
-   [Controls]  TurnMode = snap (or smooth)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 20
+   [Controls]  TurnMode = snap (or smooth)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 30
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
-               SnapTurnBlankOpacity = 0.5 (how dark: 1 = black)
+               SnapTurnBlankOpacity = 0.4 (how dark: 1 = black)
                ControllerBindings = auto (which controller profile, below)   Haptics = 1 (vibration)
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)
    Controller profiles: VRControllerBindings\<name>.json (index.json: Valve Index), one per controller, hold what
@@ -298,7 +298,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
                HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at
                                  walls, tables, props and, for the blade, people's bodies, instead of passing through)
-               PushObjects = 1   PushStrength = 1 (with those: hands and weapons push loose objects; kg)
+               PushObjects = 1   PushStrength = 0.8 (with those: hands and weapons push loose objects; kg)
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
                PushDoors = 1 (with HandCollision: push a door with your hand to open it)
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
@@ -312,7 +312,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PhysicalPickup = 1 (with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 1 (Core VR: the hands' pointers)  WristHud = 1  WristHudSize = 8.5 (cm)
-               MinimalReticle = 1 (only a dot where each hand points; 0 = lines)  ReticleOpacity = 0.4
+               MinimalReticle = 1 (hidden: only a dot where each hand points; 0 = lines)  ReticleOpacity = 0.4
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)
                HudDistance = 2 (m, how far away that layer floats)
                HudMarkers = 1 (a guard's alert marker and the objective markers placed over them in the headset)
@@ -327,8 +327,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                     front of the sky elsewhere)
                FogMaps = void,dunwall_return_tower_p (with Fog = 0, maps named so keep their fog: the Void, the return to Dunwall Tower)
                FogMapsResolution = 1 (hidden: the fog's buffers there at full size; 0.5 half, 0.25 quarter, 0 the game's)
-               CheapFog = 1 (with Fog = 0: the mod's own light distance fog, so the background blends in)
-               CheapFogStart = 160   CheapFogEnd = 400 (m)   CheapFogOpacity = 0.6
+               CheapFog = 1 (hidden; with Fog = 0: the mod's own light distance fog, so the background blends in)
+               CheapFogStart = 100   CheapFogEnd = 600 (m)   CheapFogOpacity = 0.6
                CheapFogColor = auto (night / dusk / day colour by the map's upper sky; sky = the horizon's
                                      average; or R,G,B 0-255)
                CheapFogColorNight / CheapFogColorDusk / CheapFogColorDay = R,G,B[,brightness]
@@ -355,7 +355,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  bottom-right of your view; green at the headset's refresh rate, amber below, red
                                  under three quarters of it)
                FpsCounterSize = 1   FpsCounterAngle = 15 (deg from the view's centre: less = nearer the middle)
-               ShadowCullDistance = 32 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
+               ShadowCullDistance = 24 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
                ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
                ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
@@ -371,7 +371,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                DepthPassDepthOnly = 1 (hidden: the depth pass's main shader drawn depth-only)
                DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)
                ShadowMapMinObjectSize = 0.3 (m across: smaller moving objects cast no sun shadow-map shadow)
-               ShadowSunUpdateEvery = 2 (frame pairs between redraws of the sun's shadows beyond the nearest)
+               ShadowSunUpdateEvery = 4 (frame pairs between redraws of the sun's shadows beyond the nearest)
                OutOfViewMask = 2 (1 = the part of each eye's picture outside the lens's view is not shaded; breaks screen-space reflections, hair, glass; 2 = only each eye's outer side)
                OutOfViewMaskMargin = 2 (degrees beyond the lens's view still shaded)
                OutOfViewMaskLens = 1 (also the lens's hidden area, from the headset's runtime; OutOfViewMask = 1 only)
@@ -384,8 +384,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  (StereoReflectionReuse is no longer used: it broke reflections)
                SkipDisabledEffects = 1 (hidden: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
                                       DOF's copy, which breaks water / electricity: do not use)
-   [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 1   InfiniteAmmo = 1
-               InfiniteHealth = 1; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
+   [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 0   InfiniteAmmo = 0
+               InfiniteHealth = 0; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
                UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs
    [Cheats.Powers] the powers, each on its own (the only way to unlock them): UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,
                UnlockDevouringSwarm, UnlockBendTime, UnlockWindblast, UnlockDomino, UnlockDoppelganger,
@@ -394,13 +394,16 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  picture instead of an hourglass)
                NewSessionAfter = 5 (s: VR restarts by itself when the headset's app stops it;
                                  Link / Air Link only)
-   [Logging]   WriteLog = 1 (0 = no DishonoredVR.log, and no logging work at all)
-               LogControllerInput = 1   WriteStatusFile = 0
+               DebugLogging = 0 (1 = DishonoredVR.log and the render passes' timing; lowers the frame
+                                 rate a little: for problem reports. Options > VR System/Cheats >
+                                 Troubleshooting > Debug logging)
+   [Logging]   WriteLog = 0 (hidden: 1 = DishonoredVR.log alone; 0 = none, and no logging work at all)
+               LogControllerInput = 0   WriteStatusFile = 0
                ProfileRenderPasses = 0 (1 = the GPU time of each render pass, to the log every 5 s; with
                                       the mod's own steps, hitches and a frame draw by draw)
 
- THREE CHEATS ARE ON by default: InfiniteMana, InfiniteAmmo (ammo, gadgets and elixirs are not
- used up) and InfiniteHealth. Unlocks are off: UnlockEverything gives the mark, every upgrade, bone
+ ALL CHEATS ARE OFF by default: InfiniteMana, InfiniteAmmo (ammo, gadgets and elixirs are not
+ used up) and InfiniteHealth too. Unlocks are off as well: UnlockEverything gives the mark, every upgrade, bone
  charm crafting, black market upgrade and weapon; the powers you want are switched on one by one in
  [Cheats.Powers] (or the VR tab's Powers list). The cheats change your
  game for real: once the game saves or autosaves, the save keeps them. Use saves you do not mind
@@ -477,6 +480,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  8. REPORTING A PROBLEM  (thank you!)
 ------------------------------------------------------------------------------------------------
 
+ First switch on the log: the game's Options > VR System/Cheats > Troubleshooting > Debug logging
+ (DebugLogging = 1 in DishonoredVR.ini; off by default, it lowers the frame rate a little), and
+ make the problem happen again.
  Send, right after it happened (before starting the game again if you can):
    - DishonoredVR.log and DishonoredVR.prev.log from the game folder
      (if they are not there: %LOCALAPPDATA%\DishonoredVR)

@@ -20,7 +20,6 @@ static const VrRow kVrRows[] = {
     { "Display", "Picture", "RenderScale" },
     { "Display", "Picture", "DisableMetaASW" },
     { "Display", "Effects", "AmbientOcclusion" },
-    { "Display", "Reticle", "MinimalReticle" },
     { "Display", "Reticle", "ReticleOpacity" },
     { "Display", "Hud", "HudDistance" },
     { "Display", "Hud", "HudScale" },
@@ -28,7 +27,6 @@ static const VrRow kVrRows[] = {
     { "Display", "Menus", "MenuScreenSize" },
     { "Display", "Menus", "MenuScreenDistance" },
     { "Display", "Menus", "MenuBackground" },
-    { "Display", "Fog", "CheapFog" },
     { "Display", "Fog", "CheapFogStart" },
     { "Display", "Fog", "CheapFogEnd" },
     { "Display", "Fog", "CheapFogOpacity" },
@@ -65,6 +63,7 @@ static const VrRow kVrRows[] = {
     { "Cheats", "Powers", "UnlockMesmerize" },
     { "Cheats", "Powers", "UnlockShadowWalk" },
     { "System", "Startup", "SkipIntroVideos" },
+    { "System", "Troubleshooting", "DebugLogging" },
 };
 static const VrGroup kVrGroups[] = {
     { "Controls", "How you turn, crouch and hold the controllers, and what the buttons do." },

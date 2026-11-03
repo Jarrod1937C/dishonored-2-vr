@@ -352,7 +352,7 @@ namespace
             const std::string rec = RecText(w, k);
             // "Render scale (restart, recommended: 1)": a change of a restart one is saved and used next time
             // what a setting needs, first ("Foveated rendering (NVIDIA GTX 16 / RTX only, recommended: off)")
-            static const std::pair<const char*, const char*> kNeeds[] = { { "foveatedrendering", "NVIDIA GTX 16 / RTX only" } };
+            static const std::pair<const char*, const char*> kNeeds[] = { { "foveatedrendering", "NVIDIA GTX 16 / RTX only" }, { "debuglogging", "lowers fps" } };
             std::string notes;
             for (const auto& n : kNeeds) if (k.name == n.first) notes = n.second;
             if (k.restart) notes += (notes.empty() ? "" : ", ") + std::string("restart");

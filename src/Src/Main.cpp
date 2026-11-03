@@ -180,6 +180,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "holsterweapons" })) Holster::SetEnabled(Settings::HolsterWeapons());
     if (has({ "mouthpotions" })) KbmInject::SetMouthPotions(Settings::MouthPotions());
     if (has({ "templezoom" })) KbmInject::SetTempleZoom(Settings::TempleZoom());
+    if (has({ "debuglogging" })) PassProfile::SetEnabled(Settings::ProfileRenderPasses());   // (the log file: above, every time)
     if (has({ "farreachvrcomfortoption" })) HandAimHook::SetFarReachBlink(Settings::FarReachVRComfortOption());
     if (has({ "unlockeverything", "unlockoutsidersmark", "unlockpowers", "unlockpowerupgrades", "unlockblackmarketupgrades", "unlockweapons",
               "fillammoandgadgets", "fillelixirs" }))

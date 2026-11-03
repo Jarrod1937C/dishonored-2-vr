@@ -24,14 +24,14 @@ namespace
     // (physical sword, reticles, roomscale, hand interactions, ...) are hidden too: always on, as for a native VR game;
     // their other value is left in for troubleshooting and development only. Their defaults here are the VR ones.
     // A missing key takes its default; the shipped DishonoredVR.ini lists them all, with
-    // the same defaults, except WriteStatusFile ([Logging.Files]), which defaults to 1 here (a development setup has no ini)
-    // and is 0 in the file the players get.
+    // the same defaults (brought in line 2026-11-02), except [Logging]'s WriteLog, LogControllerInput and WriteStatusFile,
+    // which default to 1 here (a development setup has no ini) and are 0 in the file the players get.
     const Key kKeys[] = {
-        { "controls.turnmode",          Kind::Choice, "smooth", 0, 0, "smooth|snap" },
+        { "controls.turnmode",          Kind::Choice, "snap", 0, 0, "smooth|snap" },
         { "controls.smoothturnspeed",   Kind::Float,  "120", 30, 360, nullptr },
-        { "controls.snapturnangle",     Kind::Float,  "45", 10, 90, nullptr },
+        { "controls.snapturnangle",     Kind::Float,  "30", 10, 90, nullptr },
         { "controls.snapturnblank",     Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: black during a snap turn
-        { "controls.snapturnblankopacity", Kind::Float, "0.5", 0, 1, nullptr, true },   // how dark: 1 = black
+        { "controls.snapturnblankopacity", Kind::Float, "0.4", 0, 1, nullptr, true },   // how dark: 1 = black
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
         { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index", true },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
@@ -63,12 +63,13 @@ namespace
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
-        { "gameplay.knockoutspeed",     Kind::Float,  "4.5", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
-        { "gameplay.swordbloodflyreach", Kind::Float, "0.3", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
+        { "gameplay.knockoutspeed",     Kind::Float,  "8.0", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
+        { "gameplay.swordbloodflyreach", Kind::Float, "0.6", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
         { "gameplay.knockoutangle",     Kind::Float,  "60", 10, 120, nullptr, true },  // MeleeAim: deg off straight behind the target a knockout is possible from
-        { "gameplay.knockoutradius",    Kind::Float,  "0.3", 0.1f, 0.8f, nullptr, true },   // MeleeAim: m around the head's centre a blow must land
+        { "gameplay.knockoutradius",    Kind::Float,  "0.35", 0.1f, 0.8f, nullptr, true },   // MeleeAim: m around the head's centre a blow must land
         { "gameplay.knockoutsoundvolume", Kind::Float, "0.8", 0, 1, nullptr },   // MeleeAim: the hit sound of a knockout blow (0 = none)
-        { "advanced.skipintrovideos",   Kind::Bool,   "0", 0, 0, nullptr },   // BinkVideo: the start-up videos end at once
+        { "advanced.skipintrovideos",   Kind::Bool,   "1", 0, 0, nullptr },   // BinkVideo: the start-up videos end at once
+        { "system.debuglogging",        Kind::Bool,   "0", 0, 0, nullptr },   // [System.Troubleshooting]: WriteLog + ProfileRenderPasses in one
         { "gameplay.finisheranimations", Kind::Bool,  "0", 0, 0, nullptr, true },   // MeleeAim: 0 = no finishing-move kill animations, no kill cam
         { "gameplay.pulltoopen",        Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision + KbmInject: grab and pull drawers / cabinets open
         { "gameplay.physicalpickup",    Kind::Bool,   "1", 0, 0, nullptr, true },   // items taken by hand, stored behind the back
@@ -78,12 +79,12 @@ namespace
         { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a safe dial to turn it
         { "gameplay.slidewindows",      Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a window to raise / lower it
         { "gameplay.holsterweapons",    Kind::Bool,   "1", 0, 0, nullptr, true },   // Holster: left trigger at the left hip = pistol, behind the back = crossbow
-        { "gameplay.pushstrength",      Kind::Float,  "1", 0.1f, 10, nullptr, true },   // the hand's effective mass, kg
+        { "gameplay.pushstrength",      Kind::Float,  "0.8", 0.1f, 10, nullptr, true },   // the hand's effective mass, kg
         { "gameplay.throwgestures",     Kind::Bool,   "1", 0, 0, nullptr, true },
         { "gameplay.grabobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.reticle",            Kind::Bool,   "1", 0, 0, nullptr, true },
-        { "display.minimalreticle",     Kind::Bool,   "0", 0, 0, nullptr },   // Reticle: only a small dot where each hand points
-        { "display.reticleopacity",     Kind::Float,  "0.5", 0.05f, 1, nullptr },
+        { "display.minimalreticle",     Kind::Bool,   "1", 0, 0, nullptr, true },   // Reticle: only a small dot where each hand points
+        { "display.reticleopacity",     Kind::Float,  "0.4", 0.05f, 1, nullptr },
         { "display.stereohud",          Kind::Bool,   "1", 0, 0, nullptr, true },   // ScreenMode::PlayHud: the game's HUD on one panel in stereo
         { "display.huddistance",        Kind::Float,  "2", 0.5f, 10, nullptr },
         { "display.hudmarkers",         Kind::Bool,   "1", 0, 0, nullptr, true },
@@ -95,20 +96,20 @@ namespace
         { "display.shadowmapcharacters", Kind::Bool, "0", 0, 0, nullptr, true },           // ... and stay in the sun's shadow maps too
         { "display.screenspaceshadowcontact", Kind::Float, "0", 0, 2, nullptr, true },      // m: everything's contact shadows (0 = off)
         { "display.screenspaceshadowsmallobjects", Kind::Float, "1", 0, 4, nullptr, true }, // m across: smaller moving objects screen-space only (0 = none)
-        { "display.shadowculldistance", Kind::Float, "0", 0, 200, nullptr },
+        { "display.shadowculldistance", Kind::Float, "24", 0, 200, nullptr },
         { "display.shadowmapminobjectsize", Kind::Float, "0.3", 0, 2, nullptr, true },
-        { "display.shadowsunupdateevery", Kind::Float, "2", 1, 4, nullptr },   // frame pairs: the sun's far cascades' redraw interval   // m across: smaller moving objects leave the sun's maps (0 = none)   // ScreenShadows: r_shadowCullDistance held at this (0 = the game's)
+        { "display.shadowsunupdateevery", Kind::Float, "4", 1, 4, nullptr },   // frame pairs: the sun's far cascades' redraw interval   // m across: smaller moving objects leave the sun's maps (0 = none)   // ScreenShadows: r_shadowCullDistance held at this (0 = the game's)
         { "display.shadowultratrim",    Kind::Bool,   "1", 0, 0, nullptr },   // ScreenShadows: Ultra's costly non-sharpening settings held at High's
         { "display.shadowlampfewerupdates", Kind::Bool, "1", 0, 0, nullptr }, // ScreenShadows: the lamps' moving-caster updates at Low's thresholds
         { "display.shadowlampcacheslices", Kind::Float, "32", 0, 128, nullptr, true }, // ScreenShadows: r_shadowCacheSliceCnt (0 = the game's 12)
-        { "display.staticlodzoom",      Kind::Float,  "1", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
-        { "display.viewdistance",       Kind::Float,  "-1", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
-        { "display.depthpassdepthonly", Kind::Bool,   "0", 0, 0, nullptr, true },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
+        { "display.staticlodzoom",      Kind::Float,  "1.5", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
+        { "display.viewdistance",       Kind::Float,  "3", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
+        { "display.depthpassdepthonly", Kind::Bool,   "1", 0, 0, nullptr, true },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
         { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr, true }, // GpuTrace: a depth copy that changes nothing is not made
         { "display.skipemptyoutlines",  Kind::Bool,   "1", 0, 0, nullptr, true },   // PostShare: the outline effect's full-screen passes only with something outlined
         { "advanced.stereoexposurereuse", Kind::Bool, "1", 0, 0, nullptr, true },   // PostShare: the right eye adapts its exposure from the left eye's histogram
         { "display.hudscale",           Kind::Float,  "0.8", 0.3f, 1, nullptr },
-        { "display.hudresolution",      Kind::Float,  "1", 0.25f, 1, nullptr },   // ScreenMode: the HUD panel's resolution, share of the picture's per side
+        { "display.hudresolution",      Kind::Float,  "0.5", 0.25f, 1, nullptr },   // ScreenMode: the HUD panel's resolution, share of the picture's per side
         { "display.hudskipempty",       Kind::Bool,   "1", 0, 0, nullptr, true },     // ScreenMode / XRSession: the HUD panel only where it shows something
         { "display.hudmarkersize",      Kind::Float,  "0.07", 0, 0.25f, nullptr, true },   // ScreenMode::PlayHud: the HUD square around a marker shown at its character's distance   // ScreenMode::PlayHud: the HUD panel's share of the view (inward from the edges)   // ScreenMode: markers over characters / objectives placed for the headset
         { "display.camerapitchfix",     Kind::Bool,   "1", 0, 0, nullptr, true },   // ViewMatrixHook: no game neck on top of the real one
@@ -124,19 +125,19 @@ namespace
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
         { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: no depth of field in VR
         { "display.skipsneakoverlay",   Kind::Bool,   "1", 0, 0, nullptr, true },   // PassProfile / GpuTrace: the sneak mode's screen overlay not drawn in the eyes
-        { "display.ambientocclusion",   Kind::Bool,   "1", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
+        { "display.ambientocclusion",   Kind::Bool,   "0", 0, 0, nullptr },   // VrTweaks: 0 = no ambient occlusion in VR
         { "display.fog",                Kind::Bool,   "0", 0, 0, nullptr, true },   // VrTweaks: 0 = no game fog in VR (but in FogMaps); hidden, core VR
         { "display.fogmaps",            Kind::Text,   "void,dunwall_return_tower_p", 0, 0, nullptr, true },   // VrTweaks: ...except in maps named so
         { "display.fogmapsresolution",  Kind::Float,  "1", 0, 1, nullptr, true },      // VrTweaks: the game's fog buffers there (1 full, 0.5, 0.25, 0 = the game's)
-        { "display.cheapfog",           Kind::Bool,   "1", 0, 0, nullptr },      // Fog: the mod's own distance fog while the game's is off
-        { "display.cheapfogstart",      Kind::Float,  "30", 0, 5000, nullptr },  // m where it begins
-        { "display.cheapfogend",        Kind::Float,  "300", 1, 20000, nullptr },// m where it is at full opacity
+        { "display.cheapfog",           Kind::Bool,   "1", 0, 0, nullptr, true },      // Fog: the mod's own distance fog while the game's is off
+        { "display.cheapfogstart",      Kind::Float,  "100", 0, 5000, nullptr },  // m where it begins
+        { "display.cheapfogend",        Kind::Float,  "600", 1, 20000, nullptr },// m where it is at full opacity
         { "display.cheapfogopacity",    Kind::Float,  "0.6", 0, 1, nullptr },    // its strength at the far end
         { "display.cheapfogcolor",      Kind::Text,   "auto", 0, 0, nullptr },   // "auto" (night / dusk / day), "sky" or R,G,B (0-255)
         { "display.cheapfogcolornight", Kind::Text,   "70,80,100", 0, 0, nullptr, true },   // R,G,B[,brightness]
         { "display.cheapfogcolordusk",  Kind::Text,   "225,205,180", 0, 0, nullptr, true },
         { "display.cheapfogcolorday",   Kind::Text,   "250,255,252", 0, 0, nullptr, true },
-        { "display.cheapfognightbelow", Kind::Float,  "0.1", 0, 100, nullptr, true },  // the upper sky's brightness under which a map is night
+        { "display.cheapfognightbelow", Kind::Float,  "0.3", 0, 100, nullptr, true },  // the upper sky's brightness under which a map is night
         { "display.cheapfogdayabove",   Kind::Float,  "0.5", 0, 100, nullptr, true },  // ...and over which it is day (dusk between)
         { "display.cheapfogbrightness", Kind::Float,  "1", 0, 100, nullptr, true },    // the fixed colour's multiplier (HDR)
         { "display.cheapfogminbrightness", Kind::Float, "0.35", 0, 100, nullptr, true }, // the fog's least brightness as seen (never dark)
@@ -145,7 +146,7 @@ namespace
         { "display.foveatedrendering",  Kind::Bool,   "0", 0, 0, nullptr },      // Foveation: NVIDIA VRS, coarser shading away from the lens centre
         { "display.foveatedinner",      Kind::Float,  "35", 5, 80, nullptr, true },    // deg from the centre at full shading
         { "display.foveatedouter",      Kind::Float,  "50", 5, 89, nullptr, true },    // deg to which 2x2 shading reaches (4x4 beyond)
-        { "display.outofviewmask",      Kind::Float,  "0", 0, 2, nullptr },      // FovMask: 0 off, 1 all outside each eye's native fov not shaded, 2 only its outer side
+        { "display.outofviewmask",      Kind::Float,  "2", 0, 2, nullptr },      // FovMask: 0 off, 1 all outside each eye's native fov not shaded, 2 only its outer side
         { "display.outofviewmaskmargin", Kind::Float, "2", 0, 15, nullptr, true },     // ...plus this many degrees round it (the compositor's reprojection)
         { "display.outofviewmasklens",  Kind::Bool,   "1", 0, 0, nullptr, true },      // ...and the lens's hidden area (XR_KHR_visibility_mask)
         { "display.outofviewmaskcorners", Kind::Float, "4", 0, 16, nullptr, true },    // ...and the fov's corners outside a superellipse of this exponent (0 = none)
@@ -185,13 +186,13 @@ namespace
         { "advanced.keepaliveframes",   Kind::Bool,   "1", 0, 0, nullptr, true },
         { "advanced.newsessionafter",   Kind::Float,  "5", 0, 120, nullptr, true },
         // experimental (StereoSync): passes the right eye's frame skips, using what the left eye's frame of the same tick did
-        { "advanced.stereooceanreuse",  Kind::Bool,   "0", 0, 0, nullptr, true },
+        { "advanced.stereooceanreuse",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "advanced.stereoreflectionreuse", Kind::Bool, "0", 0, 0, nullptr, true },
-        { "advanced.stereodecalreuse",  Kind::Bool,   "0", 0, 0, nullptr, true },
-        { "advanced.stereostreamonceperpair", Kind::Bool, "0", 0, 0, nullptr, true },
-        { "advanced.stereolightshadowreuse", Kind::Bool, "0", 0, 0, nullptr, true },
+        { "advanced.stereodecalreuse",  Kind::Bool,   "1", 0, 0, nullptr, true },
+        { "advanced.stereostreamonceperpair", Kind::Bool, "1", 0, 0, nullptr, true },
+        { "advanced.stereolightshadowreuse", Kind::Bool, "1", 0, 0, nullptr, true },
         { "advanced.stereosunshadowreuse", Kind::Bool, "1", 0, 0, nullptr, true },   // StereoSync: the right eye keeps the left's nearest sun cascade
-        { "advanced.skipdisabledeffects", Kind::Float, "0", 0, 2, nullptr, true },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
+        { "advanced.skipdisabledeffects", Kind::Float, "1", 0, 2, nullptr, true },   // PassProfile: 1 = SSAO's leftover work skipped, 2 = also DOF's (experimental)
         // [Logging] (2026-11-01: moved from [Advanced]; the old place is still read: kMoved)
         { "logging.writelog",           Kind::Bool,   "1", 0, 0, nullptr, true },   // Log: DishonoredVR.log at all (0 = no file)
         { "logging.logcontrollerinput", Kind::Bool,   "1", 0, 0, nullptr, true },
@@ -363,7 +364,7 @@ std::vector<std::string> Settings::PackageCommands()
 }
 
 bool Settings::StatusFile() { return B("logging.writestatusfile"); }
-bool Settings::WriteLog() { return B("logging.writelog"); }
+bool Settings::WriteLog() { return B("logging.writelog") || B("system.debuglogging"); }
 bool Settings::LogInput() { return B("logging.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
@@ -485,7 +486,7 @@ bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::DisableMotionBlur() { return B("display.disablemotionblur"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
-bool Settings::ProfileRenderPasses() { return B("logging.profilerenderpasses"); }
+bool Settings::ProfileRenderPasses() { return B("logging.profilerenderpasses") || B("system.debuglogging"); }
 bool Settings::LogMenuData() { return B("logging.logmenudata"); }
 bool Settings::VrOptionsMenu() { return B("advanced.vroptionsmenu"); }
 int Settings::SkipDisabledEffects() { return (int)std::lround(F("advanced.skipdisabledeffects")); }
@@ -585,7 +586,7 @@ namespace
     const std::pair<const char*, const char*> kRecommended[] = {
         { "turnmode", "snap" },
         { "smoothturnspeed", "120" },
-        { "snapturnangle", "20" },
+        { "snapturnangle", "30" },
         { "snapturnblank", "1" },
         { "quickslotholdtime", "0.5" },
         { "haptics", "1" },
@@ -600,7 +601,6 @@ namespace
         { "renderscale", "1" },
         { "disablemetaasw", "1" },
         { "ambientocclusion", "0" },
-        { "minimalreticle", "1" },
         { "reticleopacity", "0.4" },
         { "huddistance", "2" },
         { "hudscale", "0.8" },
@@ -608,13 +608,12 @@ namespace
         { "menuscreensize", "62" },
         { "menuscreendistance", "2.4" },
         { "menubackground", "0.22" },
-        { "cheapfog", "1" },
-        { "cheapfogstart", "160" },
-        { "cheapfogend", "400" },
+        { "cheapfogstart", "100" },
+        { "cheapfogend", "600" },
         { "cheapfogopacity", "0.6" },
         { "cheapfogcolor", "auto" },
-        { "shadowculldistance", "32" },
-        { "shadowsunupdateevery", "2" },
+        { "shadowculldistance", "24" },
+        { "shadowsunupdateevery", "4" },
         { "shadowultratrim", "1" },
         { "shadowlampfewerupdates", "1" },
         { "viewdistance", "3" },
@@ -641,10 +640,11 @@ namespace
         { "unlockdoppelganger", "0" },
         { "unlockmesmerize", "0" },
         { "unlockshadowwalk", "0" },
-        { "infinitemana", "1" },
-        { "infiniteammo", "1" },
-        { "infinitehealth", "1" },
+        { "infinitemana", "0" },
+        { "infiniteammo", "0" },
+        { "infinitehealth", "0" },
         { "skipintrovideos", "1" },
+        { "debuglogging", "0" },
         { "controllerbindings", "auto" }
     };
     // The @user settings a change of which only takes effect when the game is started again (VrMenu labels them, and

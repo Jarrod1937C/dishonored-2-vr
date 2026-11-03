@@ -162,7 +162,7 @@ pistol with an empty right hand.
   are crouched (sneaking), where the grip still blocks.
 - **No finishing-move animations or kill cam:** a blow that would trigger one is an ordinary blow that still lands, so
   the view never leaves your head. Stealth takedowns keep theirs.
-- **Bloodflies** are easier to hit (the blade reaches 30 cm further for them), and their nests can be struck too.
+- **Bloodflies** are easier to hit (the blade reaches 60 cm further for them), and their nests can be struck too.
 - The sword's button (Touch: right stick click; Index and WMR: right trackpad) still plays the game's own attack.
 
 ### Takedowns and knockout blows
@@ -176,7 +176,7 @@ pistol with an empty right hand.
   away. Hit the marker firmly with your fist (open or closed), the sword's pommel or the pistol and he is knocked out
   at once.
   - How hard: `KnockoutSpeed` (8 m/s in the shipped ini; a firm punch is about 4 to 6 m/s).
-  - How squarely behind him (60° off straight behind) and how close to his head (30 cm) are hidden settings.
+  - How squarely behind him (60° off straight behind) and how close to his head (35 cm) are hidden settings.
   - A hit sound plays (`KnockoutSoundVolume`); put your own `DVR_knockout.wav` in the game folder to replace it.
 
 ### Pistol, crossbow and powers
@@ -226,7 +226,7 @@ side, so you can look around and still find your hips.
   Reach far through a wall and the hand lets go and follows you.
 - **So do the sword and the guns.** The blade also stops at people's bodies after sinking in a little (4 cm); the hit
   still lands from your real swing.
-- **Pushing:** hands and weapons push loose objects (bottles, chairs, crates) as if the hand weighed about a kilogram.
+- **Pushing:** hands and weapons push loose objects (bottles, chairs, crates) as if the hand weighed 0.8 kg.
 
 ### Your hands in the world
 
@@ -282,7 +282,7 @@ you would for real, instead of only pointing at it and pressing a button.
 
 ### Comfort and reliability
 
-- **Turning:** snap (20° steps by default, with a short dim during each snap) or smooth (120°/s).
+- **Turning:** snap (30° steps by default, with a short dim during each snap) or smooth (120°/s).
 - **Far Reach VR comfort option** (`FarReachVRComfortOption`, on by default, in the VR Gameplay options): Far Reach puts you where it
   landed at once instead of pulling you through the air. Where it takes you is unchanged.
 - **No motion blur or depth of field** in VR; Meta's ASW is switched off for the game on Link / Air Link.
@@ -300,8 +300,8 @@ you would for real, instead of only pointing at it and pressing a button.
 
 ### Cheats
 
-Optional, in the VR System / Cheats tab or the ini. InfiniteMana, InfiniteAmmo and InfiniteHealth are on in the
-shipped ini. `UnlockEverything` gives the Outsider's mark, every upgrade, bone charm crafting, black market upgrade
+Optional, in the VR System / Cheats tab or the ini. The cheats are all off in the shipped ini (`InfiniteMana`,
+`InfiniteAmmo` and `InfiniteHealth` too). `UnlockEverything` gives the Outsider's mark, every upgrade, bone charm crafting, black market upgrade
 and weapon; the powers are switched on one by one (`[Cheats.Powers]`: Blink, Far Reach, Dark Vision, Possession,
 Devouring Swarm, Bend Time, Windblast, Domino, Doppelganger, Mesmerize, Shadow Walk). The game saves what the cheats
 change: use saves you do not mind changing.
@@ -467,7 +467,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `RenderScale` | Render resolution relative to what the headset asks for. |
 | `FoveatedRendering` | NVIDIA only: fixed foveated rendering with Variable Rate Shading. Full rate within 35° of each eye's axis, 2x2 to 50°, 4x4 beyond, on the scene's geometry, lighting, water and transparency passes. Off by default. |
 | `OutOfViewMask` | Pixels of each eye's rendered rectangle that the lens never shows are written at the near plane's depth before the depth pass, so the GPU never shades them. 2 (recommended) = only each eye's outer side, which screen-space effects do not read; 1 = all around (breaks screen-space reflections, hair and glass). |
-| `ShadowCullDistance` | How far objects cast shadows (32 m recommended; the game's Ultra uses 75). |
+| `ShadowCullDistance` | How far objects cast shadows (24 m recommended; the game's Ultra uses 75). |
 | `ShadowSunUpdateEvery` | The sun's farther shadow cascades are redrawn every Nth frame pair (the engine's own cascade time-slicing, patched at its four parity tests so the cascades' matrices and split distances stay consistent with their maps). The nearest cascade is redrawn every frame. |
 | `ShadowUltraTrim` | At Ultra, the shadow settings that cost without sharpening are held at High's. |
 | `ShadowLampFewerUpdates` | Lamps redraw the shadows of moving things only when large on screen or within 8 m (the Low preset's thresholds). |
@@ -527,7 +527,9 @@ Highlights for other projects:
 Build: Visual Studio 2022 (or its Build Tools), CMake 3.25+, vcpkg; then `scripts\build.ps1` and `scripts\deploy.ps1`.
 Details in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-Bug reports are welcome in the Issues: attach `DishonoredVR.log` and `DishonoredVR.prev.log` from the game folder,
+Bug reports are welcome in the Issues. The log is off by default (it costs a little frame rate): switch on Options >
+VR System/Cheats > Troubleshooting > "Debug logging" (`DebugLogging = 1`), reproduce the problem, then attach
+`DishonoredVR.log` and `DishonoredVR.prev.log` from the game folder,
 your headset and how it is connected, and say what you were doing. After a crash, also attach the newest
 `crash_log-<date>_<time>.log` and its `.dmp` from the game folder (written only when the game crashes; Options > VR
 System/Cheats > Crash log > "Copy to desktop" copies both to your desktop).

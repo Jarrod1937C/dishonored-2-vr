@@ -14,7 +14,7 @@ namespace Settings
     std::vector<std::string> StartupCommands();   //!< run at the first Present (input layout, turning)
     std::vector<std::string> PackageCommands();   //!< run when the VR package switches on in a game
     bool StatusFile();                            //!< write DVR_heartbeat.txt once a second (diagnostics)
-    bool WriteLog();                              //!< [Logging] WriteLog: DishonoredVR.log written at all
+    bool WriteLog();                              //!< [Logging] WriteLog (or [System.Troubleshooting] DebugLogging): DishonoredVR.log written at all
     bool LogInput();                              //!< log every controller button change (diagnostics)
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
