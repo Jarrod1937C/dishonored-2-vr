@@ -33,6 +33,10 @@ namespace VrTweaks
     bool GameFogOff();                      //!< r_skipFog is 1 now: the game's FOG pass does not run (Fog = 0 outside FogMaps)
     bool DofOff();                          //!< the main views' depth of field is off now (VrGraphicsTweaks, headset showing the game)
     void InstallViewDistance();
+    //! The game's own options menus (main and pause) without the settings the mod holds or overrides in VR: each options
+    //! section asks itself, per setting, whether to list it (vtable slot 13 of arkMenuSectionOptionVisuals /
+    //! ...Gameplay); a setting the mod decides is answered "no" (VrTweaks.cpp, HideReason)
+    void InstallMenuFilter();
     std::string MapName();                  //!< the loaded map's name as the game has it ("" between maps)
     void OnPresent();                       //!< follows whether the headset shows the game (render thread)
     void OnMainView(void* view);            //!< the main view being set up (ViewMatrixHook): its render flags

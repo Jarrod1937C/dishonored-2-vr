@@ -258,9 +258,13 @@ side, so you can look around and still find your hips.
 ### Comfort and reliability
 
 - **Turning:** snap (20° steps by default, with a short dim during each snap) or smooth (120°/s).
-- **Far Reach like Blink** (`FarReachBlink`, on by default, in the VR Gameplay options): Far Reach puts you where it
+- **Far Reach VR comfort option** (`FarReachVRComfortOption`, on by default, in the VR Gameplay options): Far Reach puts you where it
   landed at once instead of pulling you through the air. Where it takes you is unchanged.
 - **No motion blur or depth of field** in VR; Meta's ASW is switched off for the game on Link / Air Link.
+- **A tidier game Options menu:** in VR the game's own Options screens leave out the settings the mod decides there:
+  field of view, adaptive resolution, triple buffering, V-Sync and the frame-rate limiter (the headset paces the
+  game), depth of field, motion blur, fog blur, HBAO+ (with `AmbientOcclusion = 0`), view distance (the VR options'
+  `ViewDistance`), the crosshair (the hands' reticles replace it) and the kill cam (with `FinisherAnimations = 0`).
 - **The game window is kept in front:** the controllers drive the game's keyboard and mouse, which Windows gives only
   to the window in front. The mod brings the game back when you press a button or put the headset on, and raises it
   when another window covers it.

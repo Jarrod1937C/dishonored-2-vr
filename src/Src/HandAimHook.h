@@ -83,7 +83,7 @@ namespace HandAimHook
 
     bool Install();
     void Uninstall();
-    //! [Gameplay.Powers] FarReachBlink: Far Reach takes the player to where it landed at once, like Blink, instead of
+    //! [Gameplay.Powers] FarReachVRComfortOption: Far Reach takes the player to where it landed at once, like Blink, instead of
     //! pulling him there (arkPlayerStateGrapple::InterpolateToTarget hooked: its start speed is raised for the call, so
     //! the game's own arrival -- the player put on the target -- comes on the pull's first frame). Game thread hook.
     void SetFarReachBlink(bool on);

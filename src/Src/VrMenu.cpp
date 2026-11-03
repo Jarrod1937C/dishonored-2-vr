@@ -129,7 +129,7 @@ namespace
         }
         // the usual short forms
         static const std::pair<const char*, const char*> kFix[] = { { "Hud", "HUD" }, { "hud", "HUD" }, { "Stereo3D", "Stereo 3D" },
-            { "Vr ", "VR " }, { "vr ", "VR " }, { "Fov", "FOV" } };
+            { "Vr ", "VR " }, { "vr ", "VR " }, { "Fov", "FOV" }, { "Far reach", "Far Reach" } };
         for (const auto& f : kFix)
             for (size_t at = out.find(f.first); at != std::string::npos; at = out.find(f.first, at + strlen(f.second)))
             {

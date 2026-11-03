@@ -74,8 +74,8 @@ namespace Settings
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool MouthPotions();                          //!< [Gameplay] MouthPotions: a grip at the mouth drinks an elixir (KbmInject)
-    bool TempleZoom();                            //!< [Gameplay] TempleZoom: the right hand tapped against the side of the head taps the zoom (KbmInject)
-    bool FarReachBlink();                         //!< [Gameplay.Powers] FarReachBlink: dark while Far Reach pulls you (KbmInject)
+    bool TempleZoom();                            //!< [Gameplay] TempleZoom: the right hand tapped against the side of the head taps the zoom (KbmInject)
+    bool FarReachVRComfortOption();               //!< [Gameplay.Powers] FarReachVRComfortOption: Far Reach jumps like Blink (HandAimHook)
     //! [Cheats] UnlockEverything (= all) or its parts: the TestAids::Unlock mask given to every save loaded
     unsigned Unlocks();
     //! [Cheats.Powers] the powers switched on one by one, as TestAids::SetAutoPowers takes them ("blink,darkvision"; "" = none)
@@ -99,6 +99,7 @@ namespace Settings
     bool MinimalReticle();                        //!< [Display] MinimalReticle: the reticle is only a dot (Reticle)
     float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
+    bool DisableMotionBlur();                     //!< [Display] DisableMotionBlur: the game's camera motion blur off
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
     int SkipDisabledEffects();                    //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF

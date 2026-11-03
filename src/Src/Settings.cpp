@@ -74,7 +74,7 @@ namespace
         { "gameplay.physicalpickup",    Kind::Bool,   "1", 0, 0, nullptr, true },   // items taken by hand, stored behind the back
         { "gameplay.mouthpotions",      Kind::Bool,   "1", 0, 0, nullptr, true },   // KbmInject: a grip at the mouth drinks (left health, right Addermire)
         { "gameplay.templezoom",        Kind::Bool,   "1", 0, 0, nullptr, true },   // KbmInject: the right hand tapped against the side of the head taps the zoom
-        { "gameplay.farreachblink",     Kind::Bool,   "1", 0, 0, nullptr },         // KbmInject: the headset goes dark while Far Reach pulls the player
+        { "gameplay.farreachvrcomfortoption",     Kind::Bool,   "1", 0, 0, nullptr },         // KbmInject: the headset goes dark while Far Reach pulls the player
         { "gameplay.swipedials",        Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a safe dial to turn it
         { "gameplay.slidewindows",      Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: slide a hand up / down a window to raise / lower it
         { "gameplay.holsterweapons",    Kind::Bool,   "1", 0, 0, nullptr, true },   // Holster: left trigger at the left hip = pistol, behind the back = crossbow
@@ -404,8 +404,8 @@ float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth")
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
 bool Settings::MouthPotions() { return B("gameplay.mouthpotions"); }
-bool Settings::TempleZoom() { return B("gameplay.templezoom"); }
-bool Settings::FarReachBlink() { return B("gameplay.farreachblink"); }
+bool Settings::TempleZoom() { return B("gameplay.templezoom"); }
+bool Settings::FarReachVRComfortOption() { return B("gameplay.farreachvrcomfortoption"); }
 std::string Settings::PowerUnlocks()
 {
     // the part of each power's inventory item name (models/powers/<x>/<x>.inventoryitem; ENGINE.md 10.1)
@@ -482,6 +482,7 @@ float Settings::FogMapsResolution() { return F("display.fogmapsresolution"); }
 bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
+bool Settings::DisableMotionBlur() { return B("display.disablemotionblur"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
 bool Settings::ProfileRenderPasses() { return B("logging.profilerenderpasses"); }

@@ -287,7 +287,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                Open them with Notepad; "notes" in each explains its settings.
    [Gameplay]  SwordDamageScale = 1 (the blade's damage)   KnockoutSpeed = 8 (m/s)   KnockoutSoundVolume = 0.8
                PhysicalCrouchDepth = 30 (cm)   WallFade = 1
-               FarReachBlink = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
+               FarReachVRComfortOption = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
                HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at

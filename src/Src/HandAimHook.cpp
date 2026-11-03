@@ -527,7 +527,7 @@ namespace
     }
 }
 
-// ---- [Gameplay.Powers] FarReachBlink: Far Reach's pull made a jump ----
+// ---- [Gameplay.Powers] FarReachVRComfortOption: Far Reach's pull made a jump ----
 // arkPlayerStateGrapple (vtable exe+0x1C7A328) moves the player in InterpolateToTarget (exe+0x838D90, named by its own
 // profiling scope "arkPlayerStateGrapple::InterpolateToTarget"; called once a frame from the state's update exe+0x83A510).
 // Read from the code: the target at this+0xC0, the direction this+0xF0, the pull's length this+0xFC, its progress
@@ -590,7 +590,7 @@ namespace
 void HandAimHook::SetFarReachBlink(bool on)
 {
     g_FarBlink = on;
-    LOGI("HandAimHook: Far Reach {} ({} jumps so far)", on ? "takes you to its target at once, like Blink (FarReachBlink = 1)" : "pulls you there, as in the game (FarReachBlink = 0)", g_FarJumps.load());
+    LOGI("HandAimHook: Far Reach {} ({} jumps so far)", on ? "takes you to its target at once, like Blink (FarReachVRComfortOption = 1)" : "pulls you there, as in the game (FarReachVRComfortOption = 0)", g_FarJumps.load());
 }
 
 bool HandAimHook::Install()
@@ -634,7 +634,7 @@ bool HandAimHook::Install()
     DetourAttach(&(PVOID&)g_RealPowerUpdate, PowerUpdateHook);
     LONG r = DetourTransactionCommit();
     LOGI("HandAimHook: UpdateAim@exe+0x{:X} aimCpnt@exe+0x{:X} GetAimPoint@exe+0x{:X} ComputeAimTarget@exe+0x{:X} PowerTarget@exe+0x{:X} ThrowHit@exe+0x{:X} detour={}", kUpdateAim, kAimCpntUpdate, kGetAimPoint, kComputeAimTarget, kPowerTargetUpdate, kThrowHitUpdate, r);
-    {   // FarReachBlink: its own transaction, so a mismatch leaves the rest installed
+    {   // FarReachVRComfortOption: its own transaction, so a mismatch leaves the rest installed
         const uint8_t* f = (const uint8_t*)(base + kGrappleInterp);
         if (f[0] != 0xE9 && memcmp(f, kGrappleInterpBytes, sizeof kGrappleInterpBytes))
             LOGI("HandAimHook: arkPlayerStateGrapple::InterpolateToTarget is not what it was measured to be: Far Reach keeps its pull");

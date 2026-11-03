@@ -10,6 +10,9 @@
 #include <cmath>
 #include "GameInfo.h"
 #include <detours/detours.h>
+#include "Settings.h"
+#include "StereoSync.h"
+#include "Reticle.h"
 
 namespace
 {
@@ -145,6 +148,107 @@ void VrTweaks::SetViewDistance(int level)
 {
     g_ViewDist = level < 0 ? -1 : (level > 5 ? 5 : level);
 }
+// ---- the game's options menus without what the mod decides in VR ----
+// Each options section (main menu and pause menu alike) lists its settings in a loop over the setting enum (e.g.
+// exe+0x5089B0 for gameplay, 26 settings): for each, the section's descriptor (decl [this+0x78] + 0xA0 + index * 0x120,
+// the index being the enum entry's position in its descriptor table, entries { const char* name; int64 value }) is
+// given to the section's virtual slot 13 (this+0x68 in the vtable: "list this one?"), and only a yes adds it. Slot 13 of
+// arkMenuSectionOptionVisuals (vtable exe+0x1B71478; exe+0x50E1A0) and of arkMenuSectionOptionGameplay (vtable
+// exe+0x1B70CA8; the base's exe+0x5034E0) is replaced: the setting is named from the descriptor's position, and the
+// ones the mod holds, overrides or ignores while the headset session runs are answered no. The enum tables: visuals
+// *(exe+0x32CDCE8), gameplay *(exe+0x32CDD48). Nothing is written to the game's settings.
+namespace
+{
+    constexpr uint32_t kVisualsVtable = 0x1B71478, kGameplayVtable = 0x1B70CA8, kVisualsEnum = 0x32CDCE8, kGameplayEnum = 0x32CDD48;
+    constexpr int kListSlot = 13;
+    using FnList = bool (*)(void* section, void* desc);
+    FnList g_RealList[2] = {};
+    std::atomic<int> g_MenuListed{ 0 }, g_MenuHidden{ 0 };
+    std::mutex g_MenuM; std::vector<std::string> g_MenuSeen;   // names already logged
+    //! the enum name of a descriptor (nullptr if it is not one of the section's)
+    const char* SettingName(int which, void* section, void* desc)
+    {
+        __try
+        {
+            const uint8_t* decl = *(const uint8_t* const*)((const uint8_t*)section + 0x78);
+            if (!decl) return nullptr;
+            const intptr_t d = (const uint8_t*)desc - (decl + 0xA0);
+            if (d < 0 || d % 0x120) return nullptr;
+            const intptr_t idx = d / 0x120;
+            const uint8_t* en = *(const uint8_t* const*)(GameInfo::Base() + (which ? kGameplayEnum : kVisualsEnum));
+            if (!en) return nullptr;
+            const uint8_t* e = *(const uint8_t* const*)(en + 0x10);
+            for (intptr_t k = 0; e && k < 128; k++, e += 16)
+            {
+                const char* n = *(const char* const*)e;
+                if (!n || !n[0]) return nullptr;
+                if (k == idx) return n;
+            }
+            return nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    //! why the mod hides a setting now ("" = it does not)
+    const char* HideReason(const char* n)
+    {
+        if (!VRRuntime::GetStatus().running) return "";
+        auto is = [&](const char* s) { return !strcmp(n, s); };
+        if (is("ARK_VISUALSETTING_FOV")) return "the headset's own field of view";
+        if (is("ARK_VISUALSETTING_RESOLUTION_SCALE") || is("ARK_VISUALSETTING_RESOLUTION_SCALE_QUALITY")) return "adaptive resolution held off (RenderRes)";
+        if (is("ARK_VISUALSETTING_SWAPBUFFERCOUNT")) return "triple buffering held off (RenderRes)";
+        if ((is("ARK_VISUALSETTING_VSYNC") || is("ARK_VISUALSETTING_FRAMERATE_LIMITER")) && StereoSync::Active()) return "the headset paces the frames (StereoSync)";
+        if (is("ARK_VISUALSETTING_DOF") && Settings::VrGraphicsTweaks()) return "no depth of field in VR (VrGraphicsTweaks)";
+        if (is("ARK_VISUALSETTING_CAM_MOTION_BLUR") && Settings::DisableMotionBlur()) return "no motion blur (DisableMotionBlur)";
+        if (is("ARK_VISUALSETTING_FOG_BLUR") && !Settings::Fog()) return "the game's fog off in VR (Fog = 0)";
+        if (is("ARK_VISUALSETTING_HBAO_PLUS") && !Settings::AmbientOcclusion()) return "no ambient occlusion in VR (AmbientOcclusion = 0)";
+        if (is("ARK_VISUALSETTING_VIEW_DISTANCE") && Settings::ViewDistance() >= 0) return "the VR options' ViewDistance";
+        if ((is("ARK_GPSETTING_CROSSHAIR_STYLE") || is("ARK_GPSETTING_CROSSHAIR_OPACITY")) && Reticle::Mode() != 0) return "the hands' reticles instead (Reticle)";
+        if (is("ARK_GPSETTING_KILLCAM") && !Settings::FinisherAnimations()) return "no kill cam (FinisherAnimations = 0)";
+        return "";
+    }
+    bool ListHook(int which, void* section, void* desc)
+    {
+        const bool r = g_RealList[which](section, desc);
+        const char* n = SettingName(which, section, desc);
+        const char* why = n ? HideReason(n) : "";
+        {
+            std::lock_guard lk(g_MenuM);
+            const std::string key = n ? n : "?";
+            if (std::find(g_MenuSeen.begin(), g_MenuSeen.end(), key) == g_MenuSeen.end() && g_MenuSeen.size() < 128)
+            {
+                g_MenuSeen.push_back(key);
+                LOGI("VrTweaks: game options menu: {} {}{}", n ? n : "(unnamed setting)", !r ? "not listed by the game" : why[0] ? "HIDDEN: " : "listed", r && why[0] ? why : "");
+            }
+        }
+        if (r && why[0]) { g_MenuHidden++; return false; }
+        if (r) g_MenuListed++;
+        return r;
+    }
+    bool ListVisuals(void* s, void* d) { return ListHook(0, s, d); }
+    bool ListGameplay(void* s, void* d) { return ListHook(1, s, d); }
+}
+void VrTweaks::InstallMenuFilter()
+{
+    if (!GameInfo::IsSupportedBuild()) return;
+    const uintptr_t base = GameInfo::Base();
+    const uint32_t vts[2] = { kVisualsVtable, kGameplayVtable };
+    const uint32_t expect[2] = { 0x50E1A0, 0x5034E0 };
+    FnList hooks[2] = { &ListVisuals, &ListGameplay };
+    for (int i = 0; i < 2; i++)
+    {
+        uintptr_t* slot = (uintptr_t*)(base + vts[i] + kListSlot * 8);
+        const uintptr_t cur = *slot;
+        // (PlayerState-style counting stubs are not put on these vtables; anything else there is not what was measured)
+        if (cur != base + expect[i]) { LOGI("VrTweaks: options section {} slot {} is exe+0x{:X}, not exe+0x{:X}: its menu is left as it is", i ? "gameplay" : "visuals", kListSlot, cur - base, expect[i]); continue; }
+        g_RealList[i] = (FnList)cur;
+        DWORD old = 0;
+        if (!VirtualProtect(slot, 8, PAGE_READWRITE, &old)) { g_RealList[i] = nullptr; continue; }
+        *slot = (uintptr_t)hooks[i];
+        VirtualProtect(slot, 8, old, &old);
+    }
+    LOGI("VrTweaks: the game's options menus leave out what the mod decides in VR (visuals {}, gameplay {})", g_RealList[0] ? "on" : "off", g_RealList[1] ? "on" : "off");
+}
+
 void VrTweaks::InstallViewDistance()
 {
     if (g_ViewDistReal) return;
