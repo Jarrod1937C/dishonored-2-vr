@@ -536,8 +536,12 @@ namespace
 // speed * frame time reaches the distance left, the game's own arrival runs: the player is SET on the target
 // (exe+0x7FF0D0) and the state ends as usual (a ledge: the mantle follows). So the start speed is raised to 100 km/s
 // for the call, and the arrival comes on the pull's first frame; the end speed (what the player keeps flying with,
-// this+0x108) is left alone. Not for kind 2 without this+0xE8: that arrival keeps the momentum and does not set the
-// position (it would fling the player from where he stands).
+// this+0x108) is left alone. Kind 2 without this+0xE8 -- most pulls, measured 2026-11-02 (14 of 16) -- arrives
+// differently: the momentum is kept (velocity = end speed along the pull) and the position is NOT set, so the boost
+// alone would fling the player from where he stands. For it the player is first put 5 cm short of the target along
+// the pull (the physics' set-position exe+0x7FF0D0 on [[this+0x10]+0x308], as the game's other arrival does; the
+// player entity [[this+0x10]+0x10], origin +0x300; this+0xEB = the pull ignores height), then the boost: the game's
+// arrival runs there with the pull's own direction and end speed.
 namespace
 {
     constexpr uint32_t kGrappleInterp = 0x838D90;
@@ -562,15 +566,42 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     void WriteStart(uint8_t* s, float v) { __try { *(float*)(s + 0x104) = v; } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+    //! kind 2 without +0xE8: the player put 5 cm short of the target, along the pull (false = not done)
+    bool PlaceShort(uint8_t* s, const float target[3], float out[3], float& moved)
+    {
+        __try
+        {
+            uint8_t* owner = *(uint8_t**)(s + 0x10);
+            if (!owner) return false;
+            uint8_t* player = *(uint8_t**)(owner + 0x10);
+            void* phys = *(void**)(owner + 0x308);
+            if (!player || !phys) return false;
+            const float* o = (const float*)(player + 0x300);
+            float d[3] = { target[0] - o[0], target[1] - o[1], target[2] - o[2] };
+            if (s[0xEB]) d[2] = 0.f;
+            const float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (!(len > 0.1f && len < 200.f)) return false;
+            const float k = (len - 0.05f) / len;
+            for (int i = 0; i < 3; i++) out[i] = o[i] + d[i] * k;
+            moved = len - 0.05f;
+            ((void (*)(void*, const float*))(GameInfo::Base() + 0x7FF0D0))(phys, out);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     bool Arrived(uint8_t* s) { __try { return s[0xEE] != 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
     uintptr_t InterpHook(void* self)
     {
         uint8_t* s = (uint8_t*)self;
         GrappleRead g;
-        const bool jump = g_FarBlink.load() && ReadGrapple(s, g) && !g.arrived && (g.kind != 2 || g.e8);
-        if (!jump)
+        const bool jump = g_FarBlink.load() && ReadGrapple(s, g) && !g.arrived;
+        if (!jump) return g_RealInterp(self);
+        float placed[3] = {}, moved = 0.f;
+        const bool momentum = g.kind == 2 && !g.e8;          // its arrival does not set the position: put him there
+        if (momentum && !PlaceShort(s, g.target, placed, moved))
         {
-            if (g_FarBlink.load() && ReadGrapple(s, g) && !g.arrived) g_FarSkipped++;
+            g_FarSkipped++;
+            if (g_FarLogs < 20) { g_FarLogs++; LOGI("HandAimHook: Far Reach (kind 2, momentum kept) could not place the player: the pull goes on as the game's"); }
             return g_RealInterp(self);
         }
         WriteStart(s, 100000.f);   // (any frame time: 0.01 s x 100 km/s is 1 km, past any pull)
@@ -581,8 +612,9 @@ namespace
         if (g_FarLogs < 20)
         {
             g_FarLogs++;
-            LOGI("HandAimHook: Far Reach {} (kind {}, pull {:.1f} m, speed {:.1f} -> {:.1f} m/s, target ({:.2f},{:.2f},{:.2f})){}", done ? "jumps the player to its target at once" : "did NOT arrive in one frame",
-                 g.kind, g.length, g.start, g.end, g.target[0], g.target[1], g.target[2], done ? "" : ": the pull goes on as the game's");
+            LOGI("HandAimHook: Far Reach {} (kind {}{}, pull {:.1f} m, speed {:.1f} -> {:.1f} m/s, target ({:.2f},{:.2f},{:.2f})){}{}", done ? "jumps the player to its target at once" : "did NOT arrive in one frame",
+                 g.kind, momentum ? ", momentum kept" : "", g.length, g.start, g.end, g.target[0], g.target[1], g.target[2],
+                 momentum ? fmt::format(": placed {:.1f} m along the pull", moved) : std::string(), done ? "" : ": the pull goes on as the game's");
         }
         return r;
     }
