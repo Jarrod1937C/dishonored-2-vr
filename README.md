@@ -185,8 +185,9 @@ pistol with an empty right hand.
 - The **power wheel** (hold the left grip) opens on a panel in front of you while the world stays put: pick with the
   stick, let go to equip.
 - **Zoom (the mask's spyglass):** tap your right hand against the side of your head, as if touching the mask's lens.
-  Tap again for more zoom once the spyglass is upgraded, and again to go back. Small, quick taps work; resting your
-  hand there or swinging past your face does nothing, and a buzz confirms each tap. It works on every controller,
+  Tap again for more zoom once the spyglass is upgraded, and again to go back. It is a gesture, not a place: a short,
+  quick move from the side in to your temple that stops there. Small, quick taps work; resting your hand there, or a
+  sword swing through there, does nothing, and a buzz confirms each tap. It works on every controller,
   including those with no zoom button (the button still works where there is one).
   - The zoomed view is magnified in stereo. Your arms and weapons are hidden while zoomed, and only the left hand's
     pointer stays, drawn larger and bolder, so you can line up a pistol shot, a bolt or a power through the zoom.
