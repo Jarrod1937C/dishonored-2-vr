@@ -166,6 +166,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        upgraded); again: back to the normal view (TempleZoom).
                                        Your hands and weapons are hidden while zoomed;
                                        your left hand's pointer aims in the zoomed view
+   Touch an item with your RIGHT hand,
+     squeeze the grip, reach over your
+     shoulder / behind your back ..... into your backpack (inventory), with a firm buzz.
+                                       Let go before: it goes back. Inventory full: a soft
+                                       buzz and it goes back. Food: eat it at your mouth
    Walk around your room ............. the character walks with you (Roomscale); small leans
                                        (under 10 cm) leave it where it is
 

@@ -42,6 +42,6 @@
 <line x1="810" y1="274" x2="642.28" y2="454.6" stroke="#13956b" stroke-width="1.3"/>
 <circle cx="810" cy="274" r="2.5" fill="#13956b"/><circle cx="642.28" cy="454.6" r="2.5" fill="#13956b"/>
 <line x1="24" y1="516" x2="1076" y2="516" stroke="#d7dbe2" stroke-width="1.5"/>
-<text x="28" y="538.0" font-size="13.5" fill="#1f2933" font-weight="normal" text-anchor="start">No quick slots or zoom: use the power wheel (left grip), the holsters and your mouth (hand + grip = elixir). The system buttons are SteamVR's.</text>
+<text x="28" y="538.0" font-size="13.5" fill="#1f2933" font-weight="normal" text-anchor="start">No quick slots: the power wheel (left grip), the holsters, your mouth (hand + grip = elixir). Zoom: tap the side of your head.</text>
 <text x="28" y="560.0" font-size="13.5" fill="#5b6670" font-weight="normal" text-anchor="start">Everywhere: swing to strike, fist by the ear + thrust = power attack, fist at the left shoulder = block.</text>
 </svg>

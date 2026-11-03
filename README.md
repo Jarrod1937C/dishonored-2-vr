@@ -17,7 +17,9 @@ it builds on.
   work too.
 - **Solid hands and weapons** that stop at walls and push loose objects; push doors, pull drawers open, slide windows,
   turn safe dials, take items and eat food by hand.
-- **Holsters on your body**, elixirs drunk at your mouth, grenades thrown with your arm's motion.
+- **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
+  inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
+  head zooms the mask's spyglass.
 - **Real stereo 3D** at the headset's full refresh, menus on a big screen in the room, the HUD as a watch on your
   wrist, and cutscenes played around you.
 
@@ -42,6 +44,7 @@ it builds on.
   - [Holsters](#holsters)
   - [Solid hands and weapons](#solid-hands-and-weapons)
   - [Your hands in the world](#your-hands-in-the-world)
+  - [Your backpack](#your-backpack)
   - [HUD, menus and cutscenes](#hud-menus-and-cutscenes)
   - [Comfort and reliability](#comfort-and-reliability)
   - [Cheats](#cheats)
@@ -182,9 +185,12 @@ pistol with an empty right hand.
 - Powers come out of your hand: Blink, Far Reach, Domino, Mesmerize and the rest go where your left hand points.
 - The **power wheel** (hold the left grip) opens on a panel in front of you while the world stays put: pick with the
   stick, let go to equip.
-- **Zoom (the mask's spyglass):** tap your right hand against the side of your head. Tap again for more zoom once
-  the spyglass is upgraded, again to go back. The zoomed view is in stereo, and your hands' pointers aim
-  in it, so you can line up a shot through the zoom.
+- **Zoom (the mask's spyglass):** tap your right hand against the side of your head, as if touching the mask's lens.
+  Tap again for more zoom once the spyglass is upgraded, and again to go back. Small, quick taps work; resting your
+  hand there or swinging past your face does nothing, and a buzz confirms each tap. It works on every controller,
+  including those with no zoom button (the button still works where there is one).
+  - The zoomed view is magnified in stereo. Your arms and weapons are hidden while zoomed, and only the left hand's
+    pointer stays, drawn larger and bolder, so you can line up a pistol shot, a bolt or a power through the zoom.
 
 ### Throwing
 
@@ -207,6 +213,7 @@ away. A light buzz tells you when the hand is at a holster.
 | Left | Right hip | The pistol |
 | Left | Behind your back or over your shoulder | The crossbow |
 | Left | Your chest | The last power you used |
+| Right, holding an item | Behind your head, over your shoulder or behind your back | Into your backpack (inventory) |
 | Left | Your mouth | Drink a health elixir |
 | Right | Your mouth | Drink an Addermire Solution (mana) |
 
@@ -229,14 +236,32 @@ side, so you can look around and still find your hips.
 - **Windows:** rest a hand on a sliding window and slide it up or down.
 - **Safes:** slide your right hand up or down a number wheel to turn it a digit (about 3.5 cm per digit). The safe
   opens on the right combination as usual.
-- **Taking items by hand:** touch an item (coins, ammo, elixirs, runes, bone charms, keys, blueprints...) with your
-  right hand, squeeze the grip, and reach behind you (over your shoulder or behind your back) to keep it. If the game
-  will not take it, or you let go, it goes back where it was. Notes and books are read with interact, which still takes
-  any item from afar too.
+- **Taking items by hand:** see [Your backpack](#your-backpack).
 - **Eating and drinking:** bring food to your mouth to eat it; bring a hand to your mouth and squeeze to drink an elixir
   (left = health, right = mana).
 - **Grab and carry objects** with the right grip: an object stays in your hand while you hold the grip. Bodies are
   picked up the game's own way, onto your shoulder, not held in your hand.
+
+### Your backpack
+
+Your inventory is a backpack you reach into over your shoulder: pick loot up with your hand and put it away, the way
+you would for real, instead of only pointing at it and pressing a button.
+
+1. **Take it:** touch an item with your right hand (coins, ammo, elixirs, runes, bone charms, keys,
+   blueprints, mission items...) and squeeze the right grip. The item is now in your hand; keep the grip squeezed.
+2. **Put it away:** reach behind your head, over your shoulder or behind your back. It goes into your inventory as
+   soon as your hand gets there (no need to let go), with a firm buzz to say the game took it.
+3. **Changed your mind?** Let go of the grip before reaching back and the item goes back where it was. It also goes
+   back if you hold it for more than 7 seconds.
+
+- **Inventory full** (or an item the game will not take): a long, soft buzz, and the item returns to where it lay,
+  just as the game would leave it there.
+- **Food** cannot go in the backpack: bring it to your mouth to eat it instead (a short buzz reminds you if you reach
+  back with it).
+- **Notes and books** are read with interact (the right trigger), which still picks up any item from afar too, as in
+  the game.
+- It is on by default (`PhysicalPickup`, a hidden Core VR setting); with it off, items are taken by pointing and
+  pressing interact.
 
 ### HUD, menus and cutscenes
 
@@ -298,6 +323,7 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Hit the back of a guard's head, from behind | Knock him out |
 | Left trigger held, swing, let go | Throw a grenade or springrazor |
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
+| Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |
 | Look at the back of your left wrist | The watch: health, mana, ammo |
@@ -338,14 +364,14 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 ![WMR controller layout](docs/images/controls-wmr.svg)
 
 - Profile: `wmr.json`. No A / B / X / Y, so the trackpads take the Index's roles; the right stick click jumps and the
-  right menu button crouches. Elixirs are drunk at the mouth. No zoom.
+  right menu button crouches. Elixirs are drunk at the mouth. No zoom button: tap the side of your head to zoom.
 
 ### HTC Vive / Vive Pro wands
 
 ![Vive wand layout](docs/images/controls-vive.svg)
 
 - Profile: `vive_wands.json`. The left trackpad walks, the right one turns; there are not enough buttons for the quick
-  slots or zoom: use the power wheel, the holsters and your mouth.
+  slots: use the power wheel, the holsters and your mouth. Zoom by tapping the side of your head.
 
 ### In menus
 
