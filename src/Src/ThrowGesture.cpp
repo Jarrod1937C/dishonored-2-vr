@@ -41,12 +41,30 @@ namespace
         // throw animation, which launched it 0.4-0.7 s later (in the user's logs) from wherever the hand had got to;
         // the animation's own launch is then dropped. 0 = the game's timing (the velocity still the hand's).
         float instant = 1.f;
+        // s. After a grenade leaves, the game's throw animation runs on (its own launch is dropped) and then draws the
+        // next grenade; until it has finished, a press of the trigger is lost -- measured in the user's log
+        // (2026-11-02): presses 0.03-1.30 s after a throw never lit a grenade, from 1.48 s they did. The next grenade
+        // is shown only from then, a light buzz says it is ready, and a press before then is held back and passes to
+        // the game at that moment (the trigger still held). 0 = off (presses go straight to the game).
+        float ready = 1.5f;
+        // s. A press passed to the game that has lit no grenade this long after (it lights one about 0.5 s into the
+        // wind-up) was lost: the trigger is let up for a moment and pressed again, up to 3 times.
+        float relight = 0.7f;
+        // The game's throw cycle cut short (2026-11-02, asked: "can the ready be 0.5 s?"). The player state ThrowWeapon
+        // (vtable exe+0x1C7F118, update exe+0x84AA20) runs the throw in phases (this+0x4C): 1 start, 2 wind-up (cooking,
+        // the fuse lit), 3 the throw's animation (whose event would launch the grenade ~0.3 s in -- the mod's launch at
+        // the release has taken its place), 4 drawing the next grenade, then the state ends and the game takes a press
+        // again; a phase moves on when its animation is over (exe+0x854920: the animation this+0x24 done, or none).
+        // 1 = once the mod's grenade has left, the throw's animation is stopped (exe+0x854280) and forgotten, so phase 3
+        // ends on that frame; 2 = the draw's too, `drawcut` s into it (the next grenade is in the hand from its start).
+        // 0 = the game's whole cycle (~1.5 s).
+        float cut = 2.f, drawcut = 0.1f;
     } C;
     struct Named { const char* name; float* v; };
     const Named kCfg[] = {
         { "gain", &C.gain }, { "maxspeed", &C.maxSpeed }, { "peakwin", &C.peakWin }, { "span", &C.span },
         { "maxage", &C.maxAge }, { "inherit", &C.inherit }, { "spawn", &C.spawn }, { "teleport", &C.teleport },
-        { "haptic", &C.haptic }, { "instant", &C.instant },
+        { "haptic", &C.haptic }, { "instant", &C.instant }, { "ready", &C.ready }, { "relight", &C.relight }, { "cut", &C.cut }, { "drawcut", &C.drawcut },
     };
 
     std::atomic<bool> g_On{ true };
@@ -204,8 +222,17 @@ namespace
     // release only asks for the grenade; it leaves as soon as the game has lit it (at once, unless the trigger was
     // tapped), and never if the game does not light one in `kLitWait` (none left, or no throw).
     constexpr uint32_t kThrowableGrenade = 0x160, kGrenadeFlags = 0x38;
-    constexpr double kLitWait = 0.5;
+    constexpr double kLitWait = 0.7;
     bool g_WaitLit = false; double g_WaitFrom = 0; void* g_WaitCpnt = nullptr;
+    // the next grenade (C.ready): when the game takes a press again (under g_FireM), and the hand grenade's fuse as the
+    // game thread last read it (1 lit, 0 not, -1 none / unreadable)
+    double g_ReadyAt = 0; bool g_ReadyBuzz = false;
+    double g_OurFireAt = -10;          // the mod's last launch (ThrowHook, ours)
+    std::atomic<int> g_HandLit{ -1 };
+    // the trigger as it is passed to the game (render thread): sent = this press has gone to the game
+    bool g_GateLive = false, g_GateSent = false, g_GateHeldBack = false, g_LastPressSent = true;
+    double g_GatePressAt = 0, g_GateSentAt = 0, g_RepressUntil = 0; int g_GateRetries = 0;
+    unsigned long long g_HeldBackPresses = 0, g_EarlyReleases = 0, g_Represses = 0;
     //! the hand grenade's fuse: 1 lit, 0 not, -1 unreadable / gone off
     int FuseLit(uint8_t* cpnt)
     {
@@ -263,7 +290,7 @@ namespace
         {
             std::lock_guard lk(g_FireM);
             if (self == g_PostCpnt && !g_PostTaken && now - g_PostedAt < 0.5) { ours = true; g_PostTaken = true; g_SkipUntil = now + 2.0; }
-            else if (self == g_PostCpnt && now < g_SkipUntil) { drop = true; g_SkipUntil = 0; g_UnhideAt = now + 0.15; }
+            else if (self == g_PostCpnt && now < g_SkipUntil) { drop = true; g_SkipUntil = 0; g_UnhideAt = std::max(now + 0.15, g_ReadyAt); }
             else if (g_WaitLit && self == g_WaitCpnt) { g_WaitLit = false; LOGI("Throw: the game threw before the grenade was seen lit: its own launch (with the hand's velocity)"); }
         }
         if (drop)
@@ -276,10 +303,80 @@ namespace
         {
             g_Instant++;
             if (!g_Hidden) { BodyHide::SetHideWeapon(0, true); g_Hidden = true; }
-            { std::lock_guard lk(g_FireM); g_UnhideAt = now + 1.5; }   // (the animation's launch shows it back sooner)
+            {   // the next grenade is shown (and taken) once the game's throw cycle is over (C.ready)
+                std::lock_guard lk(g_FireM);
+                g_OurFireAt = now;
+                g_ReadyAt = C.ready > 0.f ? now + C.ready : 0; g_ReadyBuzz = C.ready > 0.f;
+                g_UnhideAt = std::max(now + 1.5, g_ReadyAt);
+            }
             LOGI("Throw: fired at the release ({:.0f} ms after it)", (now - g_FireWantedAt) * 1000.0);
         }
         return g_RealThrow(self, a, b, c);
+    }
+
+    // ---- the throw cycle cut short (C.cut; see Cfg) ----
+    constexpr uint32_t kThrowState = 0x84AA20, kThrowStateVtable = 0x1C7F118, kStateStopAnim = 0x854280;
+    const uint8_t kThrowStateBytes[] = { 0x40, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48, 0x8B, 0xEC, 0x48, 0x83, 0xEC, 0x38 };
+    using FnState = uintptr_t (*)(void*);
+    FnState g_RealThrowState = nullptr;
+    void* g_PhaseState = nullptr; double g_Phase3At = -10, g_Phase4At = -10;   // game thread
+    unsigned long long g_CutThrow = 0, g_CutDraw = 0;
+    int g_CutLogs = 0;
+    int StatePhase(uint8_t* s)
+    {
+        __try { return *(uintptr_t*)s == GameInfo::Base() + kThrowStateVtable ? *(int*)(s + 0x4C) : -1; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+    void ForgetAnim(uint8_t* s) { __try { *(uint32_t*)(s + 0x24) = 0; } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+    uintptr_t ThrowStateHook(void* self)
+    {
+        uint8_t* s = (uint8_t*)self;
+        const int ph = C.cut >= 1.f ? StatePhase(s) : -1;
+        if (ph < 0) return g_RealThrowState(self);
+        const double now = QpcSec();
+        int cut = 0;
+        if (ph == 3 && self == g_PhaseState)
+        {   // the throw's animation: once the mod's grenade of THIS throw has left (from just before the phase began)
+            std::lock_guard lk(g_FireM);
+            if (g_OurFireAt >= g_Phase3At - 0.25 && now - g_OurFireAt < 3.0) { cut = 3; g_SkipUntil = 0; }   // (no animation launch to drop now)
+        }
+        else if (ph == 4 && self == g_PhaseState && C.cut >= 2.f && now - g_Phase4At >= C.drawcut)
+        {
+            std::lock_guard lk(g_FireM);
+            if (now - g_OurFireAt < 4.0) cut = 4;
+        }
+        if (cut)
+        {
+            ((void (*)(void*))(GameInfo::Base() + kStateStopAnim))(self);   // the state's animation stopped...
+            ForgetAnim(s);                                                   // ...and done, as far as the state knows
+        }
+        const uintptr_t r = g_RealThrowState(self);
+        const int ph2 = StatePhase(s);
+        if (ph2 != ph)
+        {
+            g_PhaseState = self;
+            if (ph2 == 3) g_Phase3At = now;
+            if (ph2 == 4) g_Phase4At = now;
+        }
+        if (cut)
+        {
+            (cut == 3 ? g_CutThrow : g_CutDraw)++;
+            const bool over = ph2 != 4 && ph2 != 3;
+            if (over || (cut == 3 && ph2 != 4))
+            {   // the state is ending: the game takes a press again
+                std::lock_guard lk(g_FireM);
+                if (g_ReadyAt > now) g_ReadyAt = now;
+                if (g_UnhideAt > now) g_UnhideAt = now;
+            }
+            if (g_CutLogs < 30)
+            {
+                g_CutLogs++;
+                double fired = 0; { std::lock_guard lk(g_FireM); fired = now - g_OurFireAt; }
+                LOGI("Throw: the game's {} cut short {:.2f} s after the launch (phase {} -> {}){}", cut == 3 ? "throw animation" : "draw of the next grenade",
+                     fired, ph, ph2, ph2 == 4 ? ": drawing the next grenade" : ph2 == 0 || ph2 == 5 ? ": the throw is over, the next press is taken" : "");
+            }
+        }
+        return r;
     }
 
     //! Saves everything volatile (the caller was compiled against a three-store leaf), calls the C++ side with the
@@ -354,6 +451,20 @@ bool ThrowGesture::Install()
             LOGI("ThrowGesture: a grenade leaves at the trigger's release (Throw exe+0x{:X} hooked: detour={})", kThrow, r);
         }
     }
+    {   // the throw cycle cut short (C.cut)
+        const uint8_t* f = (const uint8_t*)(base + kThrowState);
+        if (f[0] != 0xE9 && memcmp(f, kThrowStateBytes, sizeof kThrowStateBytes))
+            LOGI("ThrowGesture: the ThrowWeapon state's update is not what it was measured to be: the game's whole throw cycle");
+        else
+        {
+            g_RealThrowState = (FnState)(base + kThrowState);
+            DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+            DetourAttach(&(PVOID&)g_RealThrowState, (PVOID)&ThrowStateHook);
+            const LONG r = DetourTransactionCommit();
+            if (r != NO_ERROR) g_RealThrowState = nullptr;
+            LOGI("ThrowGesture: the throw's animation and the next grenade's draw cut short (ThrowWeapon update exe+0x{:X} hooked: detour={})", kThrowState, r);
+        }
+    }
     return true;
 }
 
@@ -361,9 +472,16 @@ void ThrowGesture::GameTick()
 {
     if (!g_RealThrow) return;
     const double now = QpcSec();
+    if (BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable) { uint8_t* c = LeftThrowable(); g_HandLit = c ? FuseLit(c) : -1; }
+    else g_HandLit = -1;
     bool want = false; double wantAt = 0;
     {
         std::lock_guard lk(g_FireM);
+        if (g_ReadyBuzz && now >= g_ReadyAt)
+        {
+            g_ReadyBuzz = false;
+            if (BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable && C.haptic > 0.f) VRRuntime::Vibrate(0, 0.25f * C.haptic, 0.02f);
+        }
         if (g_FireWanted) { want = true; wantAt = g_FireWantedAt; g_FireWanted = false; }
         if (g_Hidden && g_UnhideAt > 0 && now > g_UnhideAt) { g_UnhideAt = 0; BodyHide::SetHideWeapon(0, false); g_Hidden = false; }
     }
@@ -398,6 +516,40 @@ void ThrowGesture::GameTick()
     { std::lock_guard lk(g_FireM); g_WaitLit = false; g_PostCpnt = cpnt; g_PostedAt = now; g_PostTaken = false; }
     if (now - waitFrom > 0.03) { g_WaitedLit++; LOGI("Throw: the grenade was lit {:.0f} ms after the release: fired now", (now - waitFrom) * 1000.0); }
     if (!PostFire(cpnt)) { g_PostFails++; std::lock_guard lk(g_FireM); g_PostTaken = true; LOGI("Throw: the fire message could not be posted: the game's own launch"); }
+}
+
+bool ThrowGesture::GateTrigger(bool live)
+{
+    const double now = QpcSec();
+    const bool throwable = g_On.load() && g_RealThrow && HandAimHook::Mode() >= 2 && BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable;
+    double readyAt = 0; { std::lock_guard lk(g_FireM); readyAt = g_ReadyAt; }
+    if (!live)
+    {
+        if (g_GateLive) g_LastPressSent = g_GateSent;
+        g_GateLive = g_GateSent = g_GateHeldBack = false; g_GateRetries = 0;
+        return false;
+    }
+    if (!g_GateLive) { g_GateLive = true; g_GatePressAt = now; }
+    if (!g_GateSent)
+    {
+        if (now < g_RepressUntil) return false;                       // a re-press: up for a moment
+        if (throwable && C.ready > 0.f && now < readyAt)
+        {   // the game's throw cycle is not over: this press would be lost
+            if (!g_GateHeldBack) { g_GateHeldBack = true; g_HeldBackPresses++; LOGI("Throw: left trigger pressed {:.2f} s before the next grenade is ready: held back until then", readyAt - now); }
+            return false;
+        }
+        if (g_GateHeldBack) LOGI("Throw: the next grenade is ready: the held trigger passed to the game ({:.2f} s after the press)", now - g_GatePressAt);
+        g_GateSent = true; g_GateHeldBack = false; g_GateSentAt = now;
+        return true;
+    }
+    // sent: a press the game did not take lights nothing
+    if (throwable && C.relight > 0.f && g_GateRetries < 3 && now - g_GateSentAt > C.relight && g_HandLit.load() == 0)
+    {
+        g_GateRetries++; g_Represses++; g_GateSent = false; g_RepressUntil = now + 0.09;
+        LOGI("Throw: no grenade lit {:.2f} s after the press reached the game: pressed again (#{})", now - g_GateSentAt, g_GateRetries);
+        return false;
+    }
+    return true;
 }
 
 void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
@@ -456,7 +608,14 @@ void ThrowGesture::Tick(const XRInputState& in, bool triggerHeld)
         { std::lock_guard lk(g_M); g_Pending = p; }
         g_Releases++;
         // a real throw: the grenade leaves now (the game thread fires it: GameTick)
-        if (C.instant >= 0.5f && g_RealThrow && g_On.load() && HandAimHook::Mode() >= 2 && BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable)
+        const bool throwable = BodyHide::HeldItemClass(0) == BodyHide::kThrowableCpntVtable;
+        if (throwable && !g_LastPressSent)
+        {   // let go before the next grenade was ready: the game never had this press (nothing to throw)
+            g_EarlyReleases++;
+            { std::lock_guard lk(g_M); g_Pending.valid = false; }
+            LOGI("Throw: left trigger let go after {:.2f} s, before the next grenade was ready: nothing thrown", p.cook);
+        }
+        else if (C.instant >= 0.5f && g_RealThrow && g_On.load() && HandAimHook::Mode() >= 2 && throwable)
         { std::lock_guard lk(g_FireM); g_FireWanted = true; g_FireWantedAt = now; }
         LOGI("Throw: left trigger released after {:.2f} s: hand {:.2f} m/s (xr {:.2f},{:.2f},{:.2f} -> world {:.2f},{:.2f},{:.2f}), player {:.2f} m/s, {} samples",
              p.cook, speed, vXr[0], vXr[1], vXr[2], p.vHand[0], p.vHand[1], p.vHand[2], Len(g_PlayerVel), g_Hand[0].n);
@@ -529,6 +688,8 @@ std::string ThrowGesture::Stats()
     o << (g_On.load() ? "on" : "off") << " installed " << g_Installed << " releases " << g_Releases << " throws " << g_Calls
       << " byhand " << g_Applied << " notgrenade " << g_NotGrenade << " norelease " << g_NoRelease << " stale " << g_Stale
       << " capped " << g_Capped << " last game " << Len(g_LastGame) << " out " << Len(g_LastOut) << " hand " << g_LastHand
-      << " delay " << g_LastDelay << " atrelease " << g_Instant << " animdropped " << g_AnimDropped << " postfails " << g_PostFails;
+      << " delay " << g_LastDelay << " atrelease " << g_Instant << " animdropped " << g_AnimDropped << " postfails " << g_PostFails
+      << " heldback " << g_HeldBackPresses << " early " << g_EarlyReleases << " repressed " << g_Represses << " neverlit " << g_NeverLit
+      << " cutthrow " << g_CutThrow << " cutdraw " << g_CutDraw;
     return o.str();
 }

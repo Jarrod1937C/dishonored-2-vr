@@ -2100,7 +2100,8 @@ void KbmInject::Tick()
         else if (g_Now - g_PendingStrike > 0.4) { LOGI("KbmInject: gesture strike dropped: block is still held"); g_PendingStrike = -1; }
     }
     // L trigger: power / weapon (left hand) -- not while the left hand holds an object.
-    Hold(kRMB, (live & kVTrigL) != 0 && !(holding && grabHand == 0) && !letsL);
+    const bool trigLGame = ThrowGesture::GateTrigger((live & kVTrigL) != 0);   // (a grenade: not before the next is ready)
+    Hold(kRMB, trigLGame && !(holding && grabHand == 0) && !letsL);
     ThrowGesture::Tick(in, (live & kVTrigL) != 0);        // ...and a grenade leaves with the hand's velocity when it opens
     MenuButton(live, quick);
     // Right stick up / down: health / mana potion. Only a clearly vertical push, and once per push.
@@ -2128,6 +2129,7 @@ void KbmInject::SetTempleZoom(bool on)
     g_TempleZoom = on;
     LOGI("KbmInject: zoom at the side of the head {}", on ? "on: the right hand tapped against the side of your head taps the zoom (TempleZoom = 1)" : "off");
 }
+
 
 void KbmInject::SetMouthPotions(bool on)
 {

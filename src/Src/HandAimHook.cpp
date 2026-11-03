@@ -527,6 +527,72 @@ namespace
     }
 }
 
+// ---- [Gameplay.Powers] FarReachBlink: Far Reach's pull made a jump ----
+// arkPlayerStateGrapple (vtable exe+0x1C7A328) moves the player in InterpolateToTarget (exe+0x838D90, named by its own
+// profiling scope "arkPlayerStateGrapple::InterpolateToTarget"; called once a frame from the state's update exe+0x83A510).
+// Read from the code: the target at this+0xC0, the direction this+0xF0, the pull's length this+0xFC, its progress
+// this+0x100 (0..1), the speed lerped from this+0x104 (start) to this+0x108 (end) by the progress, the velocity
+// this+0x12C (moved through the physics with collision, exe+0x752870), arrived this+0xEE, the kind this+0x6C. When
+// speed * frame time reaches the distance left, the game's own arrival runs: the player is SET on the target
+// (exe+0x7FF0D0) and the state ends as usual (a ledge: the mantle follows). So the start speed is raised to 100 km/s
+// for the call, and the arrival comes on the pull's first frame; the end speed (what the player keeps flying with,
+// this+0x108) is left alone. Not for kind 2 without this+0xE8: that arrival keeps the momentum and does not set the
+// position (it would fling the player from where he stands).
+namespace
+{
+    constexpr uint32_t kGrappleInterp = 0x838D90;
+    constexpr uint32_t kGrappleVtable = 0x1C7A328;
+    const uint8_t kGrappleInterpBytes[] = { 0x48, 0x8B, 0xC4, 0x53, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xEC, 0xF8, 0x00, 0x00, 0x00 };
+    using FnInterp = uintptr_t (*)(void*);
+    FnInterp g_RealInterp = nullptr;
+    std::atomic<bool> g_FarBlink{ true };
+    std::atomic<unsigned long long> g_FarJumps{ 0 }, g_FarSkipped{ 0 };
+    int g_FarLogs = 0;
+    struct GrappleRead { int kind = 0; bool arrived = false, e8 = false; float start = 0, end = 0, length = 0, target[3] = {}; };
+    bool ReadGrapple(uint8_t* s, GrappleRead& g)
+    {
+        __try
+        {
+            if (*(uintptr_t*)s != GameInfo::Base() + kGrappleVtable) return false;
+            g.kind = *(int*)(s + 0x6C); g.arrived = s[0xEE] != 0; g.e8 = s[0xE8] != 0;
+            g.start = *(float*)(s + 0x104); g.end = *(float*)(s + 0x108); g.length = *(float*)(s + 0xFC);
+            for (int i = 0; i < 3; i++) g.target[i] = *(float*)(s + 0xC0 + 4 * i);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void WriteStart(uint8_t* s, float v) { __try { *(float*)(s + 0x104) = v; } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+    bool Arrived(uint8_t* s) { __try { return s[0xEE] != 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+    uintptr_t InterpHook(void* self)
+    {
+        uint8_t* s = (uint8_t*)self;
+        GrappleRead g;
+        const bool jump = g_FarBlink.load() && ReadGrapple(s, g) && !g.arrived && (g.kind != 2 || g.e8);
+        if (!jump)
+        {
+            if (g_FarBlink.load() && ReadGrapple(s, g) && !g.arrived) g_FarSkipped++;
+            return g_RealInterp(self);
+        }
+        WriteStart(s, 100000.f);   // (any frame time: 0.01 s x 100 km/s is 1 km, past any pull)
+        const uintptr_t r = g_RealInterp(self);
+        WriteStart(s, g.start);
+        const bool done = Arrived(s);
+        if (done) g_FarJumps++;
+        if (g_FarLogs < 20)
+        {
+            g_FarLogs++;
+            LOGI("HandAimHook: Far Reach {} (kind {}, pull {:.1f} m, speed {:.1f} -> {:.1f} m/s, target ({:.2f},{:.2f},{:.2f})){}", done ? "jumps the player to its target at once" : "did NOT arrive in one frame",
+                 g.kind, g.length, g.start, g.end, g.target[0], g.target[1], g.target[2], done ? "" : ": the pull goes on as the game's");
+        }
+        return r;
+    }
+}
+void HandAimHook::SetFarReachBlink(bool on)
+{
+    g_FarBlink = on;
+    LOGI("HandAimHook: Far Reach {} ({} jumps so far)", on ? "takes you to its target at once, like Blink (FarReachBlink = 1)" : "pulls you there, as in the game (FarReachBlink = 0)", g_FarJumps.load());
+}
+
 bool HandAimHook::Install()
 {
     if (!GameInfo::IsSupportedBuild()) return false;
@@ -568,6 +634,20 @@ bool HandAimHook::Install()
     DetourAttach(&(PVOID&)g_RealPowerUpdate, PowerUpdateHook);
     LONG r = DetourTransactionCommit();
     LOGI("HandAimHook: UpdateAim@exe+0x{:X} aimCpnt@exe+0x{:X} GetAimPoint@exe+0x{:X} ComputeAimTarget@exe+0x{:X} PowerTarget@exe+0x{:X} ThrowHit@exe+0x{:X} detour={}", kUpdateAim, kAimCpntUpdate, kGetAimPoint, kComputeAimTarget, kPowerTargetUpdate, kThrowHitUpdate, r);
+    {   // FarReachBlink: its own transaction, so a mismatch leaves the rest installed
+        const uint8_t* f = (const uint8_t*)(base + kGrappleInterp);
+        if (f[0] != 0xE9 && memcmp(f, kGrappleInterpBytes, sizeof kGrappleInterpBytes))
+            LOGI("HandAimHook: arkPlayerStateGrapple::InterpolateToTarget is not what it was measured to be: Far Reach keeps its pull");
+        else
+        {
+            g_RealInterp = (FnInterp)(base + kGrappleInterp);
+            DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+            DetourAttach(&(PVOID&)g_RealInterp, (PVOID)InterpHook);
+            const LONG rf = DetourTransactionCommit();
+            if (rf != NO_ERROR) g_RealInterp = nullptr;
+            LOGI("HandAimHook: Far Reach's pull (InterpolateToTarget exe+0x{:X}) hooked: detour={}", kGrappleInterp, rf);
+        }
+    }
     return r == NO_ERROR;
 }
 void HandAimHook::Uninstall()

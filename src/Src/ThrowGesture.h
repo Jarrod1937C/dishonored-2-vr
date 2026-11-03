@@ -31,6 +31,10 @@ namespace ThrowGesture
     //! One tick, from KbmInject::Tick in PLAY mode (render thread). triggerHeld: the left trigger as it goes to the
     //! game (the RMB it holds).
     void Tick(const XRInputState& in, bool triggerHeld);
+    //! The left trigger as it should reach the game (render thread, each tick, before Tick): while the game's throw
+    //! cycle after a grenade is not over (throwcfg `ready`) a press is held back and passed on when it is; a press the
+    //! game did not take (no grenade lit, `relight`) is let up and pressed again.
+    bool GateTrigger(bool live);
     //! Game thread, once a frame (HandAimHook): fires a released grenade (the real throw)
     void GameTick();
     //! Render thread, once per Present: logs the flight of the last thrown grenade (research / validation).

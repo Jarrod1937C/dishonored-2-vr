@@ -74,7 +74,8 @@ namespace Settings
     bool PullToOpen();                            //!< [Gameplay] PullToOpen: grab and pull drawers / cabinets open, push to close
     bool PhysicalPickup();                        //!< [Gameplay] PhysicalPickup: items grabbed by hand, stored behind the back
     bool MouthPotions();                          //!< [Gameplay] MouthPotions: a grip at the mouth drinks an elixir (KbmInject)
-    bool TempleZoom();                            //!< [Gameplay] TempleZoom: the right hand tapped against the side of the head taps the zoom (KbmInject)
+    bool TempleZoom();                            //!< [Gameplay] TempleZoom: the right hand tapped against the side of the head taps the zoom (KbmInject)
+    bool FarReachBlink();                         //!< [Gameplay.Powers] FarReachBlink: dark while Far Reach pulls you (KbmInject)
     //! [Cheats] UnlockEverything (= all) or its parts: the TestAids::Unlock mask given to every save loaded
     unsigned Unlocks();
     //! [Cheats.Powers] the powers switched on one by one, as TestAids::SetAutoPowers takes them ("blink,darkvision"; "" = none)

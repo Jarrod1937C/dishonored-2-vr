@@ -430,6 +430,13 @@ namespace
         for (int i = 0; i < 3; i++) { o.r[i * 3] = x[i]; o.r[i * 3 + 1] = y[i]; o.r[i * 3 + 2] = z[i]; }
         return o;
     }
+    float Det3(const float* r) { return r[0] * (r[4] * r[8] - r[5] * r[7]) - r[1] * (r[3] * r[8] - r[5] * r[6]) + r[2] * (r[3] * r[7] - r[4] * r[6]); }
+    //! the angle (degrees) between two rotations
+    float RotAngle(const float* a, const float* b)
+    {
+        float tr = 0; for (int i = 0; i < 3; i++) for (int k = 0; k < 3; k++) tr += a[k * 3 + i] * b[k * 3 + i];
+        return acosf(std::fmax(-1.f, std::fmin(1.f, (tr - 1.f) * 0.5f))) * 57.2958f;
+    }
     //! p turned in place (about its own origin) by `deg` round the world axis `a` (right-handed)
     Rigid TurnInPlace(const Rigid& p, const float a[3], float deg)
     {
@@ -1526,6 +1533,48 @@ namespace
     }
     thread_local float t_DrawProj[4][4]; thread_local Rigid t_DrawProjView; thread_local bool t_DrawProjValid = false; thread_local unsigned long long t_DrawProjSerial = 0;
     thread_local bool t_DrawProjOwn = false;   // the draw's own view was found (its view matrix is a main view's)
+    // The held-item lighting log (reported 2026-11-02: grenades, stun mines and other gadgets in the hand drawn dark,
+    // almost black, "in some poses"). For the first 6 draws of each item put in a hand (a weapon's too, to compare):
+    // what its shader reads (the model->world rows that light it, the previous frame's rows, a joint palette, the
+    // first-person depth hack), whether the transform mirrors it (a negative determinant turns it inside out: the
+    // inner faces, black), and whether the model rows -- the lighting's normals -- agree with the drawn position
+    // (MVP) before and after the move (an angle between them is lighting from another direction).
+    struct HeldLog { uint32_t cls = 0xFFFFFFFF; int left = 0; };
+    HeldLog g_HeldLog[2];
+    std::mutex g_HeldLogM;
+    void LogHeldItemDraw(int hand, UINT draw, UINT bytes, const InstLayout* L, const float* in, const float* out, const Factored& f,
+                         const Rigid& vinv, const Rigid& dv, bool gadget, float inPalmDet, bool useModel, bool usePrev)
+    {
+        if (hand < 0 || hand > 1) return;
+        const uint32_t cls = BodyHide::HeldItemClass(hand);
+        {
+            std::lock_guard lk(g_HeldLogM);
+            HeldLog& h = g_HeldLog[hand];
+            if (h.cls != cls) { h.cls = cls; h.left = 6; }
+            if (h.left <= 0) return;
+            h.left--;
+        }
+        const Rigid mvpBefore = Mul(vinv, f.pose), mvpAfter = Mul(vinv, Mul(dv, f.pose));
+        float rmB[9] = {}, rmA[9] = {}; float detB = 0, detA = 0, angB = -1, angA = -1, sB = 0;
+        if (useModel)
+        {
+            const int idx[3] = { L->mx, L->my, L->mz };
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { rmB[i * 3 + j] = in[idx[i] + j]; rmA[i * 3 + j] = out[idx[i] + j]; }
+            detB = Det3(rmB); detA = Det3(rmA);
+            sB = cbrtf(fabsf(detB));
+            const float sA = cbrtf(fabsf(detA));
+            if (sB > 1e-6f) { for (float& v : rmB) v /= sB; angB = RotAngle(rmB, mvpBefore.r); }
+            if (sA > 1e-6f) { for (float& v : rmA) v /= sA; angA = RotAngle(rmA, mvpAfter.r); }
+        }
+        float dhArms[4] = {}; const bool dhGot = L->dh >= 0 && ArmDepthHackFor(f.p, dhArms, L->dhn);
+        LOGI("GpuTrace: held item (hand {}, item vt exe+0x{:X}, {}) draw n={} cb{}: model rows {} (det {:.3f} -> {:.3f}, scale {:.3f}; "
+             "vs the drawn pose {:.1f} deg before, {:.1f} deg after the move), prev rows {}, skinned {}, depth hack {} ({:.4f}; the arms' {}), "
+             "MVP scale {:.3f} resid {:.4f} det {:.3f} -> {:.3f}, moved {:.1f} deg{}",
+             hand, cls, gadget ? "GADGET in the palm" : "weapon / item", draw, bytes, useModel ? "yes" : "NO", detB, detA, sB, angB, angA,
+             usePrev ? "yes" : "no", L->matSlot >= 0 ? "yes" : "no", L->dh >= 0 ? "yes" : "no", L->dh >= 0 ? in[L->dh] : 0.f,
+             dhGot ? fmt::format("{:.4f}", dhArms[0]) : std::string("none seen"), f.s, f.resid, Det3(mvpBefore.r), Det3(mvpAfter.r),
+             RotAngle(mvpBefore.r, mvpAfter.r), gadget ? fmt::format(", in-palm det {:.3f}", inPalmDet) : std::string());
+    }
     bool TransformInstanceCb(ID3D11DeviceContext* ctx, const InstLayout* L, const float* in, UINT bytes, float* out, bool byIndex, UINT draw, ArmInfo* ai = nullptr)
     {
         t_DrawProjValid = false;
@@ -1570,6 +1619,7 @@ namespace
             t_DrawProjOwn = own != nullptr;
         }
         Rigid ownDv; bool useOwnDv = false;      // an arm draw whose hand pose comes from the palette, not the equipment entity
+        bool gadgetDraw = false; float gadgetInPalmDet = 0.f;   // (the held-item lighting log, see LogHeldItemDraw)
         bool carryDraw = false;                  // a draw of the item carried in a hand (PhysicalPickup)
         bool torso = false;                      // a draw of the player entity's own models (torso, legs): follows the HMD body frame
         const bool fullArm = g_ArmMode.load() == 1;
@@ -2103,6 +2153,7 @@ namespace
                     }
                     const Rigid gdw = Mul(held, Inv(ent));
                     ownDv = Mul(vw, Mul(gdw, Inv(vw))); useOwnDv = true;
+                    gadgetDraw = true; gadgetInPalmDet = Det3(gh.inPalm.r);
                     g_GadgetDraws[owner]++;
                     if (g_PartsLeft.load() > 0) LOGI("gunparts: hand {} draw n={} posed as a GADGET (palm)", owner, draw);
                 }
@@ -2178,6 +2229,8 @@ namespace
                     out[idx[i] + j] = dw.r[i * 3] * in[idx[0] + j] + dw.r[i * 3 + 1] * in[idx[1] + j]
                                     + dw.r[i * 3 + 2] * in[idx[2] + j] + (j == 3 ? dw.t[i] : 0.f);
         }
+        // (after the rows above are written: the log compares what the lighting gets with where the item is drawn)
+        if (!torso && !carryDraw && !(ai && ai->side >= 0)) LogHeldItemDraw(hand, draw, bytes, L, in, out, f, vinv, dv, gadgetDraw, gadgetInPalmDet, useModel, usePrev);
         return true;
     }
 

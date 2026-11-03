@@ -83,6 +83,10 @@ namespace HandAimHook
 
     bool Install();
     void Uninstall();
+    //! [Gameplay.Powers] FarReachBlink: Far Reach takes the player to where it landed at once, like Blink, instead of
+    //! pulling him there (arkPlayerStateGrapple::InterpolateToTarget hooked: its start speed is raised for the call, so
+    //! the game's own arrival -- the player put on the target -- comes on the pull's first frame). Game thread hook.
+    void SetFarReachBlink(bool on);
     void SetMode(int mode);     //!< 0 off, 2 = weapon fire follows the controller (1 reserved)
     int  Mode();
     void SetGunHand(int hand);  //!< 0 = left controller (D2 pistol/crossbow/powers hand), 1 = right

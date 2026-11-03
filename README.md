@@ -190,7 +190,8 @@ pistol with an empty right hand.
 
 - **Grenades and springrazors:** hold the left trigger, swing your arm and let go. It leaves your hand at that moment,
   the way and as hard as your hand was moving. The mod waits for the game to light the fuse before it lets go, so a
-  quick throw is never a dud.
+  quick throw is never a dud. The game's throw animation is cut short, so the next grenade is in your hand a moment
+  later (with a light buzz); pull the trigger before then and the mod holds it until that moment.
 - **Objects:** take a bottle or a cup with the right grip and let go while moving your hand to throw it.
 
 ### Holsters
@@ -257,6 +258,8 @@ side, so you can look around and still find your hips.
 ### Comfort and reliability
 
 - **Turning:** snap (20° steps by default, with a short dim during each snap) or smooth (120°/s).
+- **Far Reach like Blink** (`FarReachBlink`, on by default, in the VR Gameplay options): Far Reach puts you where it
+  landed at once instead of pulling you through the air. Where it takes you is unchanged.
 - **No motion blur or depth of field** in VR; Meta's ASW is switched off for the game on Link / Air Link.
 - **The game window is kept in front:** the controllers drive the game's keyboard and mouse, which Windows gives only
   to the window in front. The mod brings the game back when you press a button or put the headset on, and raises it
