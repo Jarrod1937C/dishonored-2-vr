@@ -619,29 +619,31 @@ namespace
     // of the hand from the side IN to the temple that stops there. Measured from the user's taps (18:50 log): they end
     // 9-13 cm right of the eyes' middle (the controller's aim point, the hand against the head or headset) at a peak
     // speed in of 1.3-2.9 m/s; slow drifts that ended 18-25 cm out were counted before. So all of:
-    //  - in sideways: the speed towards the head at least 0.5 m/s, and most of the hand's motion (70 %) sideways, all
-    //    the way in (a swing is forward / down, with the sideways part a fraction);
+    //  - in sideways: the speed towards the head at least 0.5 m/s, and at least half of the hand's path on the way in
+    //    sideways (a swing is forward / down, with the sideways part a fraction). Until 2026-11-03 70 % at EVERY tick:
+    //    real taps arc in a little from above or in front, and one tick of the arc failed them (4 of 12 at the temple);
     //  - from the side: at least 2.5 cm of travel in;
     //  - to the temple: it stops (or bounces back) within 15 cm of the eyes' middle, at most 0.3 s after it started;
-    //  - not in a swing: the hand not over 4.5 m/s in the last 0.4 s (taps peak under 3.5 m/s, swings above), and not
-    //    while a power attack charges.
+    //  - not in a swing: the hand not over 4.5 m/s in the 0.4 s BEFORE the move in started, and not over 6 m/s during
+    //    it (taps peak 1.5-4.5 m/s, sword swings 7-17), and not while a power attack charges. Until 2026-11-03 the tap's
+    //    own speed counted: a brisk tap (4.45 m/s) was taken for a swing.
     // Then the hand must draw back 2 cm (or leave the zone) before the next tap: small rapid taps (asked), while
     // tracking jitter on a resting hand (a few mm) does not re-arm it.
     // The zone, in the head's heading from the eyes: 3 to 30 cm to the right, 16 cm below to 16 cm above the eyes, 16 cm
     // behind to 12 cm in front of them (from 12 cm behind the eyes is also the sword over the shoulder).
     std::atomic<bool> g_TempleZoom{ true };
     double g_ZoomedAt = -10;
-    constexpr float kTapIn = 0.5f, kTapSide = 0.7f, kTapTravel = 0.025f, kTapEnd = 0.15f, kTapSwing = 4.5f;
+    constexpr float kTapIn = 0.5f, kTapSide = 0.5f, kTapTravel = 0.025f, kTapEnd = 0.15f, kTapSwing = 4.5f, kTapSwingDuring = 6.f;
     constexpr double kTapTime = 0.3, kTapSwingGap = 0.4;
     struct TapState
     {
-        bool valid = false, armed = true, pending = false, sideways = true;
-        float rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0, tapRx = 0, startRx = 0, peakIn = 0;
+        bool valid = false, armed = true, pending = false, swingBefore = false;
+        float rx = 0, ry = 0, rz = 0, vx = 0, vy = 0, vz = 0, tapRx = 0, startRx = 0, peakIn = 0, peakSpeed = 0, pathIn = 0, path = 0;
         double since = 0, swingAt = -10; int wasIn = 0;
     } g_Tap;
     // What a motion towards the head ended as, for the log: where it stopped, and why it was or was not a tap
-    struct TapDiag { bool on = false; float peak = 0; const char* why = nullptr; } g_TapDiag;
-    int g_TapDiagLeft = 60;
+    struct TapDiag { bool on = false; float peak = 0; const char* why = nullptr; float side = 0, peakSpeed = 0; } g_TapDiag;
+    int g_TapDiagLeft = 400;
     //! The right hand relative to the eyes, in the head's heading (right, up, forward). False without tracking.
     bool HandAtHead(const XRInputState& in, float& rx, float& ry, float& rz)
     {
@@ -673,26 +675,31 @@ namespace
         }
         t.rx = rx; t.ry = ry; t.rz = rz; t.valid = true;
         const float speed = sqrtf(t.vx * t.vx + t.vy * t.vy + t.vz * t.vz);
+        const double prevSwingAt = t.swingAt;                                                  // (before this tick)
         if (speed > kTapSwing) t.swingAt = g_Now;                                          // a swing, not a tap
         const bool inside = InTemple(rx, ry, rz);
         if (!inside) { t.pending = false; if (rx > 0.34f || rx < 0.0f || ry < -0.22f || ry > 0.22f || rz < -0.22f || rz > 0.18f) t.armed = true; return false; }
         if (!allowed) { t.pending = false; return false; }
         if (!t.armed && rx > t.tapRx + 0.02f) t.armed = true;                                  // drawn back: the next tap
         if (!t.armed) t.tapRx = std::min(t.tapRx, rx);                                         // (from the closest point)
-        const bool sideways = -t.vx >= kTapSide * speed;
         if (!t.pending && t.armed && t.vx < -0.2f)
-        {   // a move in: where it starts
-            t.pending = true; t.since = g_Now; t.startRx = rx - t.vx * dt; t.peakIn = 0.f; t.sideways = true;
+        {   // a move in: where it starts (and whether the hand was swinging just before)
+            t.pending = true; t.since = g_Now; t.startRx = rx - t.vx * dt; t.peakIn = 0.f; t.peakSpeed = 0.f; t.pathIn = 0.f; t.path = 0.f;
+            t.swingBefore = g_Now - prevSwingAt < kTapSwingGap;                                // this tick's own speed is the move's
         }
         if (t.pending)
         {
-            if (t.vx < -0.2f) { t.peakIn = std::max(t.peakIn, -t.vx); if (!sideways) t.sideways = false; }
+            t.peakSpeed = std::max(t.peakSpeed, speed);
+            if (t.vx < -0.2f) { t.peakIn = std::max(t.peakIn, -t.vx); t.pathIn += -t.vx * dt; t.path += speed * dt; }
             if (g_Now - t.since > kTapTime) { t.pending = false; g_TapDiag.why = "did not stop within 0.3 s"; return false; }
             if (t.vx > -0.10f)
             {   // stopped or bounced back: was it a tap?
                 t.pending = false;
-                const char* why = g_Now - t.swingAt < kTapSwingGap ? "a swing (the hand over 4.5 m/s)"
-                                : !t.sideways ? "not sideways (mostly forward / up / down)"
+                const float side = t.path > 1e-4f ? t.pathIn / t.path : 1.f;
+                g_TapDiag.side = side; g_TapDiag.peakSpeed = t.peakSpeed;
+                const char* why = t.swingBefore ? "a swing just before (the hand over 4.5 m/s)"
+                                : t.peakSpeed > kTapSwingDuring ? "a swing (over 6 m/s on the way in)"
+                                : side < kTapSide ? "not sideways (under half of the way in)"
                                 : t.peakIn < kTapIn ? "too slow (under 0.5 m/s in)"
                                 : rx > kTapEnd ? "stopped short of the head (over 15 cm out)"
                                 : t.startRx - rx < kTapTravel ? "too short (under 2.5 cm in)" : nullptr;
@@ -708,7 +715,7 @@ namespace
         float rx = 0, ry = 0, rz = 0; bool have = false;
         const bool tap = TempleTapStep(in, allowed, rx, ry, rz, have);
         if (!have) { g_TapDiag.on = false; return tap; }
-        // the log: each quick motion of the right hand in towards the head, near it, once it ends (the first 60)
+        // the log: each quick motion of the right hand in towards the head, near it, once it ends (the first 400)
         TapDiag& d = g_TapDiag;
         const bool close = rx > -0.05f && rx < 0.40f && ry > -0.30f && ry < 0.30f && rz > -0.30f && rz < 0.25f;
         if (!d.on && close && g_Tap.vx < -0.20f && !tap) { d = TapDiag(); d.on = true; }
@@ -718,8 +725,9 @@ namespace
             if (tap || g_Tap.vx > -0.10f || !close)
             {
                 if (g_TapDiagLeft > 0 && g_TapDiagLeft-- > 0)
-                    LOGI("KbmInject: right hand in towards the head (peak {:.2f} m/s) ended at {:.3f} right, {:.3f} up, {:.3f} forward of the eyes: {}",
-                         -d.peak, rx, ry, rz, tap ? "a TAP" : d.why ? d.why : !close ? "went on past" : !InTemple(rx, ry, rz) ? "outside the zone"
+                    LOGI("KbmInject: right hand in towards the head (peak {:.2f} m/s in{}) ended at {:.3f} right, {:.3f} up, {:.3f} forward of the eyes: {}",
+                         -d.peak, d.peakSpeed > 0.f ? fmt::format(", {:.2f} m/s at most, {:.0f}% of the way in sideways", d.peakSpeed, d.side * 100.f) : std::string(),
+                         rx, ry, rz, tap ? "a TAP" : d.why ? d.why : !close ? "went on past" : !InTemple(rx, ry, rz) ? "outside the zone"
                          : !allowed ? "not now (busy / charging)" : !g_Tap.armed ? "not re-armed (draw back 2 cm)" : "too slow");
                 d.on = false;
             }
