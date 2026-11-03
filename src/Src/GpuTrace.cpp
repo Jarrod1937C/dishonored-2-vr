@@ -4070,9 +4070,10 @@ namespace
     };
     std::atomic<unsigned long long> g_DepthOnlyDraws{ 0 };
     //! DepthPassDepthOnly (experimental): in an eye's main depth pass, a draw of its main shader (PS 48f2037fd43d86c8:
-    //! 7 instructions, no textures, writes the RG16F target nothing in the frame reads -- the draw-by-draw log of
-    //! 2026-11-01) into exactly that target and a depth buffer is drawn with no pixel shader and no colour target: the
-    //! GPU's depth-only path, no colour writes
+    //! 7 instructions, no textures, writes the RG16F target: the static world's motion vectors, which only the TAA reads --
+    //! the draw-by-draw log of 2026-11-01 was taken without TAA) into exactly that target and a depth buffer is drawn with
+    //! no pixel shader and no colour target: the GPU's depth-only path, no colour writes. Never while the TAA runs
+    //! (PassProfile: StereoTaa::TaaInUse)
     void DepthOnlyBegin(ID3D11DeviceContext* c, TargetSwap& t)
     {
         ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);

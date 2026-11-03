@@ -832,8 +832,9 @@ bool Fog::BeforeTransparent(ID3D11DeviceContext* c, const void* view)
 // / compute shader the game creates whose bytecode names a resource "...exposure..." is reflected: the binding slot
 // and the struct's members. At the first draw / dispatch with such a shader bound, the buffer bound there is kept;
 // it is read back every few frames at Present, and its "exposure" member is the multiplier the fog's floor is
-// divided by (CheapFogMinBrightness is then the brightness as you see it). The members, their values and the shaders'
-// disassembly (DVR_exposure_shader*.txt) go to the log / the game's folder, to check what the value means.
+// divided by (CheapFogMinBrightness is then the brightness as you see it). The members and their values go to the log.
+// (The shaders' disassembly, written to DVR_exposure_shader*.txt until 2026-11-03, confirmed it: the game divides by
+// EngineLuminanceFactor where it writes compressed HDR buffers.)
 namespace
 {
     struct ExpoMember { std::string name; UINT off = 0; UINT n = 1; bool isFloat = false; };
@@ -846,7 +847,7 @@ namespace
     void StartExpoSearch() { g_ExpoLooks = 0; g_ExpoSearchAt = Now(); g_ExpoSearch = true; }
     ID3D11Buffer* g_ExpoBuf = nullptr; ExpoUse g_ExpoUse; int g_ExpoMember = -1; UINT g_ExpoBytes = 0;
     ID3D11Buffer* g_ExpoStage = nullptr; bool g_ExpoPending = false; unsigned g_ExpoTick = 0;
-    int g_ExpoNamed = 0, g_ExpoDumps = 0, g_ExpoDumpLogs = 0; float g_ExpoLogged = 0.f; double g_ExpoLogAt = 0;
+    int g_ExpoNamed = 0, g_ExpoDumpLogs = 0; float g_ExpoLogged = 0.f; double g_ExpoLogAt = 0;
     std::string Lower(std::string s) { for (char& ch : s) ch = (char)tolower((unsigned char)ch); return s; }
     bool HasExposureName(const void* code, size_t len)
     {
@@ -870,18 +871,6 @@ namespace
         }
         if (u.members.size() == 1 && u.members[0].isFloat) return 0;
         return -1;
-    }
-    void DumpDisasm(const void* code, size_t len, uint64_t hash)
-    {
-        using Dis_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, UINT, LPCSTR, ID3DBlob**);
-        static Dis_t dis = nullptr; static bool tried = false;
-        if (!tried) { tried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) dis = (Dis_t)GetProcAddress(d, "D3DDisassemble"); }
-        ID3DBlob* b = nullptr;
-        if (!dis || FAILED(dis(code, len, 0, nullptr, &b)) || !b) return;
-        const std::wstring path = GameInfo::GameDir() + L"\\DVR_exposure_shader" + std::to_wstring(g_ExpoDumps) + L".txt";
-        if (FILE* f = _wfopen(path.c_str(), L"wb")) { fwrite(b->GetBufferPointer(), 1, b->GetBufferSize(), f); fclose(f); }
-        LOGI("Fog: that shader's disassembly -> DVR_exposure_shader{}.txt ({:016x})", g_ExpoDumps, hash);
-        b->Release();
     }
 }
 
@@ -947,7 +936,6 @@ void Fog::OnShader(void* sh, const void* code, size_t len, bool cs)
         LOGI("Fog: {} shader {:016x} {} the game's exposure '{}' ({}{}, {} bytes):{}", cs ? "compute" : "pixel", u.hash, u.uav ? "writes" : "reads",
              u.res, u.uav ? "u" : "t", u.slot, u.stride, m.empty() ? std::string(" (not a structured buffer)") : m);
         // the disassembly files are a development aid: written only while the render passes are profiled
-        if (g_ExpoDumps < 3 && Settings::ProfileRenderPasses()) { DumpDisasm(code, len, u.hash); g_ExpoDumps++; }
     }
     g_ExpoShaders[sh] = u;
     if (!g_ExpoBuf && !g_ExpoSearch.load()) StartExpoSearch();

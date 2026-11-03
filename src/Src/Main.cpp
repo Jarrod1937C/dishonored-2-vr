@@ -10,6 +10,7 @@
 #include "GpuTrace.h"
 #include "WristHud.h"
 #include "StereoTaa.h"
+#include "TaaSharpen.h"
 #include "StereoSync.h"
 #include "VrTweaks.h"
 #include "PassProfile.h"
@@ -77,6 +78,7 @@ static void OnPresent(IDXGISwapChain* sc)
     PassProfile::EndSection(PassProfile::kSecGpuTrace);
     PassProfile::BeginSection(1);
     StereoTaa::OnPresent(sc);
+    TaaSharpen::OnPresent(sc);
     PassProfile::EndSection(1);
     PassProfile::BeginSection(PassProfile::kSecTicks);
     StereoSync::OnPresent();

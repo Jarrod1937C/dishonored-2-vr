@@ -129,7 +129,7 @@ namespace
         }
         // the usual short forms
         static const std::pair<const char*, const char*> kFix[] = { { "Hud", "HUD" }, { "hud", "HUD" }, { "Stereo3D", "Stereo 3D" },
-            { "Vr ", "VR " }, { "vr ", "VR " }, { "Fov", "FOV" }, { "Far reach", "Far Reach" } };
+            { "Vr ", "VR " }, { "vr ", "VR " }, { "Fov", "FOV" }, { "Far reach", "Far Reach" }, { "Taa", "TAA" } };
         for (const auto& f : kFix)
             for (size_t at = out.find(f.first); at != std::string::npos; at = out.find(f.first, at + strlen(f.second)))
             {
@@ -352,7 +352,7 @@ namespace
             const std::string rec = RecText(w, k);
             // "Render scale (restart, recommended: 1)": a change of a restart one is saved and used next time
             // what a setting needs, first ("Foveated rendering (NVIDIA GTX 16 / RTX only, recommended: off)")
-            static const std::pair<const char*, const char*> kNeeds[] = { { "foveatedrendering", "NVIDIA GTX 16 / RTX only" }, { "debuglogging", "lowers fps" } };
+            static const std::pair<const char*, const char*> kNeeds[] = { { "foveatedrendering", "NVIDIA GTX 16 / RTX only" }, { "debuglogging", "lowers fps" }, { "taasharpening", "with TAA only" } };
             std::string notes;
             for (const auto& n : kNeeds) if (k.name == n.first) notes = n.second;
             if (k.restart) notes += (notes.empty() ? "" : ", ") + std::string("restart");

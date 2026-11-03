@@ -23,11 +23,13 @@ namespace StereoTaa
     //! What the hook before a pass decided, handed to the hook after it.
     struct Pass
     {
-        int what = 0;                                  // 0 nothing, 1 = TAA dispatch with the history swapped
-        int eye = -1, srvSlot = -1;
-        ID3D11ShaderResourceView* savedSrv = nullptr;  // the engine's history view, restored after the dispatch
-        ID3D11Resource* out = nullptr;                 // the engine's history write target (AddRef'd)
-        ID3D11Texture2D* keep = nullptr;               // this eye's history, copied from `out` after the dispatch
+        int what = 0;                                  // 0 nothing, 1 = TAA dispatch with views swapped (restored after it)
+        int eye = -1, srvSlot = -1, uavSlot = -1;
+        ID3D11ShaderResourceView* savedSrv = nullptr;  // the engine's history read view, restored after the dispatch
+        ID3D11UnorderedAccessView* savedUav = nullptr; // the engine's history write view (the TAA wrote this eye's own instead)
+        int resSlot = -1, histSlot = -1;               // any TAA dispatch: its rw_taaresult / rw_taahistory_write slots (TaaSharpen)
+        ID3D11UnorderedAccessView* savedRes = nullptr; // TaaSharpen: the engine's result view (the TAA wrote the mod's texture)
+        ID3D11ShaderResourceView* sharpenSrc = nullptr;// ...and that texture, read by the sharpen that writes the engine's
     };
     //! From GpuTrace's context hooks, around the real call. `kind` 0 = immediate, 1 = deferred context.
     void OnDraw(ID3D11DeviceContext* c, int kind, int type, unsigned count, Pass& p);
@@ -75,6 +77,9 @@ namespace StereoTaa
     void SetMode(int m);
     int Mode();
     bool KeepTaaInStereo();   //!< mode != 0
+    //! The game's TAA ran in the last ~60 Presents (any view, mono or stereo). Its input ro_motionvectors is the RG16F target
+    //! of the depth pass's main shader, so DepthPassDepthOnly must not take that shader off while this is true.
+    bool TaaInUse();
     //! `vr stereo`, before the switch: StereoTaa owns r_skipTemporalAA (forced to 1 in stereo only with TAA off: mode
     //! 0 or the safety net; the player's value back when that ends). `vr stereotaa` applies at once, stereo on or not.
     void OnStereoChange(bool on);

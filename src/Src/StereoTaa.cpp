@@ -7,6 +7,8 @@
 #include "CVars.h"
 #include "ScreenMode.h"
 #include "ViewMatrixHook.h"
+#include "TaaSharpen.h"
+#include "Settings.h"
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
 #include <map>
@@ -78,7 +80,7 @@ namespace
     // Found 2026-10-14 by diffing every pass of a frame with r_skipTemporalAA 0 and 1: one 16x16 compute shader reading
     // ro_taahistory_read, ro_motionvectors and ro_viewcolormap and writing rw_taahistory_write and rw_taaresult. The
     // names, not the hash, identify it, so a variant of the shader (another quality setting) is recognised too.
-    struct TaaCs { int histSrv = -1, histUav = -1, mvSrv = -1, viewCb = -1, viewMatOff = -1; };
+    struct TaaCs { int histSrv = -1, histUav = -1, mvSrv = -1, viewCb = -1, viewMatOff = -1, resUav = -1; };
     std::mutex g_CsM;
     std::map<void*, TaaCs> g_TaaCs;
     std::atomic<unsigned> g_TaaShaders{ 0 };
@@ -249,7 +251,12 @@ namespace
     std::mutex g_HM;                          // all of this block
     D3D11_TEXTURE2D_DESC g_HistDesc{}; bool g_HistDescValid = false;
     D3D11_SHADER_RESOURCE_VIEW_DESC g_SrvDesc{}; bool g_SrvDescValid = false;
-    ID3D11Texture2D* g_Hist[2] = {}; ID3D11ShaderResourceView* g_HistSrv[2] = {};
+    // Each eye's history is a pair the TAA reads one of and WRITES the other of (its own rw_taahistory_write view swapped
+    // in), the pair's roles swapping every frame -- no copy of a full-resolution image per eye and frame (before
+    // 2026-11-03 the engine's write target was copied into the eye's single history after each dispatch).
+    ID3D11Texture2D* g_Hist[2][2] = {}; ID3D11ShaderResourceView* g_HistSrv[2][2] = {}; ID3D11UnorderedAccessView* g_HistUav[2][2] = {};
+    int g_HistCur[2] = {};                    // which of the eye's pair holds its latest history
+    D3D11_UNORDERED_ACCESS_VIEW_DESC g_UavDesc{}; bool g_UavDescValid = false;
     bool g_HistValid[2] = {}; unsigned g_HistFrame[2] = {};
     unsigned long long g_HistGen = 0, g_IdleFrames = 0;
     std::atomic<unsigned long long> g_Dispatches{ 0 }, g_Swapped{ 0 }, g_FirstUse{ 0 }, g_NoEye{ 0 }, g_NoTex{ 0 }, g_EyeN[2];
@@ -261,6 +268,17 @@ namespace
     // own eye's history: fewer than a quarter of the presents) trip it. Undone when stereo ends (the player's
     // r_skipTemporalAA comes back).
     bool g_FellBack = false; int g_BadWindows = 0, g_WinFrames = 0;
+    // ---- the camera motion each eye's TAA is handed ----
+    // The previous view-projection in the TAA's PerViewCB must be the VP this eye's last TAA ran with, or the history is
+    // moved by the wrong camera motion: with the head still every candidate is the same matrix, so only a moving head
+    // shows it (reported 2026-11-03: "a slightly delayed version of the same image" while the head moves). Each dispatch
+    // is classed by which candidate its previous VP equals; logged in the health line, the first mismatches one by one.
+    std::mutex g_PvM;
+    struct PvRec { bool valid = false; float vp[16] = {}; };
+    PvRec g_PvLast[2], g_PvLast2[2];
+    std::atomic<unsigned long long> g_PvOwn{ 0 }, g_PvOther{ 0 }, g_PvSelf{ 0 }, g_PvOwn2{ 0 }, g_PvNone{ 0 }, g_PvStill{ 0 }, g_PvNoCb{ 0 };
+    std::atomic<int> g_PvLogLeft{ 12 };
+    float MaxDiff(const float* a, const float* b) { float e = 0; for (int i = 0; i < 16; i++) e = std::max(e, fabsf(a[i] - b[i])); return e; }
     // A dispatch of a MONO view while stereo is on (synchronised stereo renders mono while its gate is shut: the power
     // wheel, a cooldown, a hitch) has no eye to give a history to, and is not a failure to find one: counted apart and
     // left out of the windows (vr aamonowin 1; 0 = counted as "no eye", before 2026-10-23: ~6 s of the wheel open in
@@ -298,10 +316,30 @@ namespace
     {
         for (int i = 0; i < 2; i++)
         {
-            if (g_HistSrv[i]) { g_HistSrv[i]->Release(); g_HistSrv[i] = nullptr; }
-            if (g_Hist[i]) { g_Hist[i]->Release(); g_Hist[i] = nullptr; }
-            g_HistValid[i] = false;
+            for (int k = 0; k < 2; k++)
+            {
+                if (g_HistUav[i][k]) { g_HistUav[i][k]->Release(); g_HistUav[i][k] = nullptr; }
+                if (g_HistSrv[i][k]) { g_HistSrv[i][k]->Release(); g_HistSrv[i][k] = nullptr; }
+                if (g_Hist[i][k]) { g_Hist[i][k]->Release(); g_Hist[i][k] = nullptr; }
+            }
+            g_HistValid[i] = false; g_HistCur[i] = 0;
         }
+    }
+    //! A TAA dispatch of a MONO view while the eyes' histories run (the menu screen; a gated synchronised pair): the
+    //! engine's own history was not written during stereo (the eyes' pairs were), so it is stale. The view's previous
+    //! matrices are those of the last view built -- the eye that rendered last -- so that eye's latest history is read,
+    //! if it is from the frame just before. The engine's own write target is written as usual (the next mono frame reads
+    //! it: the engine's ping-pong).
+    void BindFreshest(ID3D11DeviceContext* c, const TaaCs& t, unsigned frame, StereoTaa::Pass& p)
+    {
+        std::lock_guard lk(g_HM);
+        int e = -1;
+        for (int i = 0; i < 2; i++) if (g_HistValid[i] && g_Hist[i][0] && (e < 0 || (int)(g_HistFrame[i] - g_HistFrame[e]) > 0)) e = i;
+        if (e < 0 || frame - g_HistFrame[e] != 1) return;
+        ID3D11ShaderResourceView* srv = nullptr; c->CSGetShaderResources(t.histSrv, 1, &srv);
+        ID3D11ShaderResourceView* mine = g_HistSrv[e][g_HistCur[e]];
+        c->CSSetShaderResources(t.histSrv, 1, &mine);
+        p.what = 1; p.srvSlot = t.histSrv; p.savedSrv = srv;
     }
 
     //! The eye (0/1) of the view the dispatch's PerViewCB holds, or a negative reason.
@@ -345,6 +383,11 @@ namespace
     std::atomic<int> g_MvReq{ 0 };
     std::mutex g_MvM; D3D11_TEXTURE2D_DESC g_MvDesc{}; bool g_MvDescValid = false; ID3D11Texture2D* g_MvTex = nullptr;
     int g_MvPending = 0; int g_MvEye = -1; unsigned g_MvFrame = 0; std::string g_MvTag; int g_MvWantEye = -1;
+    // "auto" (2026-11-03, the world trailing the head under TAA): every 5 s while the per-eye TAA runs with logging on,
+    // one eye's motion vectors are read back and their centre compared with the motion the camera matrices of that very
+    // dispatch predict there (its VP and previous VP, the convention resolved as for objmotion). Measured ~0 while the
+    // prediction is many pixels = the static world's motion vectors miss the head's motion.
+    float g_MvVp[16] = {}, g_MvPvp[16] = {}; bool g_MvMats = false; int g_MvAutoLogs = 0, g_MvAutoTries = 0;
     float Half(uint16_t h)
     {
         const uint32_t s = (h >> 15) & 1, e = (h >> 10) & 31, m = h & 1023;
@@ -363,6 +406,7 @@ namespace
             std::vector<float> mag; mag.reserve((size_t)d.Width * d.Height / 4);
             double sx = 0, sy = 0; size_t n = 0, over025 = 0, over1 = 0, zero = 0; float mx = 0;
             std::vector<float> cmag;   // the centre 40% x 40%
+            double csx = 0, csy = 0; size_t cn = 0;   // the centre 6% x 6%, signed (auto)
             // and a picture of it (half size, grey = |mv| on a log scale: 1 px ~ 90, 10 px ~ 170, 100 px ~ 255)
             const UINT pw = d.Width / 2, ph = d.Height / 2;
             std::vector<uint8_t> pic((size_t)pw * ph);
@@ -377,9 +421,46 @@ namespace
                     mag.push_back(l); sx += u; sy += v; n++;
                     if (l > 0.25f) over025++; if (l > 1.f) over1++; if (l == 0.f) zero++; if (l > mx) mx = l;
                     if (x > d.Width * 0.3f && x < d.Width * 0.7f && y > d.Height * 0.3f && y < d.Height * 0.7f) cmag.push_back(l);
+                    if (x > d.Width * 0.47f && x < d.Width * 0.53f && y > d.Height * 0.47f && y < d.Height * 0.53f) { csx += u; csy += v; cn++; }
                 }
             }
             imm->Unmap(st, 0);
+            if (g_MvTag == "auto")
+            {   // the centre's motion against the camera's: a point on the centre ray at three depths (either depth convention)
+                g_MvAutoTries++;
+                float ex[3] = {}, ey[3] = {}; bool ok = g_MvMats; float big = 0.f;
+                float inv[16];
+                if (ok && Inverse4(g_MvVp, inv))
+                {
+                    const float zs[3] = { 0.01f, 0.5f, 0.99f };
+                    for (int k = 0; k < 3; k++)
+                    {
+                        const float P[4] = { 0, 0, zs[k], 1 }; float w[4];
+                        for (int i = 0; i < 4; i++) w[i] = inv[i * 4] * P[0] + inv[i * 4 + 1] * P[1] + inv[i * 4 + 2] * P[2] + inv[i * 4 + 3] * P[3];
+                        if (fabsf(w[3]) < 1e-12f) { ok = false; break; }
+                        for (int i = 0; i < 3; i++) w[i] /= w[3]; w[3] = 1.f;
+                        auto ndc = [&](const float* M, float& x, float& y) {
+                            float c4[4]; for (int i = 0; i < 4; i++) c4[i] = M[i * 4] * w[0] + M[i * 4 + 1] * w[1] + M[i * 4 + 2] * w[2] + M[i * 4 + 3] * w[3];
+                            const float q = fabsf(c4[3]) > 1e-9f ? c4[3] : 1e-9f; x = c4[0] / q; y = c4[1] / q; };
+                        float cx, cy, px, py; ndc(g_MvVp, cx, cy); ndc(g_MvPvp, px, py);
+                        ex[k] = (cx - px) * 0.5f * d.Width; ey[k] = -(cy - py) * 0.5f * d.Height;
+                        big = std::max(big, sqrtf(ex[k] * ex[k] + ey[k] * ey[k]));
+                    }
+                }
+                else ok = false;
+                const double mxc = cn ? csx / cn : 0, myc = cn ? csy / cn : 0;
+                float med = 0.f;
+                if (!mag.empty()) { const size_t k = mag.size() / 2; std::nth_element(mag.begin(), mag.begin() + k, mag.end()); med = mag[k]; }
+                if (big > 2.f && g_MvAutoLogs < 24)
+                {
+                    g_MvAutoLogs++;
+                    LOGI("StereoTaa: motion check eye {} frame {}: the centre's motion vectors ({:.1f},{:.1f}) px; the camera's motion predicts ({:.1f},{:.1f}) / ({:.1f},{:.1f}) / ({:.1f},{:.1f}) px (three depths) | whole image median {:.2f} px, zero {:.0f}%",
+                         g_MvEye, g_MvFrame, mxc, myc, ex[0], ey[0], ex[1], ey[1], ex[2], ey[2], med, n ? 100.0 * zero / n : 0);
+                }
+                else if (!ok && g_MvAutoLogs < 24) { g_MvAutoLogs++; LOGI("StereoTaa: motion check eye {}: no camera matrices for that dispatch (centre motion vectors ({:.1f},{:.1f}) px)", g_MvEye, mxc, myc); }
+                st->Release();
+                return;
+            }
             if (FILE* f = _wfopen((GameInfo::GameDir() + L"\\DVR_aamv_" + std::wstring(g_MvTag.begin(), g_MvTag.end()) + L".pgm").c_str(), L"wb"))
             {
                 fprintf(f, "P5\n%u %u\n255\n", pw, ph); fwrite(pic.data(), 1, pic.size(), f); fclose(f);
@@ -508,6 +589,7 @@ void StereoTaa::OnComputeShader(ID3D11ComputeShader* cs, const void* code, size_
             if (!strcmp(b.Name, "ro_taahistory_read")) t.histSrv = (int)b.BindPoint;
             else if (!strcmp(b.Name, "rw_taahistory_write")) t.histUav = (int)b.BindPoint;
             else if (!strcmp(b.Name, "ro_motionvectors")) t.mvSrv = (int)b.BindPoint;
+            else if (!strcmp(b.Name, "rw_taaresult")) t.resUav = (int)b.BindPoint;
             else if (!strcmp(b.Name, "PerViewCB")) t.viewCb = (int)b.BindPoint;
         }
     if (t.histSrv >= 0 && t.histUav >= 0 && t.viewCb >= 0)
@@ -536,8 +618,34 @@ void StereoTaa::OnComputeShader(ID3D11ComputeShader* cs, const void* code, size_
     g_ViewMatOff = t.viewMatOff;
     { std::lock_guard lk(g_CsM); g_TaaCs[cs] = t; }
     g_TaaShaders++;
-    LOGI("StereoTaa: TAA compute shader {} ({:016x}): history t{} -> u{}, motion vectors t{}, PerViewCB b{} (view matrix at +{})",
-         (void*)cs, GpuTrace::ShaderHashOf(cs), t.histSrv, t.histUav, t.mvSrv, t.viewCb, t.viewMatOff);
+    LOGI("StereoTaa: TAA compute shader {} ({:016x}): history t{} -> u{}, result u{}, motion vectors t{}, PerViewCB b{} (view matrix at +{})",
+         (void*)cs, GpuTrace::ShaderHashOf(cs), t.histSrv, t.histUav, t.resUav, t.mvSrv, t.viewCb, t.viewMatOff);
+    if (Settings::WriteLog())
+    {   // its disassembly, once per variant, into the log (2026-11-03: what cb_taaamount -- r_TAAAmount, the game's TAA
+        // sharpness slider -- does, so the mod's TaaSharpening can replace it rather than stack on it)
+        static std::mutex dm; static std::vector<uint64_t> done;
+        const uint64_t h = GpuTrace::ShaderHashOf(cs);
+        bool first = false;
+        { std::lock_guard lk(dm); if (std::find(done.begin(), done.end(), h) == done.end()) { done.push_back(h); first = true; } }
+        using Dis_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, UINT, LPCSTR, ID3DBlob**);
+        static Dis_t dis = nullptr; static bool dtried = false;
+        if (!dtried) { dtried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) dis = (Dis_t)GetProcAddress(d, "D3DDisassemble"); }
+        ID3DBlob* b = nullptr;
+        if (first && dis && SUCCEEDED(dis(code, len, 0, nullptr, &b)) && b)
+        {
+            std::string s((const char*)b->GetBufferPointer(), b->GetBufferSize());
+            b->Release();
+            size_t at = 0; int n = 0;
+            while (at < s.size())
+            {
+                size_t e = s.find('\n', at); if (e == std::string::npos) e = s.size();
+                std::string line = s.substr(at, e - at); if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty() && line.find_first_not_of(" /") != std::string::npos) { LOGI("StereoTaa: TAA shader {:016x} | {}", h, line); n++; }
+                at = e + 1;
+            }
+            LOGI("StereoTaa: TAA shader {:016x}: {} lines of disassembly above", h, n);
+        }
+    }
 }
 
 void StereoTaa::OnMainView(void* view, int eye, const float vm[16])
@@ -1028,6 +1136,9 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
     if (cs) cs->Release();
     if (!taa) return;
     g_Dispatches++;
+    p.resSlot = t.resUav; p.histSlot = t.histUav;
+    // whatever happens below: the result written into the mod's texture, to be sharpened into the engine's after it
+    TaaSharpen::BeforeTaa(c, t.resUav, t.histUav, &p.savedRes, &p.sharpenSrc);
     {   // which main view this TAA pass belongs to: the last one recorded before a Present is the image being presented
         // (VRRuntime checks its frame-order rule against it). A still camera repeats a matrix: the newest match is taken.
         ID3D11Buffer* cb = nullptr; c->CSGetConstantBuffers(t.viewCb, 1, &cb);
@@ -1070,42 +1181,108 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
             {
                 c->CopyResource(g_MvTex, r); g_MvPending = 4; g_MvReq = 0;
                 g_MvEye = EyeOfDispatch(c, t.viewCb, f); g_MvFrame = f;
+                g_MvMats = false;
+                {   // the camera this dispatch was handed (motion check "auto")
+                    ID3D11Buffer* vcb = nullptr; c->CSGetConstantBuffers(t.viewCb, 1, &vcb);
+                    DrawView dv;
+                    if (vcb && FindDrawView(c, vcb, dv))
+                    {
+                        for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++)
+                        { g_MvVp[i * 4 + j] = dv.tr ? dv.vp[j * 4 + i] : dv.vp[i * 4 + j]; g_MvPvp[i * 4 + j] = dv.tr ? dv.pvp[j * 4 + i] : dv.pvp[i * 4 + j]; }
+                        g_MvMats = true;
+                    }
+                    if (vcb) vcb->Release();
+                }
             }
             else { g_MvDesc = d; g_MvDescValid = true; }
             r->Release();
         }
     }
 
-    if (g_Mode.load() != 1 || !VRRuntime::Stereo() || ScreenMode::FlatRender()) { DumpAtDispatch(c, t, -1); return; }
+    if (g_Mode.load() != 1 || !VRRuntime::Stereo() || ScreenMode::FlatRender())
+    {
+        if (g_Mode.load() == 1 && VRRuntime::Stereo()) { unsigned f = 0; if (EyeOfDispatch(c, t.viewCb, f) == -1) BindFreshest(c, t, f, p); }
+        DumpAtDispatch(c, t, -1); return;
+    }
     unsigned frame = 0;
     const int eye = EyeOfDispatch(c, t.viewCb, frame);
-    if (eye == -1 && g_MonoNotBad.load()) { g_MonoDisp++; DumpAtDispatch(c, t, -1); return; }   // a mono view (gated sync stereo)
+    if (eye == -1 && g_MonoNotBad.load()) { g_MonoDisp++; BindFreshest(c, t, frame, p); DumpAtDispatch(c, t, -1); return; }   // a mono view (gated sync stereo)
     if (eye < 0) { g_NoEye++; DumpAtDispatch(c, t, -2); return; }
     g_EyeN[eye & 1]++;
+    if (g_VPOff.load() >= 0 && g_PrevVPOff.load() >= 0)
+    {   // the camera motion this dispatch is handed (see g_PvLast)
+        float vp[16], pvp[16]; bool have = false;
+        ID3D11Buffer* cb = nullptr; c->CSGetConstantBuffers(t.viewCb, 1, &cb);
+        if (cb)
+        {
+            std::lock_guard lk(g_SM);
+            const CbShadow* best = nullptr;
+            for (auto& s : g_Sh)
+                if (s.buf == cb && s.stamp && (!best || (s.ctx == c) > (best->ctx == c) || ((s.ctx == c) == (best->ctx == c) && s.stamp > best->stamp))) best = &s;
+            if (best) { memcpy(vp, best->vp, 64); memcpy(pvp, best->pvp, 64); have = true; }
+        }
+        if (cb) cb->Release();
+        if (!have) g_PvNoCb++;
+        else
+        {
+            std::lock_guard lk(g_PvM);
+            const int e = eye & 1, o = e ^ 1;
+            PvRec& L1 = g_PvLast[e];
+            float scale = 0; for (float x : vp) scale = std::max(scale, fabsf(x));
+            const float tol = 1e-5f * std::max(scale, 1.f);
+            if (L1.valid && MaxDiff(vp, L1.vp) <= tol) {}   // the same eye-frame again (another TAA pass of it): already classed
+            else
+            {
+                const float dOwn = L1.valid ? MaxDiff(pvp, L1.vp) : -1.f, dOther = g_PvLast[o].valid ? MaxDiff(pvp, g_PvLast[o].vp) : -1.f;
+                const float dSelf = MaxDiff(pvp, vp), dOwn2 = g_PvLast2[e].valid ? MaxDiff(pvp, g_PvLast2[e].vp) : -1.f;
+                const float motion = L1.valid ? MaxDiff(vp, L1.vp) : 0.f;   // how far the camera moved since this eye's last frame
+                const char* cls = nullptr;
+                if (!L1.valid) {}
+                else if (motion <= tol) g_PvStill++;                       // nothing moved: every candidate agrees
+                else if (dOwn <= tol) g_PvOwn++;
+                else if (dOther >= 0 && dOther <= tol) { g_PvOther++; cls = "the OTHER eye's last frame"; }
+                else if (dSelf <= tol) { g_PvSelf++; cls = "this frame itself (no camera motion at all)"; }
+                else if (dOwn2 >= 0 && dOwn2 <= tol) { g_PvOwn2++; cls = "this eye's frame BEFORE its last"; }
+                else { g_PvNone++; cls = "none of them"; }
+                if (cls && g_PvLogLeft.load() > 0 && g_PvLogLeft.fetch_sub(1) > 0)
+                    LOGI("StereoTaa: eye {} view frame {}: the TAA's previous camera is {} (differs from this eye's last by {:.6f}, other eye's {:.6f}, itself {:.6f}, two back {:.6f}; the camera moved {:.6f})",
+                         eye, frame, cls, dOwn, dOther, dSelf, dOwn2, motion);
+                g_PvLast2[e] = L1; L1.valid = true; memcpy(L1.vp, vp, 64);
+            }
+        }
+    }
     ID3D11UnorderedAccessView* uav = nullptr; c->CSGetUnorderedAccessViews(t.histUav, 1, &uav);
     if (!uav) return;
-    ID3D11Resource* out = nullptr; uav->GetResource(&out); uav->Release();
+    ID3D11Resource* out = nullptr; uav->GetResource(&out);
     D3D11_RESOURCE_DIMENSION dim{}; out->GetType(&dim);
-    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) { out->Release(); return; }
+    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) { out->Release(); uav->Release(); return; }
     D3D11_TEXTURE2D_DESC d{}; ((ID3D11Texture2D*)out)->GetDesc(&d);
+    out->Release();
     ID3D11ShaderResourceView* srv = nullptr; c->CSGetShaderResources(t.histSrv, 1, &srv);
     std::lock_guard lk(g_HM);
     if (!g_HistDescValid || !SameDesc(d, g_HistDesc)) { g_HistDesc = d; g_HistDescValid = true; }   // (re)made at the next Present
     if (srv && !g_SrvDescValid) { srv->GetDesc(&g_SrvDesc); g_SrvDescValid = true; }
-    if (!g_Hist[eye] || !g_HistSrv[eye] || !SameDesc(d, g_HistDesc))
+    if (!g_UavDescValid) { uav->GetDesc(&g_UavDesc); g_UavDescValid = true; }
+    if (!g_HistUav[eye][0] || !g_HistUav[eye][1] || !SameDesc(d, g_HistDesc))
     {
-        g_NoTex++; if (srv) srv->Release(); out->Release(); return;
+        g_NoTex++; if (srv) srv->Release(); uav->Release(); return;
     }
-    p.what = 1; p.eye = eye; p.out = out;
-    p.keep = g_Hist[eye]; p.keep->AddRef();
+    const int cur = g_HistCur[eye];
+    p.what = 1; p.eye = eye;
     if (g_HistValid[eye] && frame - g_HistFrame[eye] <= kMaxAge)
     {   // read this eye's own history
-        ID3D11ShaderResourceView* mine = g_HistSrv[eye];
+        ID3D11ShaderResourceView* mine = g_HistSrv[eye][cur];
         c->CSSetShaderResources(t.histSrv, 1, &mine);
         p.srvSlot = t.histSrv; p.savedSrv = srv; srv = nullptr;
         g_Swapped++;
     }
     else g_FirstUse++;   // none yet (or stale): this one frame blends with the engine's, as before
+    {   // and write the other of its pair: next frame's history
+        ID3D11UnorderedAccessView* w = g_HistUav[eye][cur ^ 1]; const UINT keepCount = (UINT)-1;
+        c->CSSetUnorderedAccessViews(t.histUav, 1, &w, &keepCount);
+        p.uavSlot = t.histUav; p.savedUav = uav; uav = nullptr;
+    }
+    g_HistCur[eye] = cur ^ 1;
     g_HistValid[eye] = true; g_HistFrame[eye] = frame;
     if (srv) srv->Release();
     DumpAtDispatch(c, t, eye);
@@ -1113,11 +1290,19 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
 
 void StereoTaa::AfterPass(ID3D11DeviceContext* c, int kind, Pass& p)
 {
-    if (p.what != 1) return;
-    if (p.srvSlot >= 0) { c->CSSetShaderResources(p.srvSlot, 1, &p.savedSrv); if (p.savedSrv) p.savedSrv->Release(); }
-    if (p.keep && p.out) c->CopyResource(p.keep, p.out);   // what this eye's TAA wrote is its history next time
-    if (p.keep) p.keep->Release();
-    if (p.out) p.out->Release();
+    const UINT keepCount = (UINT)-1;
+    if (p.what == 1)
+    {
+        if (p.srvSlot >= 0) { c->CSSetShaderResources(p.srvSlot, 1, &p.savedSrv); if (p.savedSrv) p.savedSrv->Release(); }
+        if (p.uavSlot >= 0) { c->CSSetUnorderedAccessViews(p.uavSlot, 1, &p.savedUav, &keepCount); if (p.savedUav) p.savedUav->Release(); }
+    }
+    if (p.savedRes)
+    {   // the TAA's result went to the mod's texture: sharpened from there into the engine's ([Display.Picture] TaaSharpening)
+        c->CSSetUnorderedAccessViews(p.resSlot, 1, &p.savedRes, &keepCount);
+        TaaSharpen::AfterTaa(c, p.savedRes, p.sharpenSrc);
+        p.savedRes->Release();
+        if (p.sharpenSrc) p.sharpenSrc->Release();
+    }
     p = Pass();
 }
 
@@ -1128,8 +1313,30 @@ void StereoTaa::OnCopy(ID3D11DeviceContext* c, int kind, ID3D11Resource* dst, ID
     g_Lines.push_back(fmt::format("f{} #{} c{} k{} copy{} {} <- {}", g_Frame, g_Seq++, IdOf(g_CtxId, c), kind, region ? "region" : "", Res(dst), Res(src)));
 }
 
+namespace
+{
+    std::atomic<bool> g_TaaInUse{ false };
+    unsigned long long g_InUseDisp = 0, g_InUseIdle = 1000;
+}
+bool StereoTaa::TaaInUse() { return g_TaaInUse.load(std::memory_order_relaxed); }
+
 void StereoTaa::OnPresent(IDXGISwapChain* sc)
 {
+    {   // is the game's TAA running? (TaaInUse: DepthPassDepthOnly would leave it without motion vectors -- 2026-11-03: the
+        // world trailed the head under TAA, "a delayed version of the world eventually blending back")
+        const unsigned long long d = g_Dispatches.load();
+        g_InUseIdle = d != g_InUseDisp ? 0 : g_InUseIdle + 1; g_InUseDisp = d;
+        const bool use = g_InUseIdle <= 60;
+        static unsigned tick = 0; static float lastAmount = -12345.f;   // the game's TAA sharpness slider, when it changes
+        if (++tick % 30 == 0 && CVars::Address("r_TAAAmount"))
+        {
+            const float a = CVars::GetFloat("r_TAAAmount", -1.f);
+            if (a != lastAmount) { LOGI("StereoTaa: the game's TAA sharpness r_TAAAmount = {}", a); lastAmount = a; }
+        }
+        if (use != g_TaaInUse.exchange(use))
+            LOGI("StereoTaa: the game's TAA {}", use ? "is running: it reads the depth pass's motion vectors, so DepthPassDepthOnly is paused"
+                                                     : "stopped (another anti-aliasing): DepthPassDepthOnly applies again, if on");
+    }
     ID3D11Device* dev = nullptr;
     if (sc && SUCCEEDED(sc->GetDevice(__uuidof(ID3D11Device), (void**)&dev)) && dev)
     {
@@ -1138,17 +1345,19 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
             const bool active = g_Mode.load() == 1 && VRRuntime::Stereo() && !ScreenMode::FlatRender();   // the menu screen renders mono
             g_FixPrev = active;
             g_IdleFrames = active ? 0 : g_IdleFrames + 1;
-            if (g_IdleFrames > 300 && g_Hist[0]) { ReleaseHist(); LOGI("StereoTaa: eye histories released (stereo TAA not in use)"); }
-            if (active && g_HistDescValid && (!g_Hist[0] || !g_Hist[1] || [&] { D3D11_TEXTURE2D_DESC h{}; g_Hist[0]->GetDesc(&h); return !SameDesc(h, g_HistDesc); }()))
+            if (g_IdleFrames > 300 && g_Hist[0][0]) { ReleaseHist(); LOGI("StereoTaa: eye histories released (stereo TAA not in use)"); }
+            if (active && g_HistDescValid && g_UavDescValid && (!g_Hist[0][0] || !g_Hist[1][1] || [&] { D3D11_TEXTURE2D_DESC h{}; g_Hist[0][0]->GetDesc(&h); return !SameDesc(h, g_HistDesc); }()))
             {
                 ReleaseHist();
                 D3D11_TEXTURE2D_DESC d = g_HistDesc;
-                d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = D3D11_BIND_SHADER_RESOURCE; d.CPUAccessFlags = 0; d.MiscFlags = 0;
+                d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS; d.CPUAccessFlags = 0; d.MiscFlags = 0;
                 bool ok = true;
-                for (int i = 0; i < 2 && ok; i++)
+                for (int i = 0; i < 4 && ok; i++)
                 {
-                    ok = SUCCEEDED(dev->CreateTexture2D(&d, nullptr, &g_Hist[i])) && g_Hist[i]
-                      && SUCCEEDED(dev->CreateShaderResourceView(g_Hist[i], g_SrvDescValid ? &g_SrvDesc : nullptr, &g_HistSrv[i])) && g_HistSrv[i];
+                    const int e = i / 2, k = i % 2;
+                    ok = SUCCEEDED(dev->CreateTexture2D(&d, nullptr, &g_Hist[e][k])) && g_Hist[e][k]
+                      && SUCCEEDED(dev->CreateShaderResourceView(g_Hist[e][k], g_SrvDescValid ? &g_SrvDesc : nullptr, &g_HistSrv[e][k])) && g_HistSrv[e][k]
+                      && SUCCEEDED(dev->CreateUnorderedAccessView(g_Hist[e][k], &g_UavDesc, &g_HistUav[e][k])) && g_HistUav[e][k];
                 }
                 if (!ok) { ReleaseHist(); g_HistDescValid = false; LOGI("StereoTaa: could not create the eye histories ({}x{} format {})", d.Width, d.Height, (int)d.Format); }
                 else { g_HistGen++; LOGI("StereoTaa: eye histories {}x{} format {} (generation {})", d.Width, d.Height, (int)d.Format, g_HistGen); }
@@ -1160,6 +1369,25 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
             if (!VRRuntime::Stereo() && g_FellBack) { g_FellBack = false; ApplySkip(false); }
             if (active != g_WasActive) { g_BadWindows = 0; g_WinFrames = 0; g_WinDisp0 = g_Dispatches; g_WinSwap0 = g_Swapped; g_WinFirst0 = g_FirstUse; g_WinMono0 = g_MonoDisp; }
             g_WasActive = active;
+            {   // the health of the per-eye TAA in the log, every 10 s while it runs (the counters are cumulative): whether each
+                // eye found its own history and previous matrices -- the heartbeat file has it only when StatusFile is on
+                static ULONGLONG nextHealth = 0; const ULONGLONG now = GetTickCount64();
+                bool running = false; { std::lock_guard lk(g_HM); running = g_Hist[0][0] != nullptr; }
+                if (!active || !running) nextHealth = 0;
+                else if (!nextHealth) nextHealth = now + 10000;
+                else if (now >= nextHealth) { nextHealth = now + 10000; LOGI("StereoTaa: health: {}", Status()); }
+                // and the motion check (see g_MvVp): every 5 s, the eyes in turn, at most 60 read-backs (each one stalls
+                // the GPU for a moment)
+                static ULONGLONG nextMv = 0; static int mvEye = 0;
+                if (!active || !running) nextMv = 0;
+                else if (!nextMv) nextMv = now + 5000;
+                else if (now >= nextMv)
+                {
+                    nextMv = now + 5000;
+                    std::lock_guard lk(g_MvM);
+                    if (g_MvAutoTries < 60 && g_MvAutoLogs < 24 && g_MvReq.load() == 0 && !g_MvPending) { g_MvTag = "auto"; g_MvWantEye = mvEye; mvEye ^= 1; g_MvReq = 1; }
+                }
+            }
             if (active && !g_FellBack && ++g_WinFrames >= 120)
             {
                 const unsigned long long mo = g_MonoDisp - g_WinMono0, all = g_Dispatches - g_WinDisp0, d = all > mo ? all - mo : 0, sw = g_Swapped - g_WinSwap0, fu = g_FirstUse - g_WinFirst0;
@@ -1276,12 +1504,15 @@ bool StereoTaa::Command(const std::string& what, std::istringstream& ss)
 std::string StereoTaa::Status()
 {
     std::lock_guard lk(g_VM);
-    return fmt::format("stereotaa taaview imm {} deferred {} executed {} recorded-used {} | ", g_TaaImm.load(), g_TaaDef.load(), g_TaaExecN.load(), g_TaaRecUsed.load()) +
+    return fmt::format("stereotaa r_TAAAmount {} | taaview imm {} deferred {} executed {} recorded-used {} | ", CVars::GetFloat("r_TAAAmount", -1.f), g_TaaImm.load(), g_TaaDef.load(), g_TaaExecN.load(), g_TaaRecUsed.load()) +
            fmt::format("stereotaa mode {}{} shaders {} dispatches {} swapped {} firstuse {} noeye {} (noshadow {} nomatch {}) notex {} eyes {}/{} monoviews {} | prev patched {} sameeye {} second {} resets {} noprev {} | probe {}",
                        g_Mode.load(), g_FellBack ? " FELLBACK" : "", g_TaaShaders.load(), g_Dispatches.load(), g_Swapped.load(), g_FirstUse.load(), g_NoEye.load(),
                        g_NoShadow.load(), g_NoMatch.load(), g_NoTex.load(), g_EyeN[0].load(), g_EyeN[1].load(), g_MonoDisp.load(),
                        g_Patched, g_SameEye, g_SecondBuild, g_Resets, g_NoPrev, g_ProbeFrames.load())
-         + fmt::format(" | jitter period {} remapped {}", g_JitPeriod, g_JitRemapped) + " | " + GpuTrace::XfViewStats()
+         + fmt::format(" | jitter period {} remapped {}", g_JitPeriod, g_JitRemapped)
+         + fmt::format(" | camera motion handed to the TAA: own last {} (still {}) other eye {} none-at-all {} own two back {} other {} nocb {}",
+                       g_PvOwn.load(), g_PvStill.load(), g_PvOther.load(), g_PvSelf.load(), g_PvOwn2.load(), g_PvNone.load(), g_PvNoCb.load())
+         + " | " + GpuTrace::XfViewStats()
          + fmt::format(" | drawfix {} corrected {} kept {} noview {} nomatch {} none {}", GpuTrace::EyeFixedDraws(), g_CFound.load(), g_CKept.load(), g_CNoView.load(), g_CNoMatch.load(), g_CNone.load())
-         + PrevRuleStatus();
+         + PrevRuleStatus() + " | " + TaaSharpen::Status();
 }

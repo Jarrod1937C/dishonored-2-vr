@@ -18,6 +18,7 @@ static const VrRow kVrRows[] = {
     { "Gameplay", "Knockout", "KnockoutSoundVolume" },
     { "Gameplay", "Powers", "FarReachVRComfortOption" },
     { "Display", "Picture", "RenderScale" },
+    { "Display", "Picture", "TaaSharpening" },
     { "Display", "Picture", "DisableMetaASW" },
     { "Display", "Effects", "AmbientOcclusion" },
     { "Display", "Reticle", "ReticleOpacity" },

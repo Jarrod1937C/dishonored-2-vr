@@ -346,6 +346,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  about half the frame rate; the mod is made for 1: leave it,
                                  0 / 2 are likely to break things)
                RenderScale = 1 (sharpness: 1 = what the headset asks for, lower = faster)
+               TaaSharpening = 0.5 (with the game's TAA anti-aliasing: sharpens its soft picture; 0 = off)
                MenuScreen = 1   MenuScreenSize = 62 (deg wide)   MenuScreenDistance = 2.4 (m)
                MenuBackground = 0.22 (how bright the paused world is around the menu screen)
                CutsceneLetterbox = 0 (1 = keep the black bars)   CutsceneArms = 0 (1 = the
@@ -368,7 +369,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                StereoSunShadowReuse = 1 (the right eye keeps the left eye's nearest sun shadow cascade: the same
                                  near shadows and the same switch to the farther ones in both eyes)
                ViewDistance = 3 (the game's view-distance level instead of its menu's: 0 very low .. 5 ultra; -1 = the menu's)
-               DepthPassDepthOnly = 1 (hidden: the depth pass's main shader drawn depth-only)
+               DepthPassDepthOnly = 1 (hidden: the depth pass's main shader drawn depth-only; not while TAA runs)
                DepthPassSkipRedundantCopies = 1 (depth copies that change nothing are not made)
                ShadowMapMinObjectSize = 0.3 (m across: smaller moving objects cast no sun shadow-map shadow)
                ShadowSunUpdateEvery = 4 (frame pairs between redraws of the sun's shadows beyond the nearest)
@@ -474,6 +475,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    - The game must be in a window (Options > Visuals > Display mode: windowed), not fullscreen
      and not borderless (both render at your monitor's size).
    - Raise the resolution in SteamVR / the Meta Horizon app / Virtual Desktop, or RenderScale.
+   - With the game's anti-aliasing on TAA: raise TaaSharpening (VR menu > Display > Picture).
 
 
 ------------------------------------------------------------------------------------------------

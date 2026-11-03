@@ -68,6 +68,7 @@ set(MOD_SOURCES
     Src/Overlay.cpp    Src/Overlay.h
     Src/WristHud.cpp   Src/WristHud.h
     Src/StereoTaa.cpp  Src/StereoTaa.h
+    Src/TaaSharpen.cpp Src/TaaSharpen.h
     Src/StereoSync.cpp Src/StereoSync.h
     Src/MetaAsw.cpp Src/MetaAsw.h
     Src/ScreenMode.cpp Src/ScreenMode.h

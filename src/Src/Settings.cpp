@@ -120,6 +120,7 @@ namespace
         // the synchronised one now, which is what 1 meant to the player)
         { "display.stereo3d",           Kind::Choice, "1", 0, 0, "0|1|2|true|false|on|off|yes|no", true },   // hidden: the mod is made for 1
         { "display.renderscale",        Kind::Float,  "1", 0, 2, nullptr },
+        { "display.taasharpening",      Kind::Float,  "0.5", 0, 1, nullptr },   // TaaSharpen: the TAA's result sharpened in the headset (0 = off)
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
@@ -368,6 +369,7 @@ bool Settings::WriteLog() { return B("logging.writelog") || B("system.debugloggi
 bool Settings::LogInput() { return B("logging.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
+float Settings::TaaSharpening() { return F("display.taasharpening"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
 bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
 bool Settings::SwordBladeDamage() { return B("gameplay.swordbladedamage"); }
@@ -599,6 +601,7 @@ namespace
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
         { "renderscale", "1" },
+        { "taasharpening", "0.5" },
         { "disablemetaasw", "1" },
         { "ambientocclusion", "0" },
         { "reticleopacity", "0.4" },

@@ -399,8 +399,11 @@ The game's TAA is one compute shader that blends each frame with a history textu
 In stereo the previous frame is the OTHER eye's, which ghosts, so stereo used to switch TAA off.
 [StereoTaa.cpp](../src/Src/StereoTaa.cpp) gives each eye its own TAA:
 
-- the TAA dispatch (found by its resource names) gets that eye's own history texture bound, and what it writes is
-  copied out for that eye;
+- the TAA dispatch (found by its resource names) reads one of that eye's two history textures and writes the other
+  (its read and write views swapped for the mod's; the pair's roles swap every frame: no copy). A mono view in
+  between (menu screen, a gated pair) reads the last eye's latest history when it is from the frame just before;
+- `TaaSharpening` (TaaSharpen.cpp): the dispatch's result view is swapped for the mod's texture too, and CAS writes
+  from it into the engine's result: no copy either;
 - the engine's "previous" view, projection, view-projection and jitter, copied each frame when the view is built, are
   replaced in the CreateViewMatrix hook with those of the same eye's last frame;
 - the cached previous MVP that each entity draw carries in its per-instance buffer (the engine's: the same draw's MVP

@@ -10,6 +10,7 @@
 #include "FovMask.h"
 #include "ScreenShadows.h"
 #include "VrTweaks.h"
+#include "StereoTaa.h"
 #include <d3d11.h>
 #include <dxgi1_4.h>
 #include <detours/detours.h>
@@ -880,7 +881,8 @@ namespace
         t_CharEye = eye;
         const bool savedDepthOnly = t_DepthOnly, savedDepthCopies = t_DepthCopies; const unsigned long long savedDepthSerial = t_DepthSerial;
         const bool mainDepth = c && row == g_RowDepth && (kind == kLeft || kind == kRight);
-        t_DepthOnly = mainDepth && g_DepthOnly.load(std::memory_order_relaxed);
+        // (never while the TAA runs: the RG16F target that draw writes is its motion vectors)
+        t_DepthOnly = mainDepth && g_DepthOnly.load(std::memory_order_relaxed) && !StereoTaa::TaaInUse();
         t_DepthCopies = mainDepth && g_DepthCopies.load(std::memory_order_relaxed);
         if (t_DepthCopies) t_DepthSerial = g_DepthSerial.fetch_add(1) + 1;
         if (c && eye >= 0 && row == g_RowDepth && g_MaskHook.load(std::memory_order_relaxed)) { t_Mask = MaskT{}; t_Mask.c = c; t_Mask.view = view; t_Mask.eye = eye; t_Mask.on = true; }
@@ -1446,7 +1448,7 @@ bool PassProfile::SneakOverlayNow() { return t_PostFx; }
 void PassProfile::SetDepthOnly(bool on)
 {
     g_DepthOnly = on;
-    if (on) LOGI("PassProfile: DepthPassDepthOnly (experimental): the eyes' depth pass draws its main shader (48f2037fd43d86c8) depth-only: no pixel shader, no RG16F target (nothing in the frame reads it: the draw-by-draw log)");
+    if (on) LOGI("PassProfile: DepthPassDepthOnly (experimental): the eyes' depth pass draws its main shader (48f2037fd43d86c8) depth-only: no pixel shader, no RG16F target -- except while the game's TAA runs, which reads that target as its motion vectors");
 }
 int PassProfile::CharEye() { return t_CharEye; }
 

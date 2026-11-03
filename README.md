@@ -465,6 +465,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | Setting | What it does |
 |---|---|
 | `RenderScale` | Render resolution relative to what the headset asks for. |
+| `TaaSharpening` | With the game's anti-aliasing on TAA: sharpens each eye's TAA result (contrast-adaptive sharpening, AMD's CAS filter, applied in a perceptual space). The image TAA keeps for the next frame is not sharpened, so nothing builds up. 0 = off, 0.5 recommended. The game's own TAA "sharpness" slider is not a sharpen: it sets how much of each new frame the TAA takes (higher = sharper but more flicker). |
 | `FoveatedRendering` | NVIDIA only: fixed foveated rendering with Variable Rate Shading. Full rate within 35° of each eye's axis, 2x2 to 50°, 4x4 beyond, on the scene's geometry, lighting, water and transparency passes. Off by default. |
 | `OutOfViewMask` | Pixels of each eye's rendered rectangle that the lens never shows are written at the near plane's depth before the depth pass, so the GPU never shades them. 2 (recommended) = only each eye's outer side, which screen-space effects do not read; 1 = all around (breaks screen-space reflections, hair and glass). |
 | `ShadowCullDistance` | How far objects cast shadows (24 m recommended; the game's Ultra uses 75). |
@@ -486,7 +487,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `StereoLightShadowReuse` | The right eye skips drawing the lamps' shadow faces when its shadow job lists hash the same as the left frame's and no face is new. |
 | `StereoOceanReuse`, `StereoDecalReuse`, `StereoStreamOncePerPair` | The ocean's wave simulation, NPC decals and the texture streamer run once per pair: the right frame skips the task the way the engine skips a disabled one. |
 | `DepthPassSkipRedundantCopies` | Depth copies whose result nothing reads are not made. The depth downsample is kept whenever depth of field or the game's fog (the Void) needs it. |
-| `DepthPassDepthOnly` | The depth pass's main shader writes a colour target that nothing reads: it is drawn depth-only, the GPU's faster path. |
+| `DepthPassDepthOnly` | The depth pass's main shader writes the motion vectors, which only the game's TAA reads: without TAA it is drawn depth-only, the GPU's faster path (paused automatically while TAA runs). |
 | `SkipEmptyOutlines` | The outline effect's full-screen passes are predicated on an occlusion query of its mask: the GPU skips them when nothing is outlined. |
 | `SkipDisabledEffects` | The disabled SSAO pass's neutral full-screen fill is replaced by clears. |
 | `HudSkipEmpty` | The HUD panel is trimmed to the region that shows something (a 64x64 occupancy grid read back without stalls), and not submitted at all when empty. |
