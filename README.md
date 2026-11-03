@@ -105,9 +105,9 @@ Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had
   resolution in your headset's PC app (SteamVR's per-application resolution, the Meta Horizon Link app, Virtual
   Desktop).
 
-Known bugs (to be fixed):
+Known bugs:
 
-- **The Timepiece in A Crack in the Slab:** the view of the other era through its lens is not in stereo yet (both eyes see the same flat picture).
+- **The Timepiece in A Crack in the Slab:** the view of the other era through its lens is not in stereo (both eyes see the same flat picture). This may not be possible to fix due to how it is generated on the timepiece.
 
 Other limitations:
 
