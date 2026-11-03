@@ -1525,6 +1525,14 @@ void KbmInject::Tick()
         if (btn != lastBtn) { LOGI("KbmInject: buttons 0x{:X} -> 0x{:X} ({}, latched 0x{:X})", lastBtn, btn, ModeName(g_Mode), g_Latched); lastBtn = btn; }
     }
     g_Latched &= btn;                                     // released buttons are live again
+    // A grenade being thrown (the left trigger held, or let go a moment ago): the left grip is ignored -- a hand that
+    // swings and lets go tends to squeeze it too, which took the grenade's hand into the power wheel / holster / grab.
+    // Latched: it stays ignored until it is let go.
+    if (g_Mode == kModePlay && (btn & kVGripL) && !(g_Latched & kVGripL) && ThrowGesture::GrenadeBusy((btn & kVTrigL) != 0))
+    {
+        g_Latched |= kVGripL;
+        LOGI("KbmInject: left grip squeezed while a grenade is being thrown: ignored until it is let go");
+    }
     const unsigned live = btn & ~g_Latched;
     const unsigned pressed = live & ~g_PrevBtn;           // this tick's new presses
     const unsigned released = g_PrevBtn & ~live;          // ...and releases

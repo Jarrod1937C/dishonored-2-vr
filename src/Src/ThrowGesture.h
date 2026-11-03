@@ -35,6 +35,10 @@ namespace ThrowGesture
     //! cycle after a grenade is not over (throwcfg `ready`) a press is held back and passed on when it is; a press the
     //! game did not take (no grenade lit, `relight`) is let up and pressed again.
     bool GateTrigger(bool live);
+    //! A grenade in the left hand being thrown: its trigger held (cooking), or let go less than 0.8 s ago (the fuse may
+    //! still be lighting, the launch still to come). KbmInject ignores the left grip meanwhile (asked: a hand that
+    //! swings and lets go of the trigger tends to squeeze the grip too). Render thread.
+    bool GrenadeBusy(bool triggerHeld);
     //! Game thread, once a frame (HandAimHook): fires a released grenade (the real throw)
     void GameTick();
     //! Render thread, once per Present: logs the flight of the last thrown grenade (research / validation).

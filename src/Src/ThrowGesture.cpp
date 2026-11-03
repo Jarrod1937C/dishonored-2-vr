@@ -518,6 +518,14 @@ void ThrowGesture::GameTick()
     if (!PostFire(cpnt)) { g_PostFails++; std::lock_guard lk(g_FireM); g_PostTaken = true; LOGI("Throw: the fire message could not be posted: the game's own launch"); }
 }
 
+bool ThrowGesture::GrenadeBusy(bool triggerHeld)
+{
+    if (BodyHide::HeldItemClass(0) != BodyHide::kThrowableCpntVtable) return false;
+    if (triggerHeld) return true;
+    double rel = -10; { std::lock_guard lk(g_M); if (g_Pending.t > 0) rel = g_Pending.t; }
+    return QpcSec() - rel < 0.8;
+}
+
 bool ThrowGesture::GateTrigger(bool live)
 {
     const double now = QpcSec();

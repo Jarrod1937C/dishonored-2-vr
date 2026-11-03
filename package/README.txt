@@ -134,7 +134,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Grenades / springrazors ........... hold the left trigger, throw, and let go: a grenade leaves
                                        your hand at that moment, the way and as hard as it moved.
                                        The next one is in your hand a moment later (a light buzz);
-                                       a press before then waits for it
+                                       a press before then waits for it. The left grip does nothing
+                                       while you throw (squeezing it as you swing is natural)
    Right grip ........................ your hand: take what it is AT (a bottle, a cup, a body; an
                                        item with PhysicalPickup), grab a drawer, cabinet or door to
                                        pull it open. An object stays in your hand while you hold the
