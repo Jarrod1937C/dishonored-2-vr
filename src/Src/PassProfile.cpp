@@ -82,6 +82,7 @@ namespace
     // ro_fx_opacity) over each eye's picture -- in the headset a tiny black square fixed in each eye's view
     std::atomic<bool> g_SneakFx{ false };
     thread_local bool t_PostFx = false;
+    thread_local bool t_SsaoTask = false;          // in an eye's SSAO task with SkipDisabledEffects on (GpuTrace: the DWAO skip)
     thread_local unsigned long long t_DepthSerial = 0;   // which depth task (GpuTrace's copy tracking starts over with each)
     std::atomic<unsigned long long> g_DepthSerial{ 0 };
     int g_RowDepth = -1;                          // DEPTHPASS
@@ -897,8 +898,9 @@ namespace
         const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
         // SkipEmptyOutlines / StereoExposureReuse (PostShare): GpuTrace's draw / dispatch hooks act inside these tasks
         const bool shared = c && mainView && ((row == g_RowEmissive && PostShare::OutlinesOn()) || (row == g_RowPost && PostShare::ExposureOn()));
-        const bool savedPostFx = t_PostFx;
+        const bool savedPostFx = t_PostFx, savedSsao = t_SsaoTask;
         t_PostFx = c && mainView && row == g_RowPost && g_SneakFx.load(std::memory_order_relaxed);
+        t_SsaoTask = c && mainView && row == g_RowSsao && g_SkipEffects.load(std::memory_order_relaxed);
         if (shared) PostShare::Enter(c, row == g_RowEmissive ? 1 : 2, eye);
         const Acc saved = t_Acc;
         t_Acc = Acc{}; t_Acc.on = prof;
@@ -934,7 +936,7 @@ namespace
         t_SssCtx = savedSss; t_SssView = savedSssView; t_SssEye = savedSssEye;
         t_CharTask = savedCharTask; t_CharEye = savedCharEye;
         t_DepthOnly = savedDepthOnly; t_DepthCopies = savedDepthCopies; t_DepthSerial = savedDepthSerial;
-        t_PostFx = savedPostFx;
+        t_PostFx = savedPostFx; t_SsaoTask = savedSsao;
         if (c && mainView && row == g_RowScreenShadows && g_SssHook.load(std::memory_order_relaxed)) ScreenShadows::AfterMask(c, view, eye);
         if (slot >= 0)
         {
@@ -1289,6 +1291,9 @@ namespace
                  o.dispatch ? "CS" : "PS", o.ps, o.dispatch ? fmt::format("{} groups", o.elems) : fmt::format("VS {:016x}", o.vs),
                  o.dispatch ? (o.indirect ? "indirect" : "") : fmt::format("{} x{}", o.elems, o.inst), o.stats ? (o.dispatch ? o.st.CSInvocations : o.st.PSInvocations) / 1e6 : -1.0,
                  o.rtN, o.rtW, o.rtH, Fmt(o.rtFmt), o.depth ? " + depth" : "", ShaderReads(o.dispatch ? o.cs : o.psPtr, o.ps));
+            // research (2026-11-03): what the SSAO and POSTPROC passes' shaders do -- whether their leftover work in VR
+            // (AO off, camera motion blur off) can be skipped, and what the game's AO costs against a cheaper one
+            if (o.row == g_RowSsao || o.row == g_RowPost) GpuTrace::LogShaderCode(o.dispatch ? o.cs : o.psPtr);
             if (o.row == g_RowFogPass)   // where the game's fog goes: which passes read what the FOG pass wrote
                 LOGI("PassProfile:     FOG #{} reads {} ({}x{} {}); writes target {} (read by: {}; drawn into by: {}); depth {} ({}x{} {}; read by: {}; tested into by: {})",
                      o.idx, o.srcRes, o.srcW, o.srcH, Fmt(o.srcFmt), o.rtvRes, o.rtvRes ? ReadersOf(o.rtvRes) : std::string("-"), o.rtvRes ? ReadersOf(o.rtvRes, true) : std::string("-"),
@@ -1444,6 +1449,7 @@ void PassProfile::SetSkipSneakOverlay(bool on)
     if (on) LOGI("PassProfile: SkipSneakOverlay: the sneak mode's screen overlay (PS 2ee2b9822f61d7d1) is not drawn over the eyes' pictures");
 }
 bool PassProfile::SneakOverlayNow() { return t_PostFx; }
+bool PassProfile::SsaoTaskNow() { return t_SsaoTask; }
 
 void PassProfile::SetDepthOnly(bool on)
 {

@@ -200,7 +200,7 @@ namespace
         if (is("ARK_VISUALSETTING_DOF") && Settings::VrGraphicsTweaks()) return "no depth of field in VR (VrGraphicsTweaks)";
         if (is("ARK_VISUALSETTING_CAM_MOTION_BLUR") && Settings::DisableMotionBlur()) return "no motion blur (DisableMotionBlur)";
         if (is("ARK_VISUALSETTING_FOG_BLUR") && !Settings::Fog()) return "the game's fog off in VR (Fog = 0)";
-        if (is("ARK_VISUALSETTING_HBAO_PLUS") && !Settings::AmbientOcclusion()) return "no ambient occlusion in VR (AmbientOcclusion = 0)";
+        if (is("ARK_VISUALSETTING_HBAO_PLUS")) return Settings::AmbientOcclusion() ? "HBAO+ held off in VR: the game's own ambient occlusion (RenderRes)" : "no ambient occlusion in VR (AmbientOcclusion = 0)";
         if (is("ARK_VISUALSETTING_VIEW_DISTANCE") && Settings::ViewDistance() >= 0) return "the VR options' ViewDistance";
         if ((is("ARK_GPSETTING_CROSSHAIR_STYLE") || is("ARK_GPSETTING_CROSSHAIR_OPACITY")) && Reticle::Mode() != 0) return "the hands' reticles instead (Reticle)";
         if (is("ARK_GPSETTING_KILLCAM") && !Settings::FinisherAnimations()) return "no kill cam (FinisherAnimations = 0)";

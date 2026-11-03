@@ -350,6 +350,8 @@ namespace GpuTrace
     size_t ShaderCount();      //!< vertex shaders whose bytecode was captured at creation (hundreds in play)
     uint64_t VsHashOf(const void* vs);   //!< the DXBC header hash of a live vertex shader (0 = unknown)
     uint64_t ShaderHashOf(const void* sh);   //!< the same for a vertex, pixel or compute shader
+    //! Research (logging on): a pixel / compute shader's disassembly into the log, once per shader hash.
+    void LogShaderCode(const void* sh);
     std::string DepthCopyStats();   //!< DepthPassSkipRedundantCopies: copies seen / skipped, autofocus downsamples skipped
     //! the bytecode kept for a vertex, pixel or compute shader (from its creation); false = none
     bool ShaderBytecode(const void* sh, std::vector<uint8_t>& out);

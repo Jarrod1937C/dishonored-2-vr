@@ -46,6 +46,7 @@ namespace
     int g_BufW = 0, g_BufH = 0;                     // the swapchain's buffers, last seen
     int g_RsSaved = -1;                             // rs_enable as the game had it before the mod held it off
     int g_TbSaved = -1;                             // r_swapChainTripleBufferEnable, likewise
+    int g_HbaoSaved = -1;                           // r_hbao (the game's HBAO+ option), likewise
     // Present rate, for measuring what the resolution costs
     LARGE_INTEGER g_FpsT{}; int g_FpsN = 0; float g_Fps = 0.f;
     // GPU time per frame: a timestamp at every Present (inside a disjoint query per frame), read back 8 frames later.
@@ -295,6 +296,10 @@ namespace
     {
         HoldOff("rs_enable", g_RsSaved, hold, "dynamic resolution");
         HoldOff("r_swapChainTripleBufferEnable", g_TbSaved, hold, "triple buffering");
+        // HBAO+ (NVIDIA's, the game's menu option r_hbao) instead of the game's own ambient occlusion (r_SsaoType): with
+        // AmbientOcclusion = 1 VR uses the game's own, the one the mod's measurements and any replacement compare
+        // against (2026-11-03); HBAO+ is the costlier of the two
+        HoldOff("r_hbao", g_HbaoSaved, hold, "HBAO+ ambient occlusion");
     }
 }
 

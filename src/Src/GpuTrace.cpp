@@ -9,6 +9,7 @@
 #include "WristHud.h"
 #include "StereoTaa.h"
 #include "ScreenMode.h"
+#include "Settings.h"
 #include <detours/detours.h>
 #include <map>
 #include <mutex>
@@ -4217,6 +4218,68 @@ namespace
         if (g_SneakFxSkipped.fetch_add(1, std::memory_order_relaxed) == 0) LOGI("GpuTrace: SkipSneakOverlay: the sneak mode's screen overlay not drawn over an eye's picture (from now on)");
         return true;
     }
+    //! SkipDisabledEffects, ambient occlusion off: at a draw of an eye's SSAO task, true = the game's AO (DWAO) draw, not
+    //! to be made. With the view's no-SSAO flag (AmbientOcclusion = 0) the pass still draws its AO (PS 7012fd32e80f486e:
+    //! AO in x, the linear depth packed in z / w) and then its "no AO" fill (PS ea85def507442b03: x = y = 1, the same packed
+    //! depth) over the same target -- the AO is computed only to be overwritten (2026-11-03: 0.126 ms per eye with AO off,
+    //! 0.115 with it on). The fill's packed depth is read later, so the fill stays. Skipped only once the fill has been
+    //! seen 60 times to cover the AO draw entirely (same target, depth-stencil state and reference, no blending, all
+    //! channels written); a skipped AO draw that no fill follows twice stops the skip.
+    constexpr uint64_t kPsDwao = 0x7012fd32e80f486eull, kPsAoFill = 0xea85def507442b03ull;
+    constexpr int kDwaoNeed = 60;
+    std::atomic<int> g_DwaoOk{ 0 };
+    std::atomic<unsigned long long> g_DwaoSkipped{ 0 }, g_DwaoConfirmed{ 0 };
+    std::atomic<bool> g_DwaoMismatchLogged{ false };
+    struct DwaoSeen { const void* rt = nullptr; const void* dss = nullptr; UINT ref = 0; bool skipped = false, valid = false; };
+    thread_local DwaoSeen t_Dwao;
+    bool DwaoSkip(ID3D11DeviceContext* c)
+    {
+        if (!PassProfile::SsaoTaskNow()) return false;
+        ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+        if (!ps) return false;
+        thread_local const void* lastPs = nullptr; thread_local uint64_t lastHash = 0;
+        if (ps != lastPs) { lastPs = ps; lastHash = GpuTrace::ShaderHashOf(ps); }
+        ps->Release();
+        const uint64_t h = lastHash;
+        if (h != kPsDwao && h != kPsAoFill) return false;
+        ID3D11RenderTargetView* rtv = nullptr; c->OMGetRenderTargets(1, &rtv, nullptr);
+        const void* rt = ResOf(rtv); if (rtv) rtv->Release();
+        ID3D11DepthStencilState* dss = nullptr; UINT ref = 0; c->OMGetDepthStencilState(&dss, &ref);
+        if (dss) dss->Release();
+        if (h == kPsDwao)
+        {
+            t_Dwao = DwaoSeen{ rt, dss, ref, false, true };
+            if (g_DwaoSkipped.load() > g_DwaoConfirmed.load() + 2)
+            {   // skipped AO draws that no fill followed: the pattern broke -- stop, and learn it again
+                if (g_DwaoOk.exchange(0) >= kDwaoNeed) LOGI("GpuTrace: the AO draw is no longer followed by its fill: it is made again (SkipDisabledEffects)");
+                g_DwaoConfirmed = g_DwaoSkipped.load();
+            }
+            if (Settings::AmbientOcclusion() || g_DwaoOk.load() < kDwaoNeed) return false;
+            t_Dwao.skipped = true;
+            if (g_DwaoSkipped.fetch_add(1) == 0) LOGI("GpuTrace: SkipDisabledEffects: the game's AO draw (DWAO) not made with AmbientOcclusion = 0 (its \"no AO\" fill overwrites it)");
+            return true;
+        }
+        // the fill: does it cover the AO draw entirely?
+        bool full = t_Dwao.valid && rt && rt == t_Dwao.rt && dss == t_Dwao.dss && ref == t_Dwao.ref;
+        ID3D11BlendState* bs = nullptr; float bf[4]; UINT mask = 0; c->OMGetBlendState(&bs, bf, &mask);
+        if (bs)
+        {   // (none bound = the default: no blending, every channel)
+            D3D11_BLEND_DESC bd{}; bs->GetDesc(&bd); bs->Release();
+            full = full && !bd.RenderTarget[0].BlendEnable && (bd.RenderTarget[0].RenderTargetWriteMask & 0xF) == 0xF;
+        }
+        if (full)
+        {
+            if (t_Dwao.skipped) g_DwaoConfirmed++;
+            if (g_DwaoOk.load() < kDwaoNeed && g_DwaoOk.fetch_add(1) + 1 == kDwaoNeed) LOGI("GpuTrace: the SSAO pass's \"no AO\" fill covers its AO draw entirely ({} times): the AO draw is skipped while AmbientOcclusion = 0", kDwaoNeed);
+        }
+        else
+        {
+            g_DwaoOk = 0;
+            if (!g_DwaoMismatchLogged.exchange(true)) LOGI("GpuTrace: the SSAO pass's \"no AO\" fill does not cover its AO draw (other target, depth state or blending): the AO draw keeps being made");
+        }
+        t_Dwao = DwaoSeen{};
+        return false;
+    }
     //! at a draw of an eye's depth pass: true = not to be made
     bool DepthCopySkip(ID3D11DeviceContext* c)
     {
@@ -4441,7 +4504,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexed, n);
             PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
@@ -4463,7 +4526,7 @@ namespace
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
             PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
@@ -4484,7 +4547,7 @@ namespace
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
@@ -4505,7 +4568,7 @@ namespace
         {
             Record(c, KIND, eDrawInstanced, n);
             PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c)) return;   // DepthPassSkipRedundantCopies
+            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
@@ -4524,7 +4587,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawIdxInstIndirect(c, b, o);
@@ -4532,7 +4595,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawInstIndirect(c, b, o);
@@ -5045,6 +5108,37 @@ namespace
     using CreatePS_t = HRESULT (STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11PixelShader**);
     using CreateCS_t = HRESULT (STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11ComputeShader**);
     CreatePS_t g_RealCreatePS = nullptr; CreateCS_t g_RealCreateCS = nullptr;
+    //! Research (2026-11-03): shaders whose job is not known yet, disassembled into the log once each (logging on only).
+    //! 6b05662764a19199: two full-resolution POSTPROC draws reading the motion vectors and the scene colour (camera motion
+    //! blur is off: r_skipCameraMotionBlur 1); 7012fd32e80f486e / ea85def507442b03: the SSAO pass's two full-resolution
+    //! draws, still computing with ambient occlusion off; 2d11c3a17106ea42: EMISSIVE_ONLY's full-screen R8 passes (the
+    //! outline) run even when no outline was drawn; e5ac297cc6e8593f: DEPTHPASS draws that shade no pixel but take time.
+    void DisasmToLog(uint64_t h, const void* code, SIZE_T len)
+    {
+        if (!Settings::WriteLog()) return;
+        static std::mutex m; static std::vector<uint64_t> done;
+        { std::lock_guard lk(m); if (std::find(done.begin(), done.end(), h) != done.end()) return; done.push_back(h); }
+        using Dis_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, UINT, LPCSTR, ID3DBlob**);
+        static Dis_t dis = nullptr; static bool tried = false;
+        if (!tried) { tried = true; if (HMODULE d = LoadLibraryA("d3dcompiler_47.dll")) dis = (Dis_t)GetProcAddress(d, "D3DDisassemble"); }
+        ID3DBlob* b = nullptr;
+        if (!dis || FAILED(dis(code, len, 0, nullptr, &b)) || !b) return;
+        const std::string s((const char*)b->GetBufferPointer(), b->GetBufferSize()); b->Release();
+        size_t at = 0; int n = 0;
+        while (at < s.size())
+        {
+            size_t e = s.find('\n', at); if (e == std::string::npos) e = s.size();
+            std::string line = s.substr(at, e - at); if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (!line.empty() && line.find_first_not_of(" /") != std::string::npos) { LOGI("GpuTrace: shader {:016x} | {}", h, line); n++; }
+            at = e + 1;
+        }
+        LOGI("GpuTrace: shader {:016x}: {} lines of disassembly above", h, n);
+    }
+    void LogResearchDisasm(uint64_t h, const void* code, SIZE_T len)
+    {
+        static const uint64_t kWanted[] = { 0x6b05662764a19199ull, 0x7012fd32e80f486eull, 0xea85def507442b03ull, 0x2d11c3a17106ea42ull, 0xe5ac297cc6e8593full };
+        if (std::find(std::begin(kWanted), std::end(kWanted), h) != std::end(kWanted)) DisasmToLog(h, code, len);
+    }
     void KeepShader(void* sh, const void* code, SIZE_T len)
     {
         std::lock_guard lk(g_ShaderM);
@@ -5053,6 +5147,7 @@ namespace
         slot.assign((const uint8_t*)code, (const uint8_t*)code + len);
         g_PsCsHash[sh] = DxbcHash(code, len);
         g_VsHash.erase(sh);                               // the address was a vertex shader before (a level load)
+        LogResearchDisasm(g_PsCsHash[sh], code, len);
     }
     HRESULT STDMETHODCALLTYPE HkCreatePixelShader(ID3D11Device* dev, const void* code, SIZE_T len, ID3D11ClassLinkage* l, ID3D11PixelShader** out)
     {
@@ -5880,6 +5975,19 @@ std::string GpuTrace::ShaderCache()
 }
 
 size_t GpuTrace::ShaderCount() { std::lock_guard lk(g_ShaderM); return g_ShaderCode.size(); }
+void GpuTrace::LogShaderCode(const void* sh)
+{
+    if (!sh || !Settings::WriteLog()) return;
+    std::vector<uint8_t> code; uint64_t h = 0;
+    {
+        std::lock_guard lk(g_ShaderM);
+        auto it = g_ShaderCode.find((void*)sh); if (it == g_ShaderCode.end()) return;
+        code = it->second;
+        auto ih = g_PsCsHash.find((void*)sh); if (ih != g_PsCsHash.end()) h = ih->second;
+    }
+    if (!code.empty()) DisasmToLog(h, code.data(), code.size());
+}
+
 uint64_t GpuTrace::ShaderHashOf(const void* sh)
 {
     std::lock_guard lk(g_ShaderM);

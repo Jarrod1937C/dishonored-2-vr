@@ -48,6 +48,7 @@ namespace PassProfile
     void SetDepthOnly(bool on);   //!< from the ini, before Install
     void SetSkipSneakOverlay(bool on);   //!< [Display] SkipSneakOverlay, before Install
     bool SneakOverlayNow();       //!< in an eye's POSTPROC task with SkipSneakOverlay on (GpuTrace's draw hooks)
+    bool SsaoTaskNow();           //!< in an eye's SSAO task with SkipDisabledEffects on (GpuTrace's DWAO skip)
     //! DepthPassSkipRedundantCopies: an eye's main DEPTHPASS task runs on this thread, and which one (a serial)
     bool DepthCopiesNow();
     unsigned long long DepthTaskSerial();
