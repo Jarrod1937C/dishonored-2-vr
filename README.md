@@ -107,7 +107,6 @@ Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had
 
 Known bugs (to be fixed):
 
-- **The final Void area in Delilah's world renders incompletely.**
 - **The Timepiece in A Crack in the Slab:** the view of the other era through its lens is not in stereo yet (both eyes see the same flat picture).
 
 Other limitations:
