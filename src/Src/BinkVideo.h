@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+struct IDXGISwapChain;
 
 //! The game's pre-rendered videos (Bink 2, base\video\*.bk2: a mission's opening, the intro). The game plays them with
 //! bink2w64.dll, outside the player's state machine: no player state runs, nothing simulates, and for the mod that is
@@ -14,6 +15,10 @@ namespace BinkVideo
     bool Installed();
     //! [Advanced] SkipIntroVideos: the start-up videos end on their first frame.
     void SetSkipIntros(bool on);
+    //! Present (first thing): while the skipped intros run and for a moment after, the frame's picture is cleared to
+    //! black -- what a video sent straight to its end draws is the engine's placeholder (pink, a green square).
+    //! True when it cleared this frame.
+    bool BlankStartup(IDXGISwapChain* sc);
     //! A video is on screen now: open, and a frame decoded in the last half second.
     bool Playing();
     //! The video playing (its file name), or empty.

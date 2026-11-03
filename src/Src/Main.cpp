@@ -71,6 +71,7 @@ static void OnPresent(IDXGISwapChain* sc)
         PlayerState::Install();  // counting stubs on the player-state vtables (what the player is doing)
     }
     if (!BinkVideo::Installed()) BinkVideo::Install();   // (normally done at init: the exe imports it)
+    BinkVideo::BlankStartup(sc);  // SkipIntroVideos: the skipped intros' placeholder picture, black instead
     PassProfile::BeginSection(PassProfile::kSecGpuTrace);
     GpuTrace::OnPresent();
     PassProfile::EndSection(PassProfile::kSecGpuTrace);

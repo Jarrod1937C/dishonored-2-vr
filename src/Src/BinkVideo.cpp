@@ -32,6 +32,16 @@ namespace
     unsigned long long g_Opens = 0, g_Closes = 0, g_Frames = 0;
     std::string g_LastName;
     constexpr double kPlayingWindow = 0.5;   // s: a frame this recent = still playing
+    // The skipped intros, blacked out (reported 2026-11-02: with SkipIntroVideos a pink screen with a green square
+    // showed for 1-2 s at the start). A video sent to its last frame on its first is drawn from textures it never
+    // decoded into -- the engine's placeholder colours. So from the first intro opened until kBlankAfter s after the
+    // last one closed, each frame's backbuffer is cleared to black at Present, before the window and the headset's
+    // screen take it. 10 s at most.
+    constexpr double kBlankAfter = 1.5, kBlankMax = 10.0;
+    std::atomic<double> g_BlankFrom{ 0 }, g_BlankUntil{ 0 };   // QPC seconds; until 0 = an intro still open
+    std::atomic<int> g_IntrosOpen{ 0 };
+    unsigned long long g_Blanked = 0;
+    double Now() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
     //! Before a video's frame is decoded: an intro to skip goes to its end (once).
     void MaybeSkip(void* h)
     {
@@ -72,6 +82,7 @@ namespace
         if (!slot) slot = &g_V[0];
         *slot = Video(); slot->h = h; strcpy_s(slot->name, BaseName(n));
         slot->skip = g_SkipIntros.load() && IsIntro(slot->name);
+        if (slot->skip) { if (g_BlankFrom.load() <= 0) g_BlankFrom = Now(); g_IntrosOpen++; g_BlankUntil = 0; }
         g_LastName = slot->name;
         LOGI("BinkVideo: opened {} ({})", slot->name, h);
     }
@@ -91,6 +102,7 @@ namespace
             std::lock_guard lk(g_M);
             for (auto& v : g_V) if (v.h == h)
             {
+                if (g_SkipIntros.load() && IsIntro(v.name) && g_IntrosOpen.load() > 0 && --g_IntrosOpen == 0) g_BlankUntil = Now() + kBlankAfter;
                 g_Closes++;
                 LOGI("BinkVideo: closed {} after {} frames", v.name, v.frames);
                 v = Video();
@@ -150,4 +162,37 @@ std::string BinkVideo::Status()
     int open = 0; for (const auto& x : g_V) if (x.h) open++;
     return fmt::format("bink hooked {} playing {} current {} open {} opens {} closes {} frames {} last {}", g_Installed.load() ? 1 : 0, playing ? 1 : 0,
                        playing ? v->name : "-", open, g_Opens, g_Closes, g_Frames, g_LastName.empty() ? "-" : g_LastName);
+}
+
+bool BinkVideo::BlankStartup(IDXGISwapChain* sc)
+{
+    const double from = g_BlankFrom.load();
+    if (from <= 0 || !sc) return false;
+    const double now = Now(), until = g_BlankUntil.load();
+    if (now - from > kBlankMax || (until > 0 && now > until))
+    {
+        g_BlankFrom = -1;   // done for good
+        LOGI("BinkVideo: the skipped intros' frames blacked out ({} frames, {:.1f} s)", g_Blanked, now - from);
+        return false;
+    }
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(sc->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb)) || !bb) return false;
+    ID3D11Device* dev = nullptr; bb->GetDevice(&dev);
+    D3D11_TEXTURE2D_DESC d{}; bb->GetDesc(&d);
+    D3D11_RENDER_TARGET_VIEW_DESC rd{};
+    rd.Format = d.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS ? DXGI_FORMAT_R8G8B8A8_UNORM : d.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS ? DXGI_FORMAT_B8G8R8A8_UNORM
+              : d.Format == DXGI_FORMAT_R10G10B10A2_TYPELESS ? DXGI_FORMAT_R10G10B10A2_UNORM : d.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS ? DXGI_FORMAT_R16G16B16A16_FLOAT : d.Format;
+    rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    ID3D11RenderTargetView* rtv = nullptr;
+    bool ok = false;
+    if (dev && SUCCEEDED(dev->CreateRenderTargetView(bb, &rd, &rtv)) && rtv)
+    {
+        ID3D11DeviceContext* ctx = nullptr; dev->GetImmediateContext(&ctx);
+        if (ctx) { const float black[4] = { 0.f, 0.f, 0.f, 1.f }; ctx->ClearRenderTargetView(rtv, black); ctx->Release(); ok = true; }
+        rtv->Release();
+    }
+    if (dev) dev->Release();
+    bb->Release();
+    if (ok && g_Blanked++ == 0) LOGI("BinkVideo: the skipped intros are blacked out (each frame's picture cleared until {:.1f} s after the last closes)", kBlankAfter);
+    return ok;
 }
