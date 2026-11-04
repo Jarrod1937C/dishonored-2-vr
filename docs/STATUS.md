@@ -1,7 +1,7 @@
 # Dishonored 2 VR: feature status
 
 What works, how well it has been checked, and what is known to be broken or still open, by feature area. It covers
-the 0.5.0 release (beta).
+the 0.9.0 release (beta).
 
 Where this comes from: the development log of every feature, the engine notes in [ENGINE.md](ENGINE.md), the
 player [README](../package/README.txt) and the shipped [DishonoredVR.ini](../package/DishonoredVR.ini). When this file
@@ -468,14 +468,29 @@ From the latest open items and the roadmap. None of it is scheduled.
 - More on-world screens (notes, death, spyglass) on the menu screen.
 - Controller profiles for WMR / Vive / Pico, support for canted displays, a swapchain format fallback.
 - Comfort and settings: a comfort vignette, changing `RenderScale` without restarting. (The settings are in VR tabs of
-  the game's own Options screen since 0.5.0.)
+  the game's own Options screen since 0.9.0.)
 - Left-handed mode / any item in any hand (it conflicts with the game's design).
 
 ---
 
 ## 5. Changelog
 
-No git tags exist. Versions come from `src/CMakeLists.txt`, the package script and the session log.
+Versions come from `src/CMakeLists.txt`; the build adds the commit it came from (`git describe`, counted from the
+latest release tag), shown in the log and in the DLLs' file properties.
+
+### 0.9.0 (beta)
+- Physical interaction: the hands and weapons collide with the world; doors push open, drawers and cabinets open by
+  hand, safe dials turn by hand; consumables are grabbed, food is eaten and health / mana potions drunk by bringing
+  them to the mouth; grenades are thrown; weapon holsters (with a chest holster for the left hand).
+- Sword: better contact and swing gestures; stealth kills and knockouts with a swing.
+- Controllers: a controller abstraction with profiles beyond the Index (WMR, Vive wands and others), Index finger
+  tracking, the temple tap gesture, spyglass zoom by hand gesture, the timepiece fixed. Roomscale.
+- VR settings in tabs of the game's own Options screen; the game's options that the mod overrides are hidden there.
+- Performance: improved stereo rendering, depth-pass, fog, shadow and HUD optimizations; the SSAO pass skipped when
+  it is off and HBAO+ held off in VR; an FPS counter and a GPU profiler; no logging overhead with logging off.
+- Picture: TAA fixed in the headset (the delayed, "swimming" image on head turns is gone) and its result sharpened
+  by a contrast-adaptive sharpen (`TaaSharpening`); fog fixes (Delilah, the Void).
+- Crash logging; intro skip fixes.
 
 ### 0.5.0 (beta, replaces 1.0.0)
 Version numbering reset: 1.0.0 was labelled too early. 0.5.0 is NEWER than 1.0.0 and replaces it; the mod stays in

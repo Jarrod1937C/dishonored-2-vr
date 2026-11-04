@@ -25,7 +25,7 @@ it builds on.
 
 > **Release coming soon: no build is available to download yet.**
 >
-> Status: **0.5.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
+> Status: **0.9.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
 > Beyond 2 and a Pimax using Valve Index controllers. Other headsets and controllers have their own profiles and are
 > expected to work, but are less tested: see [docs/STATUS.md](docs/STATUS.md) for what is verified, and the known
 > issues.
