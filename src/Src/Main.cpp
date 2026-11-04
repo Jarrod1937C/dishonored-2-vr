@@ -18,6 +18,7 @@
 #include "Fog.h"
 #include "Foveation.h"
 #include "FovMask.h"
+#include "SkyMotion.h"
 #include "ScreenShadows.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
@@ -210,6 +211,8 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "shadowculldistance" })) ScreenShadows::SetCullDistance(Settings::ShadowCullDistance());
     if (has({ "shadowultratrim" })) ScreenShadows::SetUltraTrim(Settings::ShadowUltraTrim());
     if (has({ "shadowlampfewerupdates" })) ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
+    if (has({ "shadowlampkeepcache" })) ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
+    if (has({ "taaskymotion" })) SkyMotion::SetEnabled(Settings::TaaSkyMotion());
     Commands::SettingsChanged();   // turning, layout, menu screen, cutscenes, gestures, reticle, wrist HUD, cheats ...
 }
 
@@ -303,6 +306,8 @@ static DWORD WINAPI InitThread(LPVOID)
     ScreenShadows::SetCullDistance(Settings::ShadowCullDistance());
     ScreenShadows::SetUltraTrim(Settings::ShadowUltraTrim());
     ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
+    ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
+    SkyMotion::SetEnabled(Settings::TaaSkyMotion());
     ScreenShadows::SetLampCacheSlices(Settings::ShadowLampCacheSlices());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();

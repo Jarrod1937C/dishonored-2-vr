@@ -9,6 +9,7 @@
 #include "Fog.h"
 #include "Foveation.h"
 #include "FovMask.h"
+#include "SkyMotion.h"
 #include "ScreenShadows.h"
 #include "VrTweaks.h"
 #include "StereoTaa.h"
@@ -90,6 +91,7 @@ namespace
     // the DEPTHPASS task running on this thread, until its first draw into the scene's depth buffer (FovMask)
     struct MaskT { ID3D11DeviceContext* c = nullptr; const void* view = nullptr; int eye = -1, tries = 0; bool on = false; };
     thread_local MaskT t_Mask;
+    thread_local bool t_Sky = false;              // SkyMotion: this eye's DEPTHPASS task, its targets not seen yet
     // ScreenShadows: a SCREENSHADOWS task of a main view running on this thread (its draws looked at)
     thread_local ID3D11DeviceContext* t_SssCtx = nullptr;
     thread_local const void* t_SssView = nullptr;
@@ -936,13 +938,17 @@ namespace
         if (t_DepthCopies) t_DepthSerial = g_DepthSerial.fetch_add(1) + 1;
         if (c && eye >= 0 && row == g_RowDepth && g_MaskHook.load(std::memory_order_relaxed)) { t_Mask = MaskT{}; t_Mask.c = c; t_Mask.view = view; t_Mask.eye = eye; t_Mask.on = true; }
         else t_Mask.on = false;
+        // SkyMotion: the motion vectors of the sky (no geometry there), drawn at the task's end (TAA only)
+        const bool savedSky = t_Sky;
+        const bool skyTask = mainDepth && SkyMotion::Begin(c);
+        t_Sky = skyTask;
         if (learn) { t_Caps = Caps{}; t_Caps.c = c; t_Caps.on = true; }
         const int slot = c && prof ? Open(c, row, kind, view) : -1;
         if (!c) g_NoCtx++;
         const bool mainView = kind == kLeft || kind == kRight;
         // Fog: drawn at the start of the transparent pass (counted in its GPU time when profiling)
         const bool fogged = c && mainView && row == g_RowTransparent && g_FogHook.load(std::memory_order_relaxed) && Fog::BeforeTransparent(c, view);
-        const bool fovRow = c && mainView && row >= 0 && row < 64 && g_FovRow[row] && g_FovHook.load(std::memory_order_relaxed);
+        const bool fovRow = c && mainView && row >= 0 && row < 64 && g_FovRow[row] && Foveation::Wanted();   // (switched on in the VR menu too: not only at start)
         const bool foveated = fovRow && Foveation::Begin(c, view, kind == kRight ? 1 : 0);
         // SkipEmptyOutlines / StereoExposureReuse (PostShare): GpuTrace's draw / dispatch hooks act inside these tasks
         const bool shared = c && mainView && ((row == g_RowEmissive && PostShare::OutlinesOn()) || (row == g_RowPost && PostShare::ExposureOn()));
@@ -980,6 +986,7 @@ namespace
         t_Desc = savedDesc; t_Rd = savedRd;
         BatEnd(); t_Bat = std::move(savedBat);
         t_Mask = savedMask;
+        t_Sky = savedSky;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
         if (fogProbe) FogProbe::AtEnd(c, view);
@@ -987,6 +994,7 @@ namespace
         if (fogged) ClearEmpty(task);
         if (c && mainView && row == g_RowOpaque && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterOpaque(c, view);
         if (c && mainView && row == g_RowWater && g_FogHook.load(std::memory_order_relaxed)) Fog::AfterWater(c, view);
+        if (skyTask) SkyMotion::End(c, view);
         t_SssCtx = savedSss; t_SssView = savedSssView; t_SssEye = savedSssEye;
         t_CharTask = savedCharTask; t_CharEye = savedCharEye;
         t_DepthOnly = savedDepthOnly; t_DepthCopies = savedDepthCopies; t_DepthSerial = savedDepthSerial;
@@ -1016,7 +1024,7 @@ namespace
     {
         const ExecFn real = W ? g_ExecImm : g_Exec;
         const bool prof = g_On.load(std::memory_order_relaxed);
-        const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = g_FovHook.load(std::memory_order_relaxed), eff = g_SkipEffects.load(std::memory_order_relaxed);
+        const bool fog = g_FogHook.load(std::memory_order_relaxed), fov = Foveation::Wanted(), eff = g_SkipEffects.load(std::memory_order_relaxed);
         const bool mask = g_MaskHook.load(std::memory_order_relaxed) || g_DepthOnly.load(std::memory_order_relaxed) || g_DepthCopies.load(std::memory_order_relaxed);
         const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
         const bool share = PostShare::OutlinesOn() || PostShare::ExposureOn() || g_SneakFx.load(std::memory_order_relaxed);
@@ -1085,7 +1093,7 @@ namespace
     struct FrameRows { unsigned long long frame = 0; float ms[kRows] = {}; };
     FrameRows g_FR[kFrames];
     // one frame's tasks in GPU order, now and then
-    struct TaskLine { UINT64 tb, te; int row, kind; double cpuUs; uint32_t draws, dispatches; DWORD tid; const void* view; };
+    struct TaskLine { UINT64 tb, te; int row, kind; double cpuUs; uint32_t draws, dispatches; DWORD tid; const void* view; unsigned long long frame; };
     std::vector<TaskLine> g_Dump; unsigned long long g_DumpFrame = 0, g_DumpUntil = 0; ULONGLONG g_NextDumpAt = 0;
     ULONGLONG g_WindowStart = 0;
     unsigned long long g_Reports = 0;
@@ -1233,18 +1241,23 @@ namespace
         std::sort(g_Dump.begin(), g_Dump.end(), [](const TaskLine& a, const TaskLine& b) { return a.tb < b.tb; });
         const FrameInfo& prev = g_FI[(g_DumpFrame - 1) % kFrames];
         const UINT64 t0 = (prev.frame == g_DumpFrame - 1 && !prev.bad && prev.ts && prev.ts < g_Dump.front().tb) ? prev.ts : g_Dump.front().tb;
-        LOGI("PassProfile: ----- frame #{} task by task, in GPU order (ms from the previous Present on the GPU; the gap before each task is GPU time "
-             "no task covers: waiting for the CPU, or the mod's / the driver's own work) -----", g_DumpFrame);
+        LOGI("PassProfile: ----- frames #{} and #{} task by task, in GPU order (ms from the previous Present on the GPU; the gap before each task is GPU time "
+             "no task covers: waiting for the CPU, or the mod's / the driver's own work) -----", g_DumpFrame, g_DumpFrame + 1);
         UINT64 lastEnd = t0;
+        double gaps[2] = {}, busy[2] = {};
         for (const TaskLine& t : g_Dump)
         {
+            if (t.te < t0) continue;   // (a record from before the window: its timestamps are not this frame's)
             const double at = (double)(t.tb - t0) * 1000.0 / g_Freq, ms = (double)(t.te - t.tb) * 1000.0 / g_Freq;
             const double gap = t.tb > lastEnd ? (double)(t.tb - lastEnd) * 1000.0 / g_Freq : 0.0;
-            LOGI("PassProfile:   {:8.3f} +{:6.3f} gap {:6.3f}  {:<34} {:<6} view {} cpu {:.3f} ms draws {} dispatches {} thread {}",
-                 at, ms, gap, RowName(t.row), kKindName[t.kind], t.view, t.cpuUs / 1000.0, t.draws, t.dispatches, t.tid);
-            if (t.te > lastEnd) lastEnd = t.te;
+            const int k = t.frame == g_DumpFrame ? 0 : 1;
+            if (gap < 100) gaps[k] += gap;
+            LOGI("PassProfile:   {:8.3f} +{:6.3f} gap {:6.3f}  #{} {:<34} {:<6} view {} cpu {:.3f} ms draws {} dispatches {} thread {}",
+                 at, ms, gap, t.frame, RowName(t.row), kKindName[t.kind], t.view, t.cpuUs / 1000.0, t.draws, t.dispatches, t.tid);
+            if (t.te > lastEnd) { busy[k] += (double)(t.te - std::max(t.tb, lastEnd)) * 1000.0 / g_Freq; lastEnd = t.te; }
         }
-        LOGI("PassProfile: ----- end of frame #{} ({} tasks) -----", g_DumpFrame, g_Dump.size());
+        LOGI("PassProfile: ----- end of frames #{} / #{} ({} tasks): GPU covered by tasks {:.3f} / {:.3f} ms, gaps {:.3f} / {:.3f} ms -----", g_DumpFrame, g_DumpFrame + 1,
+             g_Dump.size(), busy[0], busy[1], gaps[0], gaps[1]);
         g_Dump.clear();
     }
     // ---- the draw-by-draw frame: armed, then read and written to the log a few frames later ----
@@ -1465,8 +1478,8 @@ namespace
         FrameRows& fr = g_FR[r.frame % kFrames];
         if (fr.frame != r.frame) { fr = FrameRows{}; fr.frame = r.frame; }
         fr.ms[r.row] += (float)ms;
-        if (g_DumpFrame && r.frame == g_DumpFrame && g_Dump.size() < 4000)
-            g_Dump.push_back({ tb, te, r.row, r.kind, r.cpuUs, r.acc.draws, r.acc.dispatches, r.tid, r.view });
+        if (g_DumpFrame && (r.frame == g_DumpFrame || r.frame == g_DumpFrame + 1) && g_Dump.size() < 8000)   // two Presents: both eyes of a pair
+            g_Dump.push_back({ tb, te, r.row, r.kind, r.cpuUs, r.acc.draws, r.acc.dispatches, r.tid, r.view, r.frame });
     }
 }
 
@@ -1575,6 +1588,7 @@ void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned i
         t_Mask.on = false;
         if (!FovMask::AtDraw(t_Mask.c, t_Mask.view, t_Mask.eye) && ++t_Mask.tries < 64) t_Mask.on = true;
     }
+    if (t_Sky && SkyMotion::AtDraw(c)) t_Sky = false;   // (the depth pass's motion vectors and depth, once seen bound)
     if (t_Caps.on) CaptureTargets();
     if (t_SssCtx) ScreenShadows::AtTaskDraw(t_SssCtx, t_SssView, t_SssEye);
     if (t_Desc.on) DescDraw(c, elements, instances, indirect, false);   // (after the mod's own draws above)
@@ -1699,7 +1713,7 @@ void PassProfile::OnPresent(IDXGISwapChain* sc)
     // a frame task by task every 30 s
     const ULONGLONG nowMs = GetTickCount64();
     if (!g_NextDumpAt) g_NextDumpAt = nowMs + 12000;
-    if (!g_DumpFrame && nowMs >= g_NextDumpAt) { g_DumpFrame = f + 1; g_DumpUntil = f + 1 + 12; g_Dump.clear(); }
+    if (!g_DumpFrame && nowMs >= g_NextDumpAt) { g_DumpFrame = f + 1; g_DumpUntil = f + 2 + 12; g_Dump.clear(); }
 
     // read the task records that are old enough
     if (g_Freq)

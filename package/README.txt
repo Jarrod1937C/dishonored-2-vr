@@ -361,6 +361,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                ShadowCullDistance = 24 (m objects cast shadows to; 0 = the game's: Low 15, High 32, Ultra 75)
                ShadowUltraTrim = 1 (at Ultra: the costly settings that do not sharpen held at High's)
                ShadowLampFewerUpdates = 1 (lamps redraw moving things' shadows only when near / large: Low's)
+               ShadowLampKeepCache = 1 (lamps' shadows of walls and floors drawn once and reused while you
+                                 move your head; the game refits them to your view every frame; 0 = the game's)
                ShadowLampCacheSlices = 32 (the lamps' shadow cache, 16 MB a slice; 0 = the game's 12)
                StaticLodZoom = 1.5 (>1 = static models switch to simpler versions sooner; 1 = the game's)
                HudResolution = 0.5 (the HUD panel's resolution per side: 0.25 / 0.5 / 0.75 / 1; same place and size)

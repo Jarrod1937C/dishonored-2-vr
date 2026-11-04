@@ -18,6 +18,7 @@ namespace Settings
     bool LogInput();                              //!< log every controller button change (diagnostics)
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
+    bool TaaSkyMotion();                          //!< [Display.Picture] TaaSkyMotion (hidden): the sky's motion vectors for the game's TAA (SkyMotion)
     float TaaSharpening();                        //!< [Display.Picture] TaaSharpening: the game's TAA result sharpened in the headset, 0..1 (0 = off)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
     bool FingerTracking();                        //!< [Controls] FingerTracking, with Layout = index (XRSession, GpuTrace)
@@ -49,6 +50,7 @@ namespace Settings
     bool ShadowUltraTrim();                       //!< [Display] ShadowUltraTrim (ScreenShadows)
     float OutOfViewMaskCorners();                 //!< [Display] OutOfViewMaskCorners (FovMask)
     bool ShadowLampFewerUpdates();                //!< [Display] ShadowLampFewerUpdates (ScreenShadows)
+    bool ShadowLampKeepCache();                   //!< [Performance.Shadows] ShadowLampKeepCache (ScreenShadows)
     int ShadowLampCacheSlices();                  //!< [Display] ShadowLampCacheSlices (ScreenShadows)
     float StaticLodZoom();                        //!< [Display] StaticLodZoom (VrTweaks, experimental)
     int ViewDistance();                           //!< [Display] ViewDistance (VrTweaks): -1 = the game's

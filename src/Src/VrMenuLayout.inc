@@ -37,6 +37,7 @@ static const VrRow kVrRows[] = {
     { "Performance", "Shadows", "ShadowSunUpdateEvery" },
     { "Performance", "Shadows", "ShadowUltraTrim" },
     { "Performance", "Shadows", "ShadowLampFewerUpdates" },
+    { "Performance", "Shadows", "ShadowLampKeepCache" },
     { "Performance", "Detail", "ViewDistance" },
     { "Performance", "Detail", "StaticLodZoom" },
     { "Performance", "Detail", "HudResolution" },

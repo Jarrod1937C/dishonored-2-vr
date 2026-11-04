@@ -8,6 +8,7 @@
 #include "ScreenMode.h"
 #include "ViewMatrixHook.h"
 #include "TaaSharpen.h"
+#include "SkyMotion.h"
 #include "Settings.h"
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
@@ -1510,5 +1511,5 @@ std::string StereoTaa::Status()
                        g_PvOwn.load(), g_PvStill.load(), g_PvOther.load(), g_PvSelf.load(), g_PvOwn2.load(), g_PvNone.load(), g_PvNoCb.load())
          + " | " + GpuTrace::XfViewStats()
          + fmt::format(" | drawfix {} corrected {} kept {} noview {} nomatch {} none {}", GpuTrace::EyeFixedDraws(), g_CFound.load(), g_CKept.load(), g_CNoView.load(), g_CNoMatch.load(), g_CNone.load())
-         + PrevRuleStatus() + " | " + TaaSharpen::Status();
+         + PrevRuleStatus() + " | " + TaaSharpen::Status() + " | " + SkyMotion::Status();
 }

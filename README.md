@@ -474,6 +474,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `ShadowSunUpdateEvery` | The sun's farther shadow cascades are redrawn every Nth frame pair (the engine's own cascade time-slicing, patched at its four parity tests so the cascades' matrices and split distances stay consistent with their maps). The nearest cascade is redrawn every frame. |
 | `ShadowUltraTrim` | At Ultra, the shadow settings that cost without sharpening are held at High's. |
 | `ShadowLampFewerUpdates` | Lamps redraw the shadows of moving things only when large on screen or within 8 m (the Low preset's thresholds). |
+| `ShadowLampKeepCache` | Each lamp's shadow map covers its whole range instead of being refitted to the camera's view every frame. The game's lamp shadow cache only matched while the camera held still (in a headset never) and kept only what the last frame used (in 3D, the other eye's lamps), so every lamp's walls and floors were redrawn every frame in both eyes; now they are drawn once and copied while the lamp stays put. |
 | `ViewDistance` | The game's view-distance level (LOD distance and occlusion gates) independently of its menu's detail preset. |
 | `StaticLodZoom` | Static models switch to simpler versions sooner (>1); the depth pass is dominated by small triangles. |
 | `HudResolution` | The HUD panel's resolution per side (0.5 is about 1:1 with a high-resolution display): less video memory and compositor bandwidth. |
@@ -501,6 +502,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `OutOfViewMaskMargin`, `OutOfViewMaskLens`, `OutOfViewMaskCorners` | The mask's margin, the runtime's own hidden-area mesh, and each eye's outer corners outside a rounded outline. |
 | `FoveatedInner`, `FoveatedOuter` | The foveation's ring angles. |
 | `MaxRenderMegapixels` | An optional cap on the render size, for a card short of video memory (0 = none). |
+| `TaaSkyMotion` | With the game's TAA: the sky is given the motion of the head turn in the TAA's motion vectors (the game leaves it with none), so the sky and clouds no longer follow the head by a little and stop. 1 = on (default), 0 = as the game does. |
 
 Also always on in stereo: the game's dynamic resolution and triple buffering options are held off (the mod keeps
 its own swapchain setup), and the light probes' update budget is halved

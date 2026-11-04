@@ -16,8 +16,12 @@ namespace
 void* Game::GameLocal()
 {
     if (!GameInfo::IsSupportedBuild()) return nullptr;
-    void** pp = (void**)(GameInfo::Base() + kGameLocalPtr);
-    return Readable(pp, 8) ? *pp : nullptr;
+    // a global of the game's own image (always mapped): read guarded, not checked with VirtualQuery first -- LocalPlayer
+    // is called from ~30 places, several per draw or per entity (2026-11-03, CpuProfile: the VirtualQuery here was one of
+    // the mod's main waits on the render thread)
+    void* const* pp = (void* const*)(GameInfo::Base() + kGameLocalPtr);
+    __try { return *pp; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
 }
 
 void* Game::LocalPlayer()
@@ -44,8 +48,7 @@ bool Game::BufferCommandText(const char* text)
 bool Game::PlayerView(float origin[3], float axis[9])
 {
     uint8_t* p = (uint8_t*)LocalPlayer();
-    if (!p || !Readable(p + kPlayerViewOrigin, 12 * 4)) return false;
-    memcpy(origin, p + kPlayerViewOrigin, 12);
-    memcpy(axis, p + kPlayerViewAxis, 36);
-    return true;
+    if (!p) return false;
+    __try { memcpy(origin, p + kPlayerViewOrigin, 12); memcpy(axis, p + kPlayerViewAxis, 36); return true; }   // (guarded: no VirtualQuery)
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }

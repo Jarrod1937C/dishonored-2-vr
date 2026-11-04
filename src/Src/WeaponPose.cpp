@@ -16,6 +16,9 @@ namespace
     std::atomic<int> g_Enabled{ 0 };   // 0 off, 1 weapon models, 2 arm models, 3 both
     std::atomic<bool> g_Research{ false };
     std::mutex g_M; WeaponPose::Stats g_Stats;
+    // the two per-call counters, outside the lock: both hooks run for every model / component of the frame, on every
+    // render worker (2026-11-03, CpuProfile: their lock and Hook's VirtualQuery calls were the mod's largest waits there)
+    std::atomic<unsigned long long> g_CallsA{ 0 }, g_TsetCallsA{ 0 };
     struct Grip { float rot[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 }; float t[3] = {}; };
     // Measured (idle animation): weapon grip relative to the FP anchor, in the anchor frame (fwd, left, up):
     // left hand ~ (+0.31, +0.28, -0.21), right hand ~ (+0.285, -0.23, -0.23). The anchor is placed at controller - offset.
@@ -49,7 +52,7 @@ namespace
     FnSet g_RealSet = nullptr;
     void SetOriginAxisHook(void* self, const float* org, const float* axis)
     {
-        { std::lock_guard lk(g_M); g_Stats.tsetCalls++; }
+        g_TsetCallsA.fetch_add(1, std::memory_order_relaxed);
         if (g_Enabled.load())
         {
             int hand = -1;
@@ -71,7 +74,11 @@ namespace
     void* Hook(void* self, void* b, void* c, void* d)
     {
         void* r = g_Real(self, b, c, d);
-        { std::lock_guard lk(g_M); g_Stats.calls++; }
+        g_CallsA.fetch_add(1, std::memory_order_relaxed);
+        // Everything below serves the research log or modes 8 / 16 (the VR package runs mode 1, which only needs
+        // SetOriginAxisHook): with neither, nothing to do -- before, every component's update paid three VirtualQuery
+        // calls and the lock first.
+        if (!g_Research.load(std::memory_order_relaxed) && !(g_Enabled.load(std::memory_order_relaxed) & (8 | 16))) return r;
         uint8_t* cp = (uint8_t*)self;
         if (!Readable(cp, 0xE0)) return r;
         uint8_t* ent = *(uint8_t**)(cp + WeaponPose::kCpntEntity);
@@ -169,4 +176,4 @@ void WeaponPose::SetGrip(int hand, float pitchDeg, float yawDeg, float rollDeg, 
     std::lock_guard lk(g_M);
     memcpy(g_Grip[hand & 1].rot, m, 36); g_Grip[hand & 1].t[0] = fwd; g_Grip[hand & 1].t[1] = left; g_Grip[hand & 1].t[2] = up;
 }
-WeaponPose::Stats WeaponPose::GetStats() { std::lock_guard lk(g_M); return g_Stats; }
+WeaponPose::Stats WeaponPose::GetStats() { std::lock_guard lk(g_M); Stats s = g_Stats; s.calls = g_CallsA.load(); s.tsetCalls = g_TsetCallsA.load(); return s; }

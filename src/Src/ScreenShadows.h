@@ -62,6 +62,9 @@ namespace ScreenShadows
     //! [Display] ShadowLampFewerUpdates: the lamps' partial-update thresholds held at Low's (0.7 screen cover / 8 m) at
     //! any preset: fewer redraws of the moving casters in the spot / omni shadow maps (before StartSettingsLog)
     void SetLampFewerUpdates(bool on);
+    //! [Performance.Shadows] ShadowLampKeepCache: the lamps' shadow maps cover their light's whole range instead of the
+    //! part the camera sees (the game refits them every frame, which in a headset makes their cache never match)
+    void SetLampKeepCache(bool on);
     //! [Display] ShadowLampCacheSlices: r_shadowCacheSliceCnt held at this (0 = the game's 12), the atlas and the cache
     //! made again by the game's own path (before StartSettingsLog)
     void SetLampCacheSlices(int n);

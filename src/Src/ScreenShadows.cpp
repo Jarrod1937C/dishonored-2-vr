@@ -1318,6 +1318,86 @@ void ScreenShadows::SetLampFewerUpdates(bool on)
     LOGI("ScreenShadows: ShadowLampFewerUpdates {}", on ? "on: the lamps redraw moving casters' shadows only when the lamp covers 70 % of the screen or is within 8 m (Low's thresholds, at any preset)"
                                                         : "off: the preset's lamp update thresholds");
 }
+// ---- ShadowLampKeepCache: the lamps' shadow maps not refitted to the camera every frame ----
+// SHADOWS_PREPARE fits each spot / omni face's shadow map to the part of the light the camera sees (exe+0x32AB80 with
+// mode 2 -> exe+0x32E7C0, from the view's matrices), and the lamps' cache (lookup exe+0x2CD500) keys every face on that
+// fit too (entry+0x28, within 0.001). In a headset the camera never holds still and the two eyes alternate, so the key
+// never matched: 2026-11-03, Edge of the World, 76,132 of 84,292 new faces were "the same face again" (same light,
+// matrix and size as the previous left frame) -- each lamp's walls and floors redrawn every frame, in both eyes (about
+// 1,500 draws and 2.3 ms of CPU in a left frame). The fit is chosen per light (omni exe+0x333055, spot exe+0x33367D:
+// `mov r10b / r9b, 1` when job+0x658 >= 1, the light's flag 0x20 clear and the view's flag 0x3A34 bit 0 clear); its
+// immediate set to 0 makes every face the light's whole frustum, as the game already does for those cases: the key
+// stays the same, and the cache's copy is used while the lamp and its walls stay put.
+// The second half (2026-11-03, the first test of the above: still 87,606 of 93,816 new faces "the same face again"): at
+// the end of each frame the cache is swept (exe+0x34FCDF -> exe+0x2CD4C0(cache, frame counter, index) -> exe+0x2CC940),
+// freeing every entry whose last use (entry+0x3C, stamped by the lookup) is older than THIS frame. In synchronised 3D
+// consecutive frames are the two eyes, and each eye's view shows (and looks up) its own set of lamps -- the right
+// frame's a subset of the left's -- so every right frame freed the faces only the left eye had used, and the next left
+// frame drew them again. The sweep is given the previous frame's counter instead: an entry is kept while either eye
+// used it.
+namespace
+{
+    using SweepFn = uintptr_t(*)(void* cache, int frame, int index);
+    SweepFn g_SweepReal = nullptr;
+    std::atomic<bool> g_SweepKeepPrev{ false };
+    std::atomic<unsigned long long> g_Sweeps{ 0 };
+    uintptr_t HkSweep(void* cache, int frame, int index)
+    {
+        g_Sweeps.fetch_add(1, std::memory_order_relaxed);
+        return g_SweepReal(cache, g_SweepKeepPrev.load(std::memory_order_relaxed) && frame > 0 ? frame - 1 : frame, index);
+    }
+    void InstallSweep()
+    {
+        static bool tried = false;
+        if (tried) return;
+        tried = true;
+        const uintptr_t base = GameInfo::Base();
+        static const uint8_t kExpect[8] = { 0x48, 0x83, 0xEC, 0x38, 0x48, 0x8D, 0x41, 0x10 };   // sub rsp,38h; lea rax,[rcx+10h]
+        uint8_t now[8] = {};
+        if (!ReadBytes(now, (const void*)(base + 0x2CD4C0), 8) || memcmp(now, kExpect, 8))
+        { LOGI("ScreenShadows: ShadowLampKeepCache: the lamps' cache sweep at exe+0x2CD4C0 is not as expected (another game version?): entries are swept as the game does"); return; }
+        g_SweepReal = (SweepFn)(base + 0x2CD4C0);
+        DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)g_SweepReal, (PVOID)&HkSweep);
+        const LONG e = DetourTransactionCommit();
+        if (e != NO_ERROR) { g_SweepReal = nullptr; LOGI("ScreenShadows: ShadowLampKeepCache: the cache sweep could not be hooked ({})", e); }
+        else LOGI("ScreenShadows: ShadowLampKeepCache: the lamps' cache sweep exe+0x2CD4C0 hooked (an entry is kept while either eye's frame used it)");
+    }
+    struct LampFocusSite { uint32_t rva; uint8_t expect[5]; };
+    constexpr LampFocusSite kLampFocus[2] = { { 0x333055, { 0x41, 0xB2, 0x01, 0xEB, 0x03 } }, { 0x33367D, { 0x41, 0xB1, 0x01, 0xEB, 0x45 } } };
+    int g_LampFocusState = -1;   // -1 not checked, 0 the game's, 1 kept, 2 not as expected
+}
+void ScreenShadows::SetLampKeepCache(bool on)
+{
+    const uintptr_t base = GameInfo::Base();
+    if (on) InstallSweep();
+    g_SweepKeepPrev = on;
+    if (g_LampFocusState == 2 || !base) return;
+    if (g_LampFocusState < 0)
+        for (const LampFocusSite& s : kLampFocus)
+        {
+            uint8_t now[5] = {};
+            if (!ReadBytes(now, (const void*)(base + s.rva), 5) || now[0] != s.expect[0] || now[1] != s.expect[1] || (now[2] != 0 && now[2] != 1) || now[3] != s.expect[3] || now[4] != s.expect[4])
+            {
+                g_LampFocusState = 2;
+                LOGI("ScreenShadows: ShadowLampKeepCache: the lamps' fit test at exe+0x{:X} is not as expected (another game version?): not applied", s.rva);
+                return;
+            }
+        }
+    if (g_LampFocusState == (on ? 1 : 0)) return;
+    for (const LampFocusSite& s : kLampFocus)
+    {
+        uint8_t* imm = (uint8_t*)(base + s.rva + 2);
+        DWORD old = 0;
+        if (!VirtualProtect(imm, 1, PAGE_EXECUTE_READWRITE, &old)) { LOGI("ScreenShadows: ShadowLampKeepCache: exe+0x{:X} cannot be written", s.rva); return; }
+        *(volatile uint8_t*)imm = on ? 0x00 : 0x01;
+        VirtualProtect(imm, 1, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), imm, 1);
+    }
+    g_LampFocusState = on ? 1 : 0;
+    LOGI("ScreenShadows: ShadowLampKeepCache {}", on ? "on: the lamps' shadow maps cover each light's whole range instead of being refitted to the camera every frame, so their cache is used while the head moves"
+                                                     : "off: the lamps' shadow maps refitted to the camera every frame (the game's)");
+}
 void ScreenShadows::SetUltraTrim(bool on)
 {
     g_Trim = on;

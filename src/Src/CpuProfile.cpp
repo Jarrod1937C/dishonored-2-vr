@@ -140,6 +140,9 @@ namespace
         unsigned samples = 0, sys = 0, failed = 0;
         std::unordered_map<uintptr_t, unsigned> self;     // function start (bit 0 set: no unwind entry, the 64-byte block) -> samples
         std::unordered_map<uintptr_t, unsigned> via;      // the samples outside the game and the mod, by their nearest caller there
+        std::unordered_map<uintptr_t, unsigned> incl;     // the game's and the mod's functions on the stack (inclusive time)
+        std::unordered_map<std::string, unsigned> waits;  // the samples in a system call, by where the game / mod waited
+        unsigned unwound = 0;                             // samples whose stack was walked to a game / mod frame
     };
     std::map<DWORD, Th> g_Th;
 
@@ -214,38 +217,102 @@ namespace
             else ++it;
     }
 
+    //! The return addresses of the sampled thread, walked with the unwind tables from its context over the COPY of its
+    //! stack (the thread runs on meanwhile): the stack pointer, and the frame pointer when it points into the stack, are
+    //! moved onto the copy, and the walk stops where the copy ends. (The first version scanned the stack for anything
+    //! that looked like a return address: stale ones left in unused slots -- operator new's, above all -- were taken
+    //! for callers.)
+    int Unwind(const CONTEXT& cx0, const uint8_t* copy, SIZE_T got, uintptr_t* out, int max)
+    {
+        int n = 0;
+        __try
+        {
+            CONTEXT c = cx0;
+            const DWORD64 lo = cx0.Rsp, hi = cx0.Rsp + got, delta = (DWORD64)copy - lo;
+            const DWORD64 clo = (DWORD64)copy, chi = (DWORD64)copy + got;
+            c.Rsp += delta;
+            if (c.Rbp >= lo && c.Rbp < hi) c.Rbp += delta;
+            for (int i = 0; i < 64 && n < max; i++)
+            {
+                const DWORD64 pc = c.Rip;
+                DWORD64 base = 0;
+                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(pc, &base, nullptr);
+                if (!f)
+                {   // a leaf: its return address is where the stack pointer is
+                    if (c.Rsp < clo || c.Rsp + 8 > chi) break;
+                    c.Rip = *(const DWORD64*)c.Rsp; c.Rsp += 8;
+                }
+                else
+                {
+                    PVOID hd = nullptr; DWORD64 est = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, pc, f, &c, &hd, &est, nullptr);
+                }
+                if (c.Rip < 0x10000 || c.Rsp < clo || c.Rsp >= chi) break;
+                if (c.Rbp >= lo && c.Rbp < hi) c.Rbp += delta;   // a frame pointer restored from the stack: the real one
+                out[n++] = (uintptr_t)c.Rip;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return n;
+    }
     void Sample(Th& t)
     {
         alignas(16) CONTEXT cx{};
         cx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-        static uintptr_t stk[256];                          // 2 KB of the top of its stack (this thread only)
+        static uint8_t stk[16384];                          // the top 16 KB of its stack (this thread only)
         SIZE_T got = 0;
         // suspended for GetThreadContext and the stack copy only: no lock, no allocation, no log until it runs again
         if (SuspendThread(t.h) == (DWORD)-1) { t.failed++; return; }
         const bool ok = GetThreadContext(t.h, &cx) != 0;
         if (ok)
-        {
-            if (!ReadProcessMemory(GetCurrentProcess(), (const void*)cx.Rsp, stk, sizeof stk, &got))
+        {   // page by page from rsp up: the first unreadable page is past the stack's base
+            SIZE_T off = 0;
+            while (off < sizeof stk)
             {
-                const SIZE_T toPage = 4096 - (cx.Rsp & 0xFFF);
-                if (!ReadProcessMemory(GetCurrentProcess(), (const void*)cx.Rsp, stk, std::min<SIZE_T>(toPage, sizeof stk), &got)) got = 0;
+                const SIZE_T want = off ? std::min<SIZE_T>(4096, sizeof stk - off) : std::min<SIZE_T>(4096 - (cx.Rsp & 0xFFF), sizeof stk);
+                SIZE_T n = 0;
+                if (!ReadProcessMemory(GetCurrentProcess(), (const void*)(cx.Rsp + off), stk + off, want, &n) || n != want) break;
+                off += want;
             }
+            got = off;
         }
         ResumeThread(t.h);
         if (!ok) { t.failed++; return; }
         t.samples++;
         const uintptr_t rip = (uintptr_t)cx.Rip;
-        if (InSyscall(rip)) t.sys++;
+        const bool sys = InSyscall(rip);
+        if (sys) t.sys++;
         const uintptr_t fn = FuncStart(rip);
         t.self[fn ? fn : ((rip & ~(uintptr_t)63) | 1)]++;
-        if (InExe(rip) || InSelf(rip)) return;
-        uintptr_t caller = 0;
-        for (SIZE_T i = 0; i < got / 8; i++)
+        uintptr_t ret[48];
+        const int nr = Unwind(cx, stk, got, ret, 48);
+        // inclusive: every game / mod function on the stack, once
+        uintptr_t seen[48]; int ns = 0;
+        uintptr_t own[2] = {}; int no = 0;
+        std::string between;                                  // the modules between the stop and the first game / mod frame
+        if (InExe(rip) || InSelf(rip)) { seen[ns++] = fn ? fn : rip; own[no++] = fn ? fn : (rip | 1); }
+        for (int i = 0; i < nr; i++)
         {
-            const uintptr_t v = stk[i];
-            if ((InExe(v) || InSelf(v)) && AfterCall(v)) { const uintptr_t f = FuncStart(v); caller = f ? f : (v | 1); break; }
+            const uintptr_t a = ret[i];
+            if (InExe(a) || InSelf(a))
+            {
+                const uintptr_t f = FuncStart(a); const uintptr_t k = f ? f : (a | 1);
+                bool dup = false; for (int j = 0; j < ns; j++) if (seen[j] == k) dup = true;
+                if (!dup && ns < 48) seen[ns++] = k;
+                if (no < 2) own[no++] = k;
+            }
+            else if (!no)
+            {
+                const Module* m = ModOf(a);
+                if (m && m->name != "ntdll.dll" && m->name != "KERNELBASE.dll" && m->name != "KERNEL32.DLL" && between.find(m->name) == std::string::npos)
+                    between += (between.empty() ? "" : " < ") + m->name;
+            }
         }
-        t.via[caller]++;
+        for (int j = 0; j < ns; j++) t.incl[seen[j]]++;
+        if (no) t.unwound++;
+        if (!(InExe(rip) || InSelf(rip))) t.via[no ? own[0] : 0]++;
+        if (sys)
+            t.waits[(no ? Name(own[0]) : std::string("?")) + (no > 1 ? " < " + Name(own[1]) : std::string()) + (between.empty() ? "" : " [via " + between + "]")]++;
     }
 
     template <class M> std::string Top(const M& m, unsigned total, size_t n)
@@ -305,6 +372,18 @@ namespace
             if (outside)
                 LOGI("CpuProfile:   tid {} its {:.1f}% outside the game and the mod, by the nearest caller in them: {}", t->tid,
                      100.0 * outside / t->samples, Top(t->via, outside, 10));
+            LOGI("CpuProfile:   tid {} on the stack (inclusive: the function or what it called; {:.0f}% of the samples walked to the game or the mod): {}", t->tid,
+                 100.0 * t->unwound / t->samples, Top(t->incl, t->samples, 20));
+            if (t->sys)
+            {
+                std::vector<std::pair<unsigned, const std::string*>> w;
+                for (auto& kv : t->waits) w.push_back({ kv.second, &kv.first });
+                std::sort(w.begin(), w.end(), [](auto& a, auto& b) { return a.first > b.first; });
+                std::string s;
+                for (size_t i = 0; i < w.size() && i < 10; i++) s += fmt::format("{}{} {:.1f}%", i ? " | " : "", *w[i].second, 100.0 * w[i].first / t->samples);
+                LOGI("CpuProfile:   tid {} stopped in a system call ({:.0f}% of the samples), by where the game / the mod called (innermost < its caller [modules between]): {}",
+                     t->tid, 100.0 * t->sys / t->samples, s);
+            }
         }
     }
 
@@ -359,7 +438,7 @@ namespace
                 Report(dt);
                 // the next window's hot threads: this window's busiest
                 std::vector<Th*> v;
-                for (auto& kv : g_Th) { kv.second.hot = false; kv.second.samples = kv.second.sys = kv.second.failed = 0; kv.second.self.clear(); kv.second.via.clear(); if (kv.first != g_SelfTid) v.push_back(&kv.second); }
+                for (auto& kv : g_Th) { kv.second.hot = false; kv.second.samples = kv.second.sys = kv.second.failed = 0; kv.second.self.clear(); kv.second.via.clear(); kv.second.incl.clear(); kv.second.waits.clear(); kv.second.unwound = 0; if (kv.first != g_SelfTid) v.push_back(&kv.second); }
                 std::sort(v.begin(), v.end(), [](const Th* a, const Th* b) { return a->cores > b->cores; });
                 for (size_t i = 0; i < v.size() && i < (size_t)kMaxHot; i++) if (v[i]->cores >= kHotCores) v[i]->hot = true;
                 w0 = now; tsc0 = tsc;

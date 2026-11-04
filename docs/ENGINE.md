@@ -357,6 +357,10 @@ the copy.
 - Motion vectors (PS `48f2037fd43d86c8`): `(cur/w - prev/w - cb_jitterrelativetopreviousframe) * (0.5,-0.5)`. Static
   world: previous from PerViewCB `cb_previousviewprojectionmatrix` (= view+0x7590). Entities: `cb_previousmvpmatrix*`
   in cb2, **cached from the last frame** (a few objects build theirs from the view).
+- Only DEPTHPASS / DEPTHALPHA_LIT geometry writes the motion vectors. **The sky has none**: it is drawn later (forward)
+  and keeps the target's clear value, so the TAA does not move the sky's history as the camera turns; the 3x3 clamp
+  lets it trail a little and stop ("play" in the headset, 2026-11-03). The mod fills those pixels (depth still the
+  far value) at the end of DEPTHPASS with the rotation-only motion of a point at infinity ([SkyMotion.cpp](../src/Src/SkyMotion.cpp)).
 - Jitter: an 8-entry table at exe+0x1B35F10 indexed by `frame & 7`, scaled by 2/size; p02 = 2*jx, p12 = 2*jy.
 - With stereo the previous frame is the other eye's: TAA ghosts. Per-eye history + per-eye previous matrices fix it
   ([StereoTaa.cpp](../src/Src/StereoTaa.cpp)). FXAA does not.
@@ -500,6 +504,17 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
 - World pass: the first spot task clears every atlas page (exe+0x3308D90 list, exe+0x2BAFC0); per face (exe+0x32CEA0)
   DIRTY = draw its static casters into the atlas rect, clean = copy its cache entry there (exe+0x32DB10). Dynamic pass:
   its first task copies every DIRTY face from the atlas into its entry (exe+0x334C90), then moving casters are drawn on top.
+- The fit: per face, exe+0x32AB80(..., view, out vec4 per face, mode); mode 2 refits the face to the camera's view
+  (exe+0x32E7C0, from view+0x7390 / +0x7450 / +0x73D0 / +0x7550), and the vec4 is part of the cache key (exe+0x2CD500:
+  entry+0x28 within 0.001; also entry+0x38 >= the face size, the light's floats within 0.0001; a hit stamps entry+0x3C
+  with the frame counter exe+0x32FC64C). Mode 2 when job+0x658 >= 1, the light's flags & 0x20 clear and view+0x3A34 bit 0
+  clear: omni exe+0x333055 `mov r10b,1`, spot exe+0x33367D `mov r9b,1` (ShadowLampKeepCache sets both immediates to 0).
+- The lamps' cache sweep, at the end of each main view's frame (exe+0x34FCDF, unless view+0x3A34 bit 0): exe+0x2CD4C0
+  (cache exe+0x3309A08, the frame counter exe+0x32FC64C, the index at exe+0x3309CA8) -> exe+0x2CC940 frees every entry whose
+  last use entry+0x3C is older than that counter: an entry lives one frame unless used again.
+- operator new: exe+0xF13F0 (the allocator's vtable +8 with TAG_NEW, idLib\Heap.cpp).
+- The frame sync exe+0x3591B0 (the render thread, once a frame): a timed section, then the immediate context's Flush
+  ([0x1432D4EF8] vtable +0x378) unless [0x1432FB1F8] == 1 and [0x143937288] == 2; the time spent is stored at exe+0x25AE8E0.
 
 ### 4.8 Fog and its upscale
 - View render flags +0x3A36 (set each frame at exe+0x374F9F..): bit 0 `r_skipFog`, bit 2 `r_skipLightScattering` (the

@@ -267,6 +267,10 @@ namespace
         int samples = 0; std::string sampleText;
         double needMax = 0, needSum = 0; unsigned long long needN = 0;   // a left frame's faces, in 2048 x 2048 cache slices
     } g_Sh;
+    // the frame's decisions, for the other tasks of the same frame without the lock (2026-11-03, CpuProfile: the lamp
+    // tasks of a frame run at once on the render workers and queued on g_Sh.m behind the first one's signature)
+    std::atomic<unsigned long long> g_ShLeftA{ 0 }, g_ShDecidedA{ 0 }, g_ShFastSkipped{ 0 }, g_ShFastRun{ 0 };
+    std::atomic<bool> g_ShSkipA{ false };
 
     bool Readable(const void* p, size_t n)
     {
@@ -469,6 +473,15 @@ namespace
         const bool left = p.valid && p.eye == 0 && p.pair;              // keyed by the pair (its left view's serial)
         const bool right = p.valid && p.eye == 1 && p.pair && p.pair != s;
         if (!left && !right) return g_ShadowReal(task, dynamic);
+        if (left && g_ShLeftA.load(std::memory_order_acquire) == p.pair) return g_ShadowReal(task, dynamic);   // this frame's lists are taken
+        if (right && g_ShDecidedA.load(std::memory_order_acquire) == s)
+        {   // this frame is decided
+            const bool sk = g_ShSkipA.load(std::memory_order_relaxed);
+            (sk ? g_ShFastSkipped : g_ShFastRun).fetch_add(1, std::memory_order_relaxed);
+            if (!sk) return g_ShadowReal(task, dynamic);
+            if (uint8_t* ctx = *(uint8_t**)((uint8_t*)task + 0x108)) ctx[0x12AD4] = 1;   // as the engine marks a task it skips
+            return false;
+        }
         bool skip = false;
         {
             std::lock_guard lk(g_Sh.m);
@@ -481,6 +494,7 @@ namespace
                     if (ShadowJobsSig(task, sig, dirty, jobs, faces, &g_Sh.leftFaces))
                     {
                         g_Sh.leftSerial = p.pair; g_Sh.leftSig = sig; g_Sh.lefts++; g_Sh.lastJobs = jobs; g_Sh.lastFaces = faces;
+                        g_ShLeftA.store(p.pair, std::memory_order_release);
                         if (dirty) g_Sh.leftsDirty++;
                         if (dirty && !g_Sh.prevLeftFaces.empty() && ::Log::Enabled())   // (the log's reasons only)
                             for (const auto& fc : g_Sh.leftFaces)
@@ -556,6 +570,8 @@ namespace
                         }
                     }
                     else { g_Sh.skip = true; g_Sh.rightsSkipped++; }
+                    g_ShSkipA.store(g_Sh.skip, std::memory_order_relaxed);
+                    g_ShDecidedA.store(s, std::memory_order_release);
                 }
                 skip = g_Sh.skip;
                 if (skip) g_Sh.tasksSkipped++; else g_Sh.tasksRun++;
@@ -793,7 +809,7 @@ void StereoSync::OnPresent()
             LOGI("StereoSync: lamp shadows (StereoLightShadowReuse): left frames {}, right frames that reused them {}, drawn because a face was new {} / "
                  "the jobs differed {} / no left frame to compare {} / unreadable {}; tasks skipped {} run {}; last frame {} jobs {} faces",
                  g_Sh.lefts, g_Sh.rightsSkipped, g_Sh.rightsDirty, g_Sh.rightsDiffer, g_Sh.rightsNoLeft, g_Sh.unreadable,
-                 g_Sh.tasksSkipped, g_Sh.tasksRun, g_Sh.lastJobs, g_Sh.lastFaces);
+                 g_Sh.tasksSkipped + g_ShFastSkipped.load(), g_Sh.tasksRun + g_ShFastRun.load(), g_Sh.lastJobs, g_Sh.lastFaces);
             // why: a face new in the right frame -- new in its left frame too (the light's cache entry does not last: it
             // moved / flickers, or the cache is full), or cached there and asked for again at another size (the eyes
             // ask for different shadow resolutions: the cache's lookup exe+0x2CD500 wants one at least as large)

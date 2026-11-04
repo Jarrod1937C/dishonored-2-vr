@@ -101,6 +101,7 @@ namespace
         { "display.shadowsunupdateevery", Kind::Float, "4", 1, 4, nullptr },   // frame pairs: the sun's far cascades' redraw interval   // m across: smaller moving objects leave the sun's maps (0 = none)   // ScreenShadows: r_shadowCullDistance held at this (0 = the game's)
         { "display.shadowultratrim",    Kind::Bool,   "1", 0, 0, nullptr },   // ScreenShadows: Ultra's costly non-sharpening settings held at High's
         { "display.shadowlampfewerupdates", Kind::Bool, "1", 0, 0, nullptr }, // ScreenShadows: the lamps' moving-caster updates at Low's thresholds
+        { "display.shadowlampkeepcache", Kind::Bool, "1", 0, 0, nullptr },    // ScreenShadows: the lamps' shadow maps not refitted to the camera (their cache works)
         { "display.shadowlampcacheslices", Kind::Float, "32", 0, 128, nullptr, true }, // ScreenShadows: r_shadowCacheSliceCnt (0 = the game's 12)
         { "display.staticlodzoom",      Kind::Float,  "1.5", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
         { "display.viewdistance",       Kind::Float,  "3", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
@@ -121,6 +122,7 @@ namespace
         { "display.stereo3d",           Kind::Choice, "1", 0, 0, "0|1|2|true|false|on|off|yes|no", true },   // hidden: the mod is made for 1
         { "display.renderscale",        Kind::Float,  "1", 0, 2, nullptr },
         { "display.taasharpening",      Kind::Float,  "0.5", 0, 1, nullptr },   // TaaSharpen: the TAA's result sharpened in the headset (0 = off)
+        { "display.taaskymotion",       Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: SkyMotion: the sky given motion vectors for the TAA
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
@@ -370,6 +372,7 @@ bool Settings::LogInput() { return B("logging.logcontrollerinput"); }
 bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::TaaSharpening() { return F("display.taasharpening"); }
+bool Settings::TaaSkyMotion() { return B("display.taaskymotion"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
 bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
 bool Settings::SwordBladeDamage() { return B("gameplay.swordbladedamage"); }
@@ -465,6 +468,7 @@ float Settings::ScreenSpaceShadowSmallObjects() { return F("display.screenspaces
 float Settings::ShadowCullDistance() { return F("display.shadowculldistance"); }
 bool Settings::ShadowUltraTrim() { return B("display.shadowultratrim"); }
 bool Settings::ShadowLampFewerUpdates() { return B("display.shadowlampfewerupdates"); }
+bool Settings::ShadowLampKeepCache() { return B("display.shadowlampkeepcache"); }
 int Settings::ShadowLampCacheSlices() { return (int)std::lround(F("display.shadowlampcacheslices")); }
 float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
 int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
@@ -619,6 +623,7 @@ namespace
         { "shadowsunupdateevery", "4" },
         { "shadowultratrim", "1" },
         { "shadowlampfewerupdates", "1" },
+        { "shadowlampkeepcache", "1" },
         { "viewdistance", "3" },
         { "staticlodzoom", "1.5" },
         { "hudresolution", "0.5" },
