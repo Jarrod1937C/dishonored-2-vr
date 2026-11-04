@@ -400,9 +400,10 @@ Only what is current. Items that later work fixed have been dropped.
   handling. But the trailing did show in that run (the user, 2026-11-03: "like I was drunk, a delayed version of the
   world eventually blending back"). The matrices are right, so the next suspect is the motion-vector texture itself
   (written in the depth pass): a history that stays put and fades out is what zero camera motion in it would give.
-  With logging on, every 5 s one eye's motion vectors are read back (at most 60 times; each read-back stalls the GPU
-  for a moment) and the centre's are logged next to the motion that dispatch's own camera matrices predict there
-  (`StereoTaa: motion check`). **Cause found:** `DepthPassDepthOnly` (on by default since 2026-11-01) took the depth
+  A motion check (2026-11-03) read one eye's motion vectors back every 5 s and logged the centre's next to the motion
+  that dispatch's own camera matrices predict there (`StereoTaa: motion check`). It confirmed the fix and was then
+  removed: each read-back stalled the GPU (felt as a stutter every 5 s, and it ran with logging off too). `vr aamv
+  auto <eye>` still runs one on request. **Cause found:** `DepthPassDepthOnly` (on by default since 2026-11-01) took the depth
   pass's motion-vector shader off, so the static world had no motion vectors; it is now paused while the TAA runs. The
   2026-10-31 session predates that setting, so if the trailing remains with the fix, the motion check above is the next
   step. **Fixed** (played 2026-11-03: gone; motion vectors match the camera).

@@ -1372,23 +1372,15 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
             if (::Log::Enabled())
             {   // the health of the per-eye TAA in the log, every 10 s while it runs (the counters are cumulative): whether each
                 // eye found its own history and previous matrices -- the heartbeat file has it only when StatusFile is on.
-                // Only with logging on: its motion check reads a full-resolution texture back (a GPU stall) every 5 s
+                // Only with logging on
                 static ULONGLONG nextHealth = 0; const ULONGLONG now = GetTickCount64();
                 bool running = false; { std::lock_guard lk(g_HM); running = g_Hist[0][0] != nullptr; }
                 if (!active || !running) nextHealth = 0;
                 else if (!nextHealth) nextHealth = now + 10000;
                 else if (now >= nextHealth) { nextHealth = now + 10000; LOGI("StereoTaa: health: {}", Status()); }
-                // and the motion check (see g_MvVp): every 5 s, the eyes in turn, at most 60 read-backs (each one stalls
-                // the GPU for a moment)
-                static ULONGLONG nextMv = 0; static int mvEye = 0;
-                if (!active || !running) nextMv = 0;
-                else if (!nextMv) nextMv = now + 5000;
-                else if (now >= nextMv)
-                {
-                    nextMv = now + 5000;
-                    std::lock_guard lk(g_MvM);
-                    if (g_MvAutoTries < 60 && g_MvAutoLogs < 24 && g_MvReq.load() == 0 && !g_MvPending) { g_MvTag = "auto"; g_MvWantEye = mvEye; mvEye ^= 1; g_MvReq = 1; }
-                }
+                // (the automatic motion check that ran here every 5 s, 2026-11-03, is gone: it confirmed the TAA's motion
+                // vectors, and each of its read-backs stalled the GPU -- felt as a stutter every 5 s. `vr aamv auto <eye>`
+                // still runs one on request.)
             }
             if (active && !g_FellBack && ++g_WinFrames >= 120)
             {
