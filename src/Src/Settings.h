@@ -66,6 +66,8 @@ namespace Settings
     bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
+    float SitHoldTime();                          //!< [Controls.Body] SitHoldTime: s B is held while crouched to sit (0 = off)
+    float SitHeight();                            //!< [Controls.Body] SitHeight: m (the ini says cm) the eye is over the feet when sitting
     bool Roomscale();                             //!< [Controls] Roomscale: walking in the room walks the character (Roomscale)
     std::string ControllerBindings();             //!< [Controls] ControllerBindings: auto or a profile's file name (ControllerBindings)
     float PadPressForce();                        //!< a controller profile's trackpad press force (KbmInject)

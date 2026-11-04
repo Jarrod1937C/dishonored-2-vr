@@ -12,6 +12,8 @@ static const VrRow kVrRows[] = {
     { "Controls", "Controllers", "GripThresholdRight" },
     { "Controls", "Controllers", "ControllerPitchOffset" },
     { "Controls", "Body", "PhysicalCrouchDepth" },
+    { "Controls", "Body", "SitHoldTime" },
+    { "Controls", "Body", "SitHeight" },
     { "Controls", "Body", "WallFade" },
     { "Gameplay", "Sword", "SwordDamageScale" },
     { "Gameplay", "Knockout", "KnockoutSpeed" },

@@ -147,7 +147,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                A ..... drink a mana elixir
                                Y / X . assign the highlighted item to a quick slot
    A ................................. jump
-   B ................................. crouch (toggle)
+   B ................................. crouch (toggle); held while crouched: sit down
    Y ................................. quick slot 1 (hold 0.5 s: slot 3 - the controller buzzes)
    X ................................. quick slot 2 (hold 0.5 s: slot 4)
                                        (Index: the left trackpad's edges; see below)
@@ -294,6 +294,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                Open them with Notepad; "notes" in each explains its settings.
    [Gameplay]  SwordDamageScale = 1 (the blade's damage)   KnockoutSpeed = 8 (m/s)   KnockoutSoundVolume = 0.8
                PhysicalCrouchDepth = 30 (cm)   WallFade = 1
+               SitHoldTime = 0.8 (s B is held while crouched to sit; 0 = off)   SitHeight = 80 (cm)
                FarReachVRComfortOption = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:

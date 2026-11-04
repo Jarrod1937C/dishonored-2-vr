@@ -276,7 +276,31 @@ namespace
     // standing height is learned (the camera over the player's feet while not crouched); the lift stays until the
     // camera is back up after the player stands (or 2 s).
     std::atomic<float> g_StandCamH{ 1.70f }, g_CrouchLift{ 0.f }, g_CamH{ 0.f };
+    std::atomic<float> g_SitDrop{ 0.f };
+    float CrouchLiftOf(const float camOrg[3], const ViewSnap& snap, bool& camOk);
+    //! KbmInject's sitting (B held while crouched): the eye lowered to SitHeight over the feet, eased in and out (~0.2 s),
+    //! on top of the crouch lift. Only while the camera's height over the feet is known (camOk).
     float CrouchLift(const float camOrg[3], const ViewSnap& snap)
+    {
+        bool camOk = false;
+        const float lift = CrouchLiftOf(camOrg, snap, camOk);
+        static double last = 0; static float cur = 0.f;
+        LARGE_INTEGER t, f; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&f);
+        const double now = (double)t.QuadPart / (double)f.QuadPart;
+        float target = 0.f;
+        if (camOk && KbmInject::Sitting())
+        {
+            const float eye = g_CamH.load() + lift, h = KbmInject::SitHeight();
+            if (eye > h) target = h - eye;
+        }
+        if (!camOk) cur = 0.f;
+        const double dt = std::clamp(now - last, 0.0, 0.1); last = now;
+        cur += (target - cur) * (float)(1.0 - exp(-dt / 0.2));
+        if (target == 0.f && fabsf(cur) < 1e-3f) cur = 0.f;
+        g_SitDrop = cur;
+        return lift + cur;
+    }
+    float CrouchLiftOf(const float camOrg[3], const ViewSnap& snap, bool& camOk)
     {
         static double lastOwn = -1e9;
         LARGE_INTEGER t, f; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&f);
@@ -288,6 +312,7 @@ namespace
         const float camH = camOrg[2] - an[BodyHide::aPlayer].org[2];
         g_CamH = camH;
         if (camH < 0.2f || camH > 2.6f) { g_CrouchLift = 0.f; return 0.f; }
+        camOk = true;
         const bool low = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch") || PlayerState::Running("WallCrouch")
                       || PlayerState::Running("Sliding") || PlayerState::AnimActive();
         float stand = g_StandCamH.load();

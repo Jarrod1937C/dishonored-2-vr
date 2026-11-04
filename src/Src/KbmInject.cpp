@@ -884,6 +884,38 @@ namespace
         g_VStandA = V.on;
         return V.swallow;
     }
+    // [Controls.Body] SitHoldTime / SitHeight: holding the crouch button (B) sits down. Once the character is crouched
+    // and B has been held this long (the stick at rest), the view goes down to SitHeight over the feet -- the height of
+    // someone sitting on the floor, under the game's crouch (~1.2 m) -- while the character stays in the game's crouch
+    // (stealth, its collision, its hit box). B again stands up (the press is the game's crouch toggle, as always);
+    // walking off, or the game leaving its crouch (a ledge, a jump, a hit), ends it and the view goes back to the crouch.
+    // ViewMatrixHook lowers the view (and the hands with it) smoothly.
+    std::atomic<float> g_SitHold{ 0.8f }, g_SitHeight{ 0.80f };
+    std::atomic<bool> g_SitA{ false };
+    void SitTick(uint32_t pressed, uint32_t live, bool moving, bool bKept)
+    {
+        static double bAt = -1;
+        const float hold = g_SitHold.load();
+        const bool crouched = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch");
+        bool sit = g_SitA.load();
+        if (pressed & kXRBtnB)
+        {
+            if (sit) { sit = false; LOGI("KbmInject: sitting: B: getting up (the press stands the character)"); }
+            bAt = g_Now;
+        }
+        if (!(live & kXRBtnB)) bAt = -1;
+        if (!sit && hold > 0.f && bAt >= 0 && g_Now - bAt >= hold && crouched && !bKept && !moving && !g_Possessing.load())
+        {
+            sit = true; bAt = -1;
+            LOGI("KbmInject: sitting: B held {:.1f} s while crouched: the view goes down to {:.0f} cm over the feet (B again stands up)", hold, g_SitHeight.load() * 100.f);
+        }
+        if (sit && (!crouched || moving || g_Possessing.load()))
+        {
+            sit = false;
+            LOGI("KbmInject: sitting: over ({}): the view goes back to the crouch", !crouched ? "the game left its crouch" : moving ? "walking" : "possession");
+        }
+        g_SitA = sit;
+    }
     void MouseMove(int dx, int dy)
     {
         if (!dx && !dy) return;
@@ -1730,6 +1762,7 @@ void KbmInject::Tick()
     Hold(kSpace, (live & kXRBtnA) != 0);                  // A            : jump
     const bool bKept = VirtualStand(pressed, live);
     Hold(kC,     (live & kXRBtnB) != 0 && !bKept);        // B            : crouch (the game's C toggles; see VirtualStand)
+    SitTick(pressed, live, moving, bKept);                // B held while crouched: sit (SitHoldTime)
     const bool quick = g_QuickSlots.load() != 0;
     // Y / X: quick slots 1-4 (short / held). The old Y was the game's LEAN, which only leans together with a sideways
     // stick and stops the stick walking meanwhile -- alone it did nothing; leaning the head already moves the view.
@@ -2191,6 +2224,14 @@ void KbmInject::SetMouthPotions(bool on)
     g_MouthPotions = on;
     LOGI("KbmInject: elixirs at the mouth {}", on ? "on: a grip squeezed with that hand at your mouth drinks -- left hand health, right hand Addermire (MouthPotions = 1)" : "off");
 }
+void KbmInject::SetSitting(float holdSec, float heightM)
+{
+    g_SitHold = std::clamp(holdSec, 0.f, 3.f); g_SitHeight = std::clamp(heightM, 0.3f, 1.4f);
+    if (g_SitHold.load() <= 0.f) g_SitA = false;
+    LOGI("KbmInject: sitting {}", g_SitHold.load() > 0.f ? fmt::format("on: B held {:.1f} s while crouched lowers the view to {:.0f} cm over the feet", g_SitHold.load(), g_SitHeight.load() * 100.f) : std::string("off (SitHoldTime = 0)"));
+}
+bool KbmInject::Sitting() { return g_SitA.load(std::memory_order_relaxed); }
+float KbmInject::SitHeight() { return g_SitHeight.load(std::memory_order_relaxed); }
 void KbmInject::SetPhysicalCrouch(bool on, float depth)
 {
     g_PcOn = on; g_PcDepth = std::clamp(depth, 0.1f, 0.8f);

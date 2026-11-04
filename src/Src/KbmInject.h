@@ -65,6 +65,11 @@ namespace KbmInject
     //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
     //! character (the game's crouch key), standing up stands it.
     void SetPhysicalCrouch(bool on, float depth);
+    //! [Controls.Body] SitHoldTime (s, 0 = off) / SitHeight (m; the ini says cm): B held that long while crouched sits
+    //! down -- the view lowered to that height over the feet (ViewMatrixHook) until B, walking or the crouch ending.
+    void SetSitting(float holdSec, float heightM);
+    bool Sitting();
+    float SitHeight();
     void SetTempleZoom(bool on);           //!< [Gameplay] TempleZoom: the right hand tapped against the side of the head taps the zoom
     void SetMouthPotions(bool on);         //!< [Gameplay] MouthPotions: a grip at the mouth drinks (left health, right Addermire)
     void SetPadParams(float pressForce, float releaseForce, float centreRadius);   //!< a controller profile's trackpad presses

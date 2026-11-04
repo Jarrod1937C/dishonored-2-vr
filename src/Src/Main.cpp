@@ -174,6 +174,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "knockoutsoundvolume" })) MeleeAim::SetKnockoutSound(Settings::KnockoutSoundVolume());
     if (has({ "finisheranimations" })) MeleeAim::SetFinishers(Settings::FinisherAnimations());
     if (has({ "physicalcrouch", "physicalcrouchdepth" })) KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
+    if (has({ "sitholdtime", "sitheight" })) KbmInject::SetSitting(Settings::SitHoldTime(), Settings::SitHeight());
     if (has({ "roomscale", "roomscaledeadzone", "roomscalemaxspeed" })) Roomscale::SetParams(Settings::Roomscale(), Settings::RoomscaleDeadzone(), Settings::RoomscaleMaxSpeed());
     if (has({ "wallfade", "wallfadecolor" })) { float c[3]; Settings::WallFadeColor(c); Roomscale::SetWallFade(Settings::WallFade(), c); }
     if (has({ "handcollision" })) Collision::SetHands(Settings::HandCollision());
@@ -266,6 +267,7 @@ static DWORD WINAPI InitThread(LPVOID)
     BinkVideo::SetSkipIntros(Settings::SkipIntroVideos());
     MeleeAim::SetFinishers(Settings::FinisherAnimations());
     KbmInject::SetPhysicalCrouch(Settings::PhysicalCrouch(), Settings::PhysicalCrouchDepth());
+    KbmInject::SetSitting(Settings::SitHoldTime(), Settings::SitHeight());
     Roomscale::SetParams(Settings::Roomscale(), Settings::RoomscaleDeadzone(), Settings::RoomscaleMaxSpeed());
     { float c[3]; Settings::WallFadeColor(c); Roomscale::SetWallFade(Settings::WallFade(), c); }
     Collision::SetHands(Settings::HandCollision());
