@@ -288,7 +288,7 @@ you would for real, instead of only pointing at it and pressing a button.
 - **No motion blur or depth of field** in VR; Meta's ASW is switched off for the game on Link / Air Link.
 - **A tidier game Options menu:** in VR the game's own Options screens leave out the settings the mod decides there:
   field of view, adaptive resolution, triple buffering, V-Sync and the frame-rate limiter (the headset paces the
-  game), depth of field, motion blur, fog blur, HBAO+ (with `AmbientOcclusion = 0`), view distance (the VR options'
+  game), depth of field, motion blur, fog blur, HBAO+ (held off in VR), view distance (the VR options'
   `ViewDistance`), the crosshair (the hands' reticles replace it) and the kill cam (with `FinisherAnimations = 0`).
 - **The game window is kept in front:** the controllers drive the game's keyboard and mouse, which Windows gives only
   to the window in front. The mod brings the game back when you press a button or put the headset on, and raises it
@@ -364,7 +364,8 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 ![WMR controller layout](docs/images/controls-wmr.svg)
 
 - Profile: `wmr.json`. No A / B / X / Y, so the trackpads take the Index's roles; the right stick click jumps and the
-  right menu button crouches. Elixirs are drunk at the mouth. No zoom button: tap the side of your head to zoom.
+  right menu button crouches. The menu is the left menu button or the middle of the left trackpad. Elixirs are drunk
+  at the mouth. No zoom button: tap the side of your head to zoom.
 
 ### HTC Vive / Vive Pro wands
 
@@ -444,8 +445,9 @@ The engine draws one view per frame. Real stereo is built on top of that:
   runtime's largest swapchain image (and an optional megapixel budget). The player's game config keeps their own
   window size.
 - **TAA per eye.** The game's temporal anti-aliasing blends with the previous frame, which in stereo is the other eye.
-  Each eye gets its own history texture, its own "previous" view and jitter, and every draw's cached previous matrix is
-  matched to the same eye's last frame, so moving objects stay sharp in both eyes.
+  Each eye gets its own pair of history textures (read one, write the other: no copies), its own "previous" view and
+  jitter, and every draw's cached previous matrix is matched to the same eye's last frame, so moving objects stay sharp
+  in both eyes.
 - **The pose the image was rendered from.** The engine's pipeline is deeper than one Present. Every view gets a serial
   that travels with the command lists that draw it, so each image is submitted with exactly the pose it was rendered
   from and the compositor's reprojection corrects the true difference.
@@ -475,7 +477,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `ViewDistance` | The game's view-distance level (LOD distance and occlusion gates) independently of its menu's detail preset. |
 | `StaticLodZoom` | Static models switch to simpler versions sooner (>1); the depth pass is dominated by small triangles. |
 | `HudResolution` | The HUD panel's resolution per side (0.5 is about 1:1 with a high-resolution display): less video memory and compositor bandwidth. |
-| `AmbientOcclusion` | 0 = no ambient occlusion in VR (the game's own option cannot turn it off). |
+| `AmbientOcclusion` | 0 = no ambient occlusion in VR (the game's own option cannot turn it off). 1 = the game's own ambient occlusion; NVIDIA HBAO+, the costlier one, is held off in VR. |
 | `CheapFog` | The game's volumetric fog is computed at quarter resolution, and its blocky edges show against the sky in VR. It is off, replaced by the mod's own light distance fog drawn from the depth buffer, with a colour surveyed from each map's horizon and following the eye's exposure. |
 
 **Hidden**
@@ -489,7 +491,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `DepthPassSkipRedundantCopies` | Depth copies whose result nothing reads are not made. The depth downsample is kept whenever depth of field or the game's fog (the Void) needs it. |
 | `DepthPassDepthOnly` | The depth pass's main shader writes the motion vectors, which only the game's TAA reads: without TAA it is drawn depth-only, the GPU's faster path (paused automatically while TAA runs). |
 | `SkipEmptyOutlines` | The outline effect's full-screen passes are predicated on an occlusion query of its mask: the GPU skips them when nothing is outlined. |
-| `SkipDisabledEffects` | The disabled SSAO pass's neutral full-screen fill is replaced by clears. |
+| `SkipDisabledEffects` | With ambient occlusion off, the SSAO pass still draws the game's AO and then overwrites it with a "no AO" fill: the AO draw is skipped (once the mod has seen the fill cover it entirely). |
 | `HudSkipEmpty` | The HUD panel is trimmed to the region that shows something (a 64x64 occupancy grid read back without stalls), and not submitted at all when empty. |
 | `SkipSneakOverlay` | The sneak overlay drawn while crouched is skipped: it showed as a small head-locked square in each eye. |
 | `VrGraphicsTweaks`, `DisableMotionBlur` | No depth of field or motion blur in VR (through the view's render flags). |

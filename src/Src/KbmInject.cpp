@@ -1506,7 +1506,10 @@ void KbmInject::Tick()
                                                       : "on, without trackpads: right trigger = interact, right stick click = the sword's button (no zoom), Y / X = quick slots (short / held), menu button = menu");
         }
     }
-    if (indexPads) raw = (raw & ~kXRBtnMenu) | PadBits(in);
+    // (The menu button's own bit is dropped only while the left pad is pressed: on the Index that binding IS the left
+    // pad's force, split by PadBits; a controller with trackpads AND a menu button -- Windows Mixed Reality -- keeps
+    // its menu button as well, 2026-11-03.)
+    if (indexPads) raw = (raw & ~(in.padForce[0] > 0.05f ? kXRBtnMenu : 0u)) | PadBits(in);
     {
         static bool chord = false;
         constexpr unsigned kBoth = kXRBtnThumbL | kXRBtnThumbR;

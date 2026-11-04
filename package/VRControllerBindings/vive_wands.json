@@ -1,7 +1,7 @@
 {
   "name": "HTC Vive / Vive Pro wands",
   "label": "Vive / Vive Pro wands",
-  "about": "Trackpads instead of sticks, and four buttons; played as the Valve Index is as far as they go (Layout = index): right trigger = interact, the grips (buttons) for your hands, the sword strikes by swinging (power attack: fist by your right ear). The left trackpad walks (touch it; press it: sprint), the right one turns (press it: jump); right menu button = crouch, left menu button = the menu (short: journal, held: pause). There are not enough buttons for the quick slots (use the power wheel on the left grip, the holsters, and MouthPotions for elixirs) or zoom. Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
+  "about": "Trackpads instead of sticks, and four buttons; played as the Valve Index is as far as they go (Layout = index): right trigger = interact, the grips (buttons) for your hands, the sword strikes by swinging (power attack: fist by your right ear). The left trackpad walks (touch it; press it: sprint), the right one turns (press it: jump); right menu button = crouch, left menu button = the menu (short: journal, held: pause). There are not enough buttons for the quick slots (use the power wheel on the left grip, the holsters, and MouthPotions for elixirs). Zoom: tap the side of your head with your right hand (TempleZoom). Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
   "profiles": [
     {
       "path": "/interaction_profiles/htc/vive_controller"

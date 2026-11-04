@@ -241,16 +241,17 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  Touch layout: right trigger = sword, right grip = take / use / block, right stick click = zoom)
    Touch-style (A / B, X / Y, two sticks): Meta Quest / Rift (touch.json), HP Reverb G2
    (hp_reverb_g2.json), Vive Cosmos (vive_cosmos.json), Vive Focus 3 / XR Elite
-   (vive_focus3.json), Pico 4 / Neo 3 (pico.json): the controls above (no zoom: its button is
-   the sword's); menu button = the LEFT controller's menu button.
+   (vive_focus3.json), Pico 4 / Neo 3 (pico.json): the controls above (zoom by tapping the side
+   of your head: the stick click is the sword's); menu button = the LEFT controller's menu button.
    Windows Mixed Reality / Samsung Odyssey (wmr.json): no A / B / X / Y, so the Index's trackpad
-   layout: left trackpad edges = quick slots 1-4, its middle = menu; right trackpad press = the
+   layout: left trackpad edges = quick slots 1-4, its middle (or the left menu button) = menu;
+   right trackpad press = the
    sword's attack; right trigger = interact; right stick click = jump; right menu button =
-   crouch; left stick click = sprint. Elixirs: hand to your mouth + grip. No zoom.
+   crouch; left stick click = sprint. Elixirs: hand to your mouth + grip. Zoom: tap your head.
    HTC Vive / Vive Pro wands (vive_wands.json): left trackpad walks (press: sprint), right one
    turns (press: jump); right menu button = crouch; left menu button = menu; right trigger =
-   interact, grips for your hands, the sword by swinging. No quick slots or zoom (power wheel
-   on the left grip, holsters, elixirs at the mouth).
+   interact, grips for your hands, the sword by swinging. No quick slots (power wheel on the
+   left grip, holsters, elixirs at the mouth); zoom by tapping the side of your head.
    The right profile is picked by itself (ControllerBindings = auto); the log says which.
 
 
@@ -321,7 +322,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                CameraPitchFix = 1 (the game's camera does not slide forward / back as you look down / up)
                DisableMetaASW = 1 (Link / Air Link: Meta's ASW off for this game, see section 7)
                VrGraphicsTweaks = 1 (in VR only: no depth of field; 0 = as the game has it)
-               AmbientOcclusion = 0 (no ambient occlusion in VR: faster; 1 = the game's)
+               AmbientOcclusion = 0 (no ambient occlusion in VR: faster; 1 = the game's own; HBAO+ is
+                                   held off in VR)
                SkipSneakOverlay = 1 (hidden: the crouch overlay, a small square in each eye, is not drawn)
                Fog = 0 (hidden: the game's own fog only in the FogMaps maps; its low-resolution blocks show in
                     front of the sky elsewhere)
@@ -383,8 +385,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                  StereoOceanReuse   StereoDecalReuse   StereoStreamOncePerPair
                                  StereoLightShadowReuse (lamps' shadows)
                                  (StereoReflectionReuse is no longer used: it broke reflections)
-               SkipDisabledEffects = 1 (hidden: 1 = the disabled SSAO's fill becomes a clear; 2 = also skip
-                                      DOF's copy, which breaks water / electricity: do not use)
+               SkipDisabledEffects = 1 (hidden: with ambient occlusion off, the game's AO draw that its
+                                      "no AO" fill overwrites is skipped; 2 = also skip DOF's copy,
+                                      which breaks water / electricity: do not use)
    [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 0   InfiniteAmmo = 0
                InfiniteHealth = 0; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
                UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs

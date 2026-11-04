@@ -1,7 +1,7 @@
 {
   "name": "Windows Mixed Reality motion controllers (and Samsung Odyssey)",
   "label": "Windows Mixed Reality, Odyssey",
-  "about": "Sticks AND trackpads, no A / B / X / Y: the Valve Index's trackpad layout fits them. Left stick walks (click: sprint), right stick turns; right stick click = jump, right menu button = crouch; left trackpad: press its top / right / bottom / left = quick slots 1-4, its middle = the menu button (short: journal, held: pause); right trackpad press = the sword's attack (it also strikes by swinging), right trigger = interact; the grips (buttons) grab, pull, holster and block. Elixirs: bring a hand to your mouth and squeeze its grip (MouthPotions). No zoom button. Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
+  "about": "Sticks AND trackpads, no A / B / X / Y: the Valve Index's trackpad layout fits them. Left stick walks (click: sprint), right stick turns; right stick click = jump, right menu button = crouch; left trackpad: press its top / right / bottom / left = quick slots 1-4, its middle or the left menu button = the menu (short: journal, held: pause); right trackpad press = the sword's attack (it also strikes by swinging), right trigger = interact; the grips (buttons) grab, pull, holster and block. Elixirs: bring a hand to your mouth and squeeze its grip (MouthPotions). Zoom: tap the side of your head with your right hand (TempleZoom). Any setting of DishonoredVR.ini can be put in 'settings'; the ones here win over the ini's. The VR options tabs save these values back into this file.",
   "profiles": [
     {
       "path": "/interaction_profiles/microsoft/motion_controller"

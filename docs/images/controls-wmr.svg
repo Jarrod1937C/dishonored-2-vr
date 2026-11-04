@@ -22,10 +22,10 @@
 <text x="30" y="298.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">move - click: sprint</text>
 <line x1="292" y1="276" x2="462.0" y2="232.0" stroke="#2f6fdf" stroke-width="1.3"/>
 <circle cx="292" cy="276" r="2.5" fill="#2f6fdf"/><circle cx="462.0" cy="232.0" r="2.5" fill="#2f6fdf"/>
-<text x="30" y="326.0" font-size="14.5" fill="#9aa3ad" font-weight="bold" text-anchor="start">Left menu button</text>
-<text x="30" y="344.0" font-size="13" fill="#5b6670" font-weight="normal" text-anchor="start">not used</text>
-<line x1="292" y1="322" x2="434.0" y2="264.0" stroke="#9aa3ad" stroke-width="1.3"/>
-<circle cx="292" cy="322" r="2.5" fill="#9aa3ad"/><circle cx="434.0" cy="264.0" r="2.5" fill="#9aa3ad"/>
+<text x="30" y="326.0" font-size="14.5" fill="#2f6fdf" font-weight="bold" text-anchor="start">Left menu button</text>
+<text x="30" y="344.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">short: journal - hold: pause menu</text>
+<line x1="292" y1="322" x2="434.0" y2="264.0" stroke="#2f6fdf" stroke-width="1.3"/>
+<circle cx="292" cy="322" r="2.5" fill="#2f6fdf"/><circle cx="434.0" cy="264.0" r="2.5" fill="#2f6fdf"/>
 <text x="30" y="372.0" font-size="14.5" fill="#13956b" font-weight="bold" text-anchor="start">Left grip</text>
 <text x="30" y="390.0" font-size="13" fill="#1f2933" font-weight="normal" text-anchor="start">hold: power wheel - holsters</text>
 <line x1="292" y1="368" x2="455.0" y2="346.0" stroke="#13956b" stroke-width="1.3"/>
