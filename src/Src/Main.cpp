@@ -158,6 +158,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "ambientocclusion" })) VrTweaks::SetAmbientOcclusion(Settings::AmbientOcclusion());
     if (has({ "fog" })) VrTweaks::SetFog(Settings::Fog());
     if (has({ "staticlodzoom" })) VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    if (has({ "disableheadbob" })) VrTweaks::SetHeadBobOff(Settings::DisableHeadBob());
     if (has({ "fpscounter", "fpscountersize", "fpscounterangle" })) VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     if (fog) Fog::SetParams(Settings::CheapFog());
     if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
@@ -247,6 +248,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::SetFogMaps(Settings::FogMaps());
     VrTweaks::SetFogMapsResolution(Settings::FogMapsResolution());
     VrTweaks::SetLodZoom(Settings::StaticLodZoom());
+    VrTweaks::SetHeadBobOff(Settings::DisableHeadBob());
     VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     VrTweaks::SetViewDistance(Settings::ViewDistance());
     Fog::SetParams(Settings::CheapFog());

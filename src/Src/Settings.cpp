@@ -126,6 +126,7 @@ namespace
         { "display.taaskymotion",       Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: SkyMotion: the sky given motion vectors for the TAA
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
+        { "display.disableheadbob",     Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: pm_noBob 1 while the headset shows the game
         { "display.disablemetaasw",     Kind::Bool,   "1", 0, 0, nullptr },   // Meta's ASW off for this game (MetaAsw)
         { "display.vrgraphicstweaks",   Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: no depth of field in VR
         { "display.skipsneakoverlay",   Kind::Bool,   "1", 0, 0, nullptr, true },   // PassProfile / GpuTrace: the sneak mode's screen overlay not drawn in the eyes
@@ -492,6 +493,7 @@ bool Settings::MinimalReticle() { return B("display.minimalreticle"); }
 float Settings::ReticleOpacity() { return F("display.reticleopacity"); }
 bool Settings::VrGraphicsTweaks() { return B("display.vrgraphicstweaks"); }
 bool Settings::DisableMotionBlur() { return B("display.disablemotionblur"); }
+bool Settings::DisableHeadBob() { return B("display.disableheadbob"); }
 bool Settings::AmbientOcclusion() { return B("display.ambientocclusion"); }
 bool Settings::Fog() { return B("display.fog"); }
 bool Settings::ProfileRenderPasses() { return B("logging.profilerenderpasses") || B("system.debuglogging"); }

@@ -497,6 +497,7 @@ Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), mos
 | `HudSkipEmpty` | The HUD panel is trimmed to the region that shows something (a 64x64 occupancy grid read back without stalls), and not submitted at all when empty. |
 | `SkipSneakOverlay` | The sneak overlay drawn while crouched is skipped: it showed as a small head-locked square in each eye. |
 | `VrGraphicsTweaks`, `DisableMotionBlur` | No depth of field or motion blur in VR (through the view's render flags). |
+| `DisableHeadBob` | No head bob in VR: neither the walking bob nor the rise and fall of the character's breathing while standing (the game's `pm_noBob`, only while the headset shows the game). The game's own Head Bob option is hidden in VR. |
 | `Fog`, `FogMaps`, `FogMapsResolution` | The game's fog is kept only in the maps named in `FogMaps` (the Void and the return to Dunwall Tower, where it is the atmosphere), and there its quarter-size buffers are raised to full size. |
 | `ShadowMapMinObjectSize` | Moving objects smaller than 30 cm cast no sun shadow-map shadow. |
 | `ShadowLampCacheSlices` | A larger lamp shadow cache (32 slices instead of 12), so stereo's two views stop evicting each other's faces. |

@@ -31,6 +31,8 @@ namespace
     std::atomic<bool> g_GameFogOff{ false };   // r_skipFog is 1 now (the game's fog pass does not run)
     std::atomic<int> g_FogMapsShift{ -1 };    // FogMapsResolution as r_downsampleQuality (0 full, 1 half, 2 quarter; -1 the game's)
     std::atomic<float> g_LodZoom{ 1.f };   // StaticLodZoom (1 = the game's own, never written)
+    std::atomic<bool> g_NoBob{ true };     // DisableHeadBob
+    int g_UserNoBob = -1;                  // the game's pm_noBob, to put back (render thread)
 
     // ViewDistance: the game's view-distance preset (ARK_VISUALSETTING_VIEW_DISTANCE, r_viewDistPreset; set by the
     // menu's environment detail with the others) is applied by exe+0x5105A0(settings, level) -- reached from
@@ -142,6 +144,7 @@ void VrTweaks::SetLodZoom(float z)
     g_LodZoom = z;
     if (fabsf(z - 1.f) > 1e-3f) LOGI("VrTweaks: StaticLodZoom {:g}: the game's r_lodZoomMultiplicator held at it (the static models' level of detail; experimental)", z);
 }
+void VrTweaks::SetHeadBobOff(bool off) { g_NoBob = off; }
 bool VrTweaks::GameFogOff() { return g_GameFogOff.load(std::memory_order_relaxed); }
 bool VrTweaks::DofOff() { return g_Active.load(std::memory_order_relaxed) && g_Enabled.load(std::memory_order_relaxed); }
 void VrTweaks::SetViewDistance(int level)
@@ -204,6 +207,7 @@ namespace
         if (is("ARK_VISUALSETTING_VIEW_DISTANCE") && Settings::ViewDistance() >= 0) return "the VR options' ViewDistance";
         if ((is("ARK_GPSETTING_CROSSHAIR_STYLE") || is("ARK_GPSETTING_CROSSHAIR_OPACITY")) && Reticle::Mode() != 0) return "the hands' reticles instead (Reticle)";
         if (is("ARK_GPSETTING_KILLCAM") && !Settings::FinisherAnimations()) return "no kill cam (FinisherAnimations = 0)";
+        if (is("ARK_GPSETTING_HEADBOB") && Settings::DisableHeadBob()) return "no head bob in VR (DisableHeadBob)";
         return "";
     }
     bool ListHook(int which, void* section, void* desc)
@@ -327,6 +331,20 @@ void VrTweaks::OnPresent()
                 const float now = CVars::GetFloat("r_lodZoomMultiplicator", -1.f);
                 if (now > 0.f && fabsf(now - z) > 1e-3f && CVars::SetFloat("r_lodZoomMultiplicator", z) && told++ < 8)
                     LOGI("VrTweaks: r_lodZoomMultiplicator {:g} -> {:g} (StaticLodZoom)", now, z);
+            }
+        }
+        {   // DisableHeadBob: pm_noBob held at 1 while the headset shows the game (read by the player's body every frame),
+            // the game's own value back after
+            const int cur = CVars::GetInt("pm_noBob", -1);
+            if (running && g_NoBob.load() && cur == 0)
+            {
+                if (g_UserNoBob < 0) g_UserNoBob = cur;
+                if (CVars::SetInt("pm_noBob", 1)) LOGI("VrTweaks: head bob off (pm_noBob 1) while the headset shows the game (DisableHeadBob)");
+            }
+            else if (!(running && g_NoBob.load()) && g_UserNoBob >= 0)
+            {
+                CVars::SetInt("pm_noBob", g_UserNoBob); g_UserNoBob = -1;
+                LOGI("VrTweaks: head bob back (pm_noBob as the game had it)");
             }
         }
         const bool want = active && !g_Fog.load() && !g_MapFog;

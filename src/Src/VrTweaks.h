@@ -27,6 +27,11 @@ namespace VrTweaks
     //! [Display] StaticLodZoom (experimental, default 1 = untouched): the game's r_lodZoomMultiplicator ("zoom
     //! multiplicator for static LODs") held at this, checked every second
     void SetLodZoom(float z);
+    //! [Display.Effects] DisableHeadBob (hidden, default 1): the game's view bob -- the camera's walking bob and the idle
+    //! breathing (arkCpntPlayerBody::arkBodyBob) -- off while the headset shows the game: pm_noBob ("turns off view bob
+    //! and weapon sway"; not saved to the config) held at 1, the game's value back after. Its Head Bob option
+    //! (ARK_GPSETTING_HEADBOB, ark_playerBobAmount) is hidden in VR meanwhile and never written
+    void SetHeadBobOff(bool off);
     //! [Display] ViewDistance: the game's view-distance level used instead of the menu's (0 very low .. 5 ultra; -1 =
     //! the game's); InstallViewDistance hooks where the game applies it (at init, before the game sets its settings up)
     void SetViewDistance(int level);

@@ -104,6 +104,7 @@ namespace Settings
     float ReticleOpacity();                       //!< [Display] ReticleOpacity: 0.05..1 (Reticle)
     bool VrGraphicsTweaks();                      //!< [Display] VrGraphicsTweaks: no depth of field in VR (VrTweaks)
     bool DisableMotionBlur();                     //!< [Display] DisableMotionBlur: the game's camera motion blur off
+    bool DisableHeadBob();                        //!< [Display.Effects] DisableHeadBob: the game's view bob (walking, breathing) off in VR
     bool AmbientOcclusion();                      //!< [Display] AmbientOcclusion: 0 = none in VR (VrTweaks)
     bool Fog();                                   //!< [Display] Fog: 0 = no fog in VR (VrTweaks)
     int SkipDisabledEffects();                    //!< [Advanced] SkipDisabledEffects (experimental): 0 off, 1 SSAO, 2 SSAO + DOF
