@@ -32,7 +32,7 @@ namespace
     Foveation::Params g_P;
     bool g_Tried = false, g_Ready = false;
     std::string g_Why = "off";
-    struct EyeMask { ID3D11Texture2D* tex = nullptr; IUnknown* srrv = nullptr; UINT w = 0, h = 0; float cx = -9, cy = -9; ULONGLONG builtAt = 0; };
+    struct EyeMask { ID3D11Texture2D* tex = nullptr; IUnknown* srrv = nullptr; UINT w = 0, h = 0; float cx = -9, cy = -9, p00 = 0, p11 = 0; ULONGLONG builtAt = 0; };
     EyeMask g_Eye[2];
     // A mask replaced while command lists recorded with it may not have run yet (the game's tasks record on deferred
     // contexts, run a frame later): the shading-rate view is bound through NVAPI, which takes no reference the way
@@ -111,13 +111,14 @@ namespace
         const NvStatus s = g_CreateSrrv(dev, e.tex, &d, &e.srrv);
         if (s != 0 || !e.srrv) { g_Why = fmt::format("NvAPI_D3D11_CreateShadingRateResourceView failed ({}): this GPU may not support it", s); LOGI("Foveation: {}", g_Why); Rel(e.tex); return false; }
         e.w = g_W; e.h = g_H; e.builtAt = GetTickCount64();
-        e.cx = pr.offx * pr.s; e.cy = pr.offy * pr.s;
+        e.cx = pr.offx * pr.s; e.cy = pr.offy * pr.s; e.p00 = fabsf(pr.p00); e.p11 = fabsf(pr.p11);
         memcpy(g_Coverage, cov, sizeof cov);
         const int total = std::max(1, cov[0] + cov[1] + cov[2]);
         // shading work relative to full rate: full tiles 1, 2x2 tiles 1/4, 4x4 tiles 1/16
         const double work = (cov[0] + cov[1] / 4.0 + cov[2] / 16.0) / total;
-        LOGI("Foveation: eye {} mask {}x{} tiles for {}x{}: axis at ({:.3f},{:.3f}) ndc; full rate {:.0f}% of the image, 2x2 {:.0f}%, 4x4 {:.0f}% "
-             "(within {:.0f} / {:.0f} deg): about {:.0f}% of the shading work", eye, tw, th, g_W, g_H, e.cx, e.cy,
+        LOGI("Foveation: eye {} mask {}x{} tiles for {}x{}: fov about {:.0f} x {:.0f} deg, axis at ({:.3f},{:.3f}) ndc; full rate {:.0f}% of the image, 2x2 {:.0f}%, 4x4 {:.0f}% "
+             "(within {:.0f} / {:.0f} deg): about {:.0f}% of the shading work", eye, tw, th, g_W, g_H,
+             2.0 * atan(1.0 / e.p00) * 57.2958, 2.0 * atan(1.0 / e.p11) * 57.2958, e.cx, e.cy,
              100.0 * cov[0] / total, 100.0 * cov[1] / total, 100.0 * cov[2] / total, g_P.innerDeg, g_P.outerDeg, 100.0 * work);
         return true;
     }
@@ -145,7 +146,10 @@ bool Foveation::Begin(ID3D11DeviceContext* c, const void* view, int eye)
     EyeMask& e = g_Eye[eye];
     const float cx = pr.offx * pr.s, cy = pr.offy * pr.s;
     const bool moved = fabsf(cx - e.cx) * g_W * 0.5f > 2.f * kTile || fabsf(cy - e.cy) * g_H * 0.5f > 2.f * kTile;
-    if (!e.srrv || e.w != g_W || e.h != g_H || (moved && GetTickCount64() - e.builtAt > 1000))
+    // the field of view changed too: a mask built for another projection (2026-11-03: the left eye's was built while
+    // loading, from a narrow view, and stayed at full rate everywhere in play, its axis being the same)
+    const bool fovChanged = e.p00 > 0 && e.p11 > 0 && (fabsf(fabsf(pr.p00) / e.p00 - 1.f) > 0.02f || fabsf(fabsf(pr.p11) / e.p11 - 1.f) > 0.02f);
+    if (!e.srrv || e.w != g_W || e.h != g_H || ((moved || fovChanged) && GetTickCount64() - e.builtAt > 1000))
     {
         ID3D11Device* dev = nullptr; c->GetDevice(&dev);
         const bool ok = dev && BuildMask(dev, eye, pr);
