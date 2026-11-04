@@ -55,6 +55,7 @@ namespace Settings
     float StaticLodZoom();                        //!< [Display] StaticLodZoom (VrTweaks, experimental)
     int ViewDistance();                           //!< [Display] ViewDistance (VrTweaks): -1 = the game's
     bool DepthPassDepthOnly();                    //!< [Display] DepthPassDepthOnly (experimental)
+    bool SkipFrameSyncFlush();                    //!< [Performance.SkippedWork] SkipFrameSyncFlush (hidden, experimental: PaceLog)
     bool DepthPassSkipRedundantCopies();          //!< [Display] DepthPassSkipRedundantCopies
     bool SkipEmptyOutlines();                     //!< [Performance] SkipEmptyOutlines (PostShare)
     bool StereoExposureReuse();                   //!< [Performance] StereoExposureReuse (PostShare)

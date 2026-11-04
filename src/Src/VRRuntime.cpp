@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "VRRuntime.h"
 #include "XRSession.h"
+#include "PaceLog.h"
 #include "XRCapture.h"
 #include "GameInfo.h"
 #include "CameraHook.h"
@@ -411,6 +412,7 @@ void VRRuntime::OnPresent(IDXGISwapChain* sc)
                 if (rp.valid && rp.eye == 0 && rp.pair && !rp.flat && g_Session.OrthoReady() && !g_DropThis && rightComing && !(StereoSync::Debug() & 256))
                 {
                     pairLeft = g_Session.StagePairLeft(bb, rp.quat, rp.pos, rp.pair, rp.tanValid ? rp.tan : nullptr, rp.warp);
+                    if (pairLeft) PaceLog::AtLeft();   // (ProfileRenderPasses: the frame pacing's timeline)
                     std::lock_guard lk(g_StatusMutex);
                     if (pairLeft) g_Sync.staged++; else g_Sync.stageFailed++;
                     PipeTrace::Event(PipeTrace::Present, 0);

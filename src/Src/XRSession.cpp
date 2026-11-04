@@ -14,6 +14,7 @@
 #include "SysInfo.h"
 #include "Watchdog.h"
 #include "PassProfile.h"
+#include "PaceLog.h"
 #include "ControllerBindings.h"
 #include <cmath>
 #include <chrono>
@@ -62,6 +63,7 @@ struct XRState
     // XR_EXT_hand_tracking (FingerTracking): enabled when the runtime offers it; the trackers only while an Index is bound
     bool handExt = false, motionRangeExt = false, handSupported = false;
     bool visMaskExt = false;            // XR_KHR_visibility_mask: the lens's hidden area, per eye (FovMask)
+    bool qpcExt = false;                // XR_KHR_win32_convert_performance_counter_time: display times on this PC's clock (PaceLog)
     std::vector<std::string> ctrlExts;  // the controller profiles' extensions the runtime offered (enabled): ControllerBindings
     XrHandTrackerEXT hand[2] = {};
     PFN_xrCreateHandTrackerEXT createHand = nullptr; PFN_xrDestroyHandTrackerEXT destroyHand = nullptr;
@@ -1107,7 +1109,7 @@ bool XRSession::Init(ID3D11Device* device)
         std::vector<const char*> exts = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME };
         {   // hand tracking, when offered: the Index's fingers (FingerTracking). Asked for only, never required.
             uint32_t n = 0;
-            g.handExt = g.motionRangeExt = false;
+            g.handExt = g.motionRangeExt = g.qpcExt = false;
             if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr)) && n)
             {
                 std::vector<XrExtensionProperties> props(n, { XR_TYPE_EXTENSION_PROPERTIES });
@@ -1119,6 +1121,7 @@ bool XRSession::Init(ID3D11Device* device)
                         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) g.handExt = true;
                         if (!strcmp(e.extensionName, XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME)) g.motionRangeExt = true;
                         if (!strcmp(e.extensionName, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME)) g.visMaskExt = true;
+                        if (!strcmp(e.extensionName, "XR_KHR_win32_convert_performance_counter_time")) g.qpcExt = true;
                         for (const std::string& w : wanted) if (w == e.extensionName) g.ctrlExts.push_back(w);
                     }
                 std::string said; for (const std::string& w : wanted) said += fmt::format(" {}{}", w, std::find(g.ctrlExts.begin(), g.ctrlExts.end(), w) != g.ctrlExts.end() ? "" : " (not offered)");
@@ -1128,6 +1131,7 @@ bool XRSession::Init(ID3D11Device* device)
             if (g.handExt && g.motionRangeExt) exts.push_back(XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME);
             else g.motionRangeExt = false;
             if (g.visMaskExt) exts.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
+            if (g.qpcExt) exts.push_back("XR_KHR_win32_convert_performance_counter_time");
             for (const std::string& w : g.ctrlExts) exts.push_back(w.c_str());   // (g keeps the strings)
         }
         XrInstanceCreateInfo ici = { XR_TYPE_INSTANCE_CREATE_INFO };
@@ -1220,6 +1224,11 @@ bool XRSession::Init(ID3D11Device* device)
     // --- Required: query graphics requirements before session creation. The runtime composites on ONE adapter, and
     // the session must be created on a device of that adapter: on a laptop with two GPUs the game may be running on the
     // integrated one, and the runtime then refuses the session. Compare, so the log can say exactly that. ---
+    {   // PaceLog (ProfileRenderPasses): the frames' display times on this PC's clock
+        PFN_xrVoidFunction conv = nullptr;
+        if (g.qpcExt) xrGetInstanceProcAddr(g.instance, "xrConvertTimeToWin32PerformanceCounterKHR", &conv);
+        PaceLog::SetTimeConverter((void*)g.instance, (void*)conv);
+    }
     PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetReq = nullptr;
     xrGetInstanceProcAddr(g.instance, "xrGetD3D11GraphicsRequirementsKHR",
         (PFN_xrVoidFunction*)&pfnGetReq);
@@ -2709,7 +2718,9 @@ void XRSession::EndFrameWithLayers(XrCompositionLayerProjection& layer)
     SaveLayers(layers, haveWrist ? nLayers - 1 : nLayers);   // the keep-alive's copy (the watch, last, left out)
     XrResult er;
     PassProfile::BeginSection(PassProfile::kSecXrEnd);
+    PaceLog::BeforeEnd(g.context, (int64_t)fei.displayTime, (int64_t)g.frameState.predictedDisplayPeriod);
     { Watchdog::Mark mk("xrEndFrame"); er = xrEndFrame(g.session, &fei); }
+    PaceLog::AfterEnd();
     PassProfile::EndSection(PassProfile::kSecXrEnd);
     if (XR_FAILED(er) && m_EndFrameFails++ < 10)   // the runtime refused the frame: a black headset, said nowhere else
         LOGI("XRSession: xrEndFrame FAILED {} ({} layers{})", (int)er, nLayers, m_EndFrameFails == 10 ? "; not logged again" : "");
@@ -3229,7 +3240,9 @@ void XRSession::PumpLoop()
             XrFrameWaitInfo wi = { XR_TYPE_FRAME_WAIT_INFO };
             const double t0 = NowSec();
             XrResult r;
+            if (forGame) PaceLog::WaitBegin();
             { Watchdog::Mark mk("xrWaitFrame"); r = xrWaitFrame(g.session, &wi, &st); }
+            if (forGame && XR_SUCCEEDED(r)) PaceLog::WaitEnd((int64_t)st.predictedDisplayTime, (int64_t)st.predictedDisplayPeriod);
             const double t1 = NowSec(), took = t1 - t0;
             lk.lock();
             pump.waiting = false; pump.waits++;

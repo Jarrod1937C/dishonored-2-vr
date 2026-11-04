@@ -515,6 +515,9 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
 - operator new: exe+0xF13F0 (the allocator's vtable +8 with TAG_NEW, idLib\Heap.cpp).
 - The frame sync exe+0x3591B0 (the render thread, once a frame): a timed section, then the immediate context's Flush
   ([0x1432D4EF8] vtable +0x378) unless [0x1432FB1F8] == 1 and [0x143937288] == 2; the time spent is stored at exe+0x25AE8E0.
+  That Flush blocks until the NVIDIA driver's worker thread (threaded optimization) has processed everything submitted:
+  ~4 ms per stereo pair, which held VR at ~70 pairs/s. Skipping it (the 16-byte call at exe+0x3591FC, PaceLog.cpp,
+  `SkipFrameSyncFlush`) gives a locked 90 (2026-11-04). It does not wait for the GPU or SteamVR: measured with a fence.
 
 ### 4.8 Fog and its upscale
 - View render flags +0x3A36 (set each frame at exe+0x374F9F..): bit 0 `r_skipFog`, bit 2 `r_skipLightScattering` (the

@@ -106,6 +106,7 @@ namespace
         { "display.staticlodzoom",      Kind::Float,  "1.5", 0.1f, 4, nullptr },  // VrTweaks: r_lodZoomMultiplicator held at this (1 = the game's)
         { "display.viewdistance",       Kind::Float,  "3", -1, 5, nullptr },   // VrTweaks: the game's view-distance level instead of its menu's (-1 = the game's)
         { "display.depthpassdepthonly", Kind::Bool,   "1", 0, 0, nullptr, true },     // PassProfile/GpuTrace (experimental): the depth pass's main shader drawn depth-only
+        { "display.skipframesyncflush", Kind::Bool,   "1", 0, 0, nullptr, true },     // PaceLog: the game's end-of-frame Flush not made (90 instead of ~70 pairs/s, 2026-11-04)
         { "display.depthpassskipredundantcopies", Kind::Bool, "1", 0, 0, nullptr, true }, // GpuTrace: a depth copy that changes nothing is not made
         { "display.skipemptyoutlines",  Kind::Bool,   "1", 0, 0, nullptr, true },   // PostShare: the outline effect's full-screen passes only with something outlined
         { "advanced.stereoexposurereuse", Kind::Bool, "1", 0, 0, nullptr, true },   // PostShare: the right eye adapts its exposure from the left eye's histogram
@@ -473,6 +474,7 @@ int Settings::ShadowLampCacheSlices() { return (int)std::lround(F("display.shado
 float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
 int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
 bool Settings::DepthPassDepthOnly() { return B("display.depthpassdepthonly"); }
+bool Settings::SkipFrameSyncFlush() { return B("display.skipframesyncflush"); }
 bool Settings::DepthPassSkipRedundantCopies() { return B("display.depthpassskipredundantcopies"); }
 bool Settings::SkipEmptyOutlines() { return B("display.skipemptyoutlines"); }
 bool Settings::StereoExposureReuse() { return B("advanced.stereoexposurereuse"); }

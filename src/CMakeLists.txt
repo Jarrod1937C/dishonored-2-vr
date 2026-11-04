@@ -114,6 +114,7 @@ set(MOD_SOURCES
     Src/Foveation.cpp  Src/Foveation.h
     Src/FovMask.cpp    Src/FovMask.h
     Src/SkyMotion.cpp  Src/SkyMotion.h
+    Src/PaceLog.cpp    Src/PaceLog.h
     Src/ScreenShadows.cpp    Src/ScreenShadows.h
     Src/KeyBinds.cpp   Src/KeyBinds.h
     Src/SysInfo.cpp    Src/SysInfo.h
