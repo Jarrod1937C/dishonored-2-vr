@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "WristHud.h"
+#include "PassProfile.h"
 #include "GpuTrace.h"
 #include "GameInfo.h"
 #include "XRCapture.h"
@@ -234,8 +235,12 @@ bool WristHud::MirrorBegin(ID3D11DeviceContext* ctx, int kind, Mirror& m)
     ID3D11RenderTargetView* ours = g_Rtv.load();
     const bool lift = ScreenMode::LiftUi();
     if (!ours || !g_Capture.load() || !ctx || !(g_Wanted.load() || g_ShotWant.load() || lift)) return false;
+    // a task that draws only into an eye's own targets (depth, forward, shadows, ...: PassProfile's task classes) never
+    // draws the interface into the backbuffer -- spares the target query below on nearly every draw of the frame
+    if (PassProfile::TaskClass() != PassProfile::kTaskNone) return false;
     m.lift = lift;
-    LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+    const bool timed = ::Log::Enabled();   // (the check's own cost: statistics for the log only)
+    LARGE_INTEGER t0{}; if (timed) QueryPerformanceCounter(&t0);
     // every draw of every recording thread passes here while the watch is on: the statistics are counted per thread
     // and added to the shared totals every 64 checks (two shared cache lines a draw otherwise)
     thread_local unsigned long long t_Checked = 0, t_Ticks = 0;
@@ -253,7 +258,7 @@ bool WristHud::MirrorBegin(ID3D11DeviceContext* ctx, int kind, Mirror& m)
         if (res) res->Release();
         rtv0->Release();
     }
-    auto done = [&](bool r) { LARGE_INTEGER t1; QueryPerformanceCounter(&t1); t_Ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart); return r; };
+    auto done = [&](bool r) { if (timed) { LARGE_INTEGER t1; QueryPerformanceCounter(&t1); t_Ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart); } return r; };
     if (!bb) return done(false);
     // (it uses BOTH in one frame: measured, the interface alternates between sRGB and UNORM views of the typeless
     // backbuffer, draw by draw -- so the view is matched per draw)

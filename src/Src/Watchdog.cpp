@@ -225,6 +225,8 @@ void Watchdog::OnPresent(IDXGISwapChain* sc)
 
 void Watchdog::SetXrState(int state) { g_XrState = state; }
 void Watchdog::RegisterFrameThread() { g_Tid[1] = GetCurrentThreadId(); }
+unsigned long Watchdog::RenderThreadId() { return g_Tid[0].load(); }
+unsigned long Watchdog::FrameThreadId() { return g_Tid[1].load(); }
 
 Watchdog::Mark::Mark(const char* what) : slot(SlotOfThisThread()), prev(nullptr), prevSince(0)
 {

@@ -508,7 +508,8 @@ per rendered frame (the same rate per second as flat play). Logging costs nothin
 log file and skips building the messages.
 
 To measure, set `[Logging] ProfileRenderPasses = 1`: the log then gets the GPU time of each render pass every 5 s,
-the mod's own steps, hitches, and a frame draw by draw. See [docs/STATUS.md](docs/STATUS.md) for every optimization's
+the mod's own steps, hitches, a frame draw by draw, and the CPU time of each of the game's threads with a sampled
+profile of the busiest. See [docs/STATUS.md](docs/STATUS.md) for every optimization's
 measurements and history.
 
 ## For developers and modders

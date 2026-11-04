@@ -109,6 +109,7 @@ set(MOD_SOURCES
     Src/Settings.cpp   Src/Settings.h
     Src/VrTweaks.cpp   Src/VrTweaks.h
     Src/PassProfile.cpp Src/PassProfile.h
+    Src/CpuProfile.cpp Src/CpuProfile.h
     Src/Fog.cpp        Src/Fog.h
     Src/Foveation.cpp  Src/Foveation.h
     Src/FovMask.cpp    Src/FovMask.h

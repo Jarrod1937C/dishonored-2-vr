@@ -1343,7 +1343,9 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
         {   // the eyes' history textures: made (or remade) here, never from a recording thread
             std::lock_guard lk(g_HM);
             const bool active = g_Mode.load() == 1 && VRRuntime::Stereo() && !ScreenMode::FlatRender();   // the menu screen renders mono
-            g_FixPrev = active;
+            // the draws' previous rows only matter to the TAA (its motion vectors): with another anti-aliasing (or none)
+            // their correction -- a constants re-upload per draw -- is CPU time for nothing
+            g_FixPrev = active && g_TaaInUse.load();
             g_IdleFrames = active ? 0 : g_IdleFrames + 1;
             if (g_IdleFrames > 300 && g_Hist[0][0]) { ReleaseHist(); LOGI("StereoTaa: eye histories released (stereo TAA not in use)"); }
             if (active && g_HistDescValid && g_UavDescValid && (!g_Hist[0][0] || !g_Hist[1][1] || [&] { D3D11_TEXTURE2D_DESC h{}; g_Hist[0][0]->GetDesc(&h); return !SameDesc(h, g_HistDesc); }()))

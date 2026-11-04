@@ -54,8 +54,16 @@ namespace PassProfile
     unsigned long long DepthTaskSerial();
     void SetDepthCopies(bool on); //!< from the ini, before Install
     int CharEye();
-    //! GpuTrace's draw / dispatch hooks: counted into the render task running on this thread, if any
-    void NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect);
+    //! GpuTrace's draw / dispatch hooks: counted into the render task running on this thread, if any (`start` / `base`:
+    //! the draw's first index or vertex and base vertex, for the batching census of the draw-by-draw frame)
+    void NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect, unsigned start = 0, int base = 0);
+    //! The kind of render task running on this thread, for GpuTrace's per-draw work (set for every task once the task
+    //! executors are hooked; kTaskNone outside a task, or with the hook missing -- then nothing is assumed):
+    //! kTaskMotion = DEPTHPASS / DEPTHALPHA_LIT (they write the motion vectors the TAA reads); kTaskStaticShadow = the
+    //! sun's and the lamps' static-world shadow casters (SHADOWS_WORLD); kTaskScene = another pass drawing into an eye's
+    //! own targets (forward, water, transparent, emissive, dynamic shadows, screen shadows, SSAO, DOF), never the backbuffer
+    enum { kTaskNone = 0, kTaskMotion = 1, kTaskStaticShadow = 2, kTaskScene = 3 };
+    int TaskClass();
     void NoteDispatch(ID3D11DeviceContext* c, unsigned x, unsigned y, unsigned z, bool indirect);
     //! ... and the uploads / copies: what a slow task did (the hitch lines)
     void NoteMap(int type);         //!< D3D11_MAP: 1 read, 3 read-write, 4 discard, 5 no-overwrite, 2 write

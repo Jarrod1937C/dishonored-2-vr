@@ -3890,9 +3890,20 @@ namespace
     //! still). StereoTaa knows, for the view this draw belongs to (its PerViewCB at b1), the matrix C that takes a clip
     //! position of the other eye's last view to this eye's last view: applied to the previous rows of `f`.
     std::atomic<unsigned long long> g_EyeFixed{ 0 };
+    //! The previous rows are corrected only where they become motion vectors: the depth pass and the alpha-tested depth
+    //! pass (the RG16F target the TAA reads). Every other pass's draws (forward, shadows, ...) would have their constants
+    //! re-uploaded for nothing -- about 630 draws an eye before 2026-11-03. Outside a known task (the task executors not
+    //! hooked): as before, everywhere.
+    inline bool FixHere()
+    {
+        if (!StereoTaa::FixingPrev()) return false;
+        const int tc = PassProfile::TaskClass();
+        return tc == PassProfile::kTaskNone || tc == PassProfile::kTaskMotion;
+    }
+    std::atomic<unsigned long long> g_MovedByClass[4]{};   // the player's moved draws by the class of their task (SixDofStats)
     bool EyePrevFix(ID3D11DeviceContext* ctx, const InstLayout* L, float* f, UINT bytes)
     {
-        if (!L || !L->prev || !StereoTaa::FixingPrev()) return false;
+        if (!L || !L->prev || !FixHere()) return false;
         const int rows[4] = { L->px, L->py, L->pz, L->pw }, cur[4] = { L->x, L->y, L->z, L->w };
         for (int i = 0; i < 4; i++) if (rows[i] < 0 || (UINT)(rows[i] + 4) * 4 > bytes) return false;
         bool same = true;   // first frame of an object: the engine's previous IS the current one (no motion), leave it
@@ -3939,7 +3950,7 @@ namespace
         if (!g_PoolReady.load()) return;
         t_DrawSerial = 0; t_XfUsed = 0;
         bool xf = allowMove && SixDofOn() && EnsureTransform();    // the newest view's transform (lock-free once built)
-        const bool fixing = StereoTaa::FixingPrev();
+        const bool fixing = FixHere();
         if (!xf && !fixing) return;
         if (xf) CtxSerialSet(ctx, g_XfSerialPub.load(std::memory_order_acquire));
         ID3D11Buffer* cur = nullptr;
@@ -3952,6 +3963,13 @@ namespace
         ID3D11VertexShader* vs = nullptr; ctx->VSGetShader(&vs, nullptr, nullptr);
         const InstLayout* L = vs ? LayoutFor(vs) : nullptr;
         if (vs) vs->Release();
+        if (xf && !fixing && !byIndex && FarFromPlayer(L, e->f, bd.ByteWidth))
+        {   // the world, far from the player, with nothing to correct: done before the copy of its constants below
+            thread_local unsigned t_Far = 0; if (++t_Far == 64) { g_NotNear.fetch_add(64, std::memory_order_relaxed); t_Far = 0; }
+            t_DrawProjValid = false;
+            cur->Release();
+            return;
+        }
         float in[kInstMaxFloats];
         memcpy(in, e->f, std::min<size_t>(bd.ByteWidth, sizeof in));
         const bool eyeFixed = fixing && EyePrevFix(ctx, L, in, bd.ByteWidth);
@@ -4023,6 +4041,7 @@ namespace
             if (vcb) vcb->Release();
         }
         g_Patched++;
+        g_MovedByClass[std::clamp(PassProfile::TaskClass(), 0, 3)].fetch_add(1, std::memory_order_relaxed);
         if (ai.side >= 0 && g_ArmCbLeft.load() > 0 && g_ArmCbLeft.fetch_sub(1) > 0)
         {
             std::string v; char b[32];
@@ -4105,9 +4124,11 @@ namespace
         if (PassProfile::DepthOnlyNow()) DepthOnlyBegin(c, t);
         if (Scanning()) ScanDraw(c, n);
         const bool byIndex = IsTarget(n);
-        const bool candidate = byIndex || g_Near.load() > 0.f;
-        if (!candidate && !StereoTaa::FixingPrev()) return;
-        if (SixDofOn() || StereoTaa::FixingPrev()) { BeginSixDof(c, t.six, byIndex, n, candidate); return; }
+        // the static world's shadow casters (SHADOWS_WORLD): never what the player holds, and no motion vectors
+        const bool candidate = byIndex || (g_Near.load() > 0.f && PassProfile::TaskClass() != PassProfile::kTaskStaticShadow);
+        const bool fix = FixHere();
+        if (!candidate && !fix) return;
+        if (SixDofOn() || fix) { BeginSixDof(c, t.six, byIndex, n, candidate); return; }
         if (byIndex && g_BindEnabled.load() && ViewOffsetOn()) t.legacy = BindPatchedView(c, &t.legacyPrev);
     }
     void EndTarget(ID3D11DeviceContext* c, TargetSwap& t)
@@ -4280,12 +4301,16 @@ namespace
         t_Dwao = DwaoSeen{};
         return false;
     }
-    //! at a draw of an eye's depth pass: true = not to be made
-    bool DepthCopySkip(ID3D11DeviceContext* c)
+    //! at a draw of an eye's depth pass: true = not to be made. `n`: its index / vertex count (0 = indirect)
+    bool DepthCopySkip(ID3D11DeviceContext* c, UINT n)
     {
         if (!PassProfile::DepthCopiesNow() || !g_ClearHooked.load(std::memory_order_relaxed)) return false;
         const unsigned long long serial = PassProfile::DepthTaskSerial();
         if (t_DC.serial != serial) { t_DC = DCopy{}; t_DC.serial = serial; }
+        // The copies and the downsample are full-screen draws (a triangle or a quad). The depth pass's ~2000 geometry
+        // draws an eye cost the state queries below for nothing (2026-11-03: none of 17,520 copies was ever skipped):
+        // a larger draw only ends the copy being tracked, as one that drew into its buffers would.
+        if (n == 0 || n > 6) { t_DC.valid = false; return false; }
         ID3D11RenderTargetView* rtv[8] = {}; ID3D11DepthStencilView* dsv = nullptr;
         c->OMGetRenderTargets(8, rtv, &dsv);
         const void* rtRes[8] = {}; int nrt = 0;
@@ -4503,8 +4528,8 @@ namespace
         static void STDMETHODCALLTYPE DrawIndexed(ID3D11DeviceContext* c, UINT n, UINT s, INT b)
         {
             Record(c, KIND, eDrawIndexed, n);
-            PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
+            PassProfile::NoteDraw(c, n, 1, false, s, b);
+            if (DepthCopySkip(c, n) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexed, n);
@@ -4525,8 +4550,8 @@ namespace
         {   // proximity targeting works off the constants, not the count, so the non-indexed paths qualify too --
             // and a weapon pass left out here would stay behind and clip the moved geometry against its own depth
             Record(c, KIND, eDraw, n);
-            PassProfile::NoteDraw(c, n, 1, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
+            PassProfile::NoteDraw(c, n, 1, false, s, 0);
+            if (DepthCopySkip(c, n) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDraw, n);
@@ -4546,8 +4571,8 @@ namespace
         static void STDMETHODCALLTYPE DrawIdxInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, INT b, UINT si)
         {
             Record(c, KIND, eDrawIndexedInstanced, n);
-            PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
+            PassProfile::NoteDraw(c, n, i, false, s, b);
+            if (DepthCopySkip(c, n) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawIndexedInstanced, n);
@@ -4567,8 +4592,8 @@ namespace
         static void STDMETHODCALLTYPE DrawInst(ID3D11DeviceContext* c, UINT n, UINT i, UINT s, UINT si)
         {
             Record(c, KIND, eDrawInstanced, n);
-            PassProfile::NoteDraw(c, n, i, false);
-            if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
+            PassProfile::NoteDraw(c, n, i, false, s, 0);
+            if (DepthCopySkip(c, n) || SneakFxSkip(c) || DwaoSkip(c)) return;   // DepthPassSkipRedundantCopies
             if (PostShare::Active() && PostShare::AtDraw(c)) return;   // SkipEmptyOutlines
             if (Fog::ExposureSearching()) Fog::AtWork(c, false);
             WristHud::OnDraw(c, KIND, eDrawInstanced, n);
@@ -4587,7 +4612,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawIdxInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawIndexedInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c, 0) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawIdxInstIndirect(c, b, o);
@@ -4595,7 +4620,7 @@ namespace
         }
         static void STDMETHODCALLTYPE DrawInstIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UINT o)
         {
-            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
+            Record(c, KIND, eDrawInstancedIndirect, 0); PassProfile::NoteDraw(c, 0, 0, true); if (DepthCopySkip(c, 0) || SneakFxSkip(c) || DwaoSkip(c)) return; if (PostShare::Active() && PostShare::AtDraw(c)) return; if (SkippedVs(c)) return;
             const int cm = CharMode(c);
             if (cm == 1) return;
             realDrawInstIndirect(c, b, o);
@@ -5509,6 +5534,18 @@ namespace
 void GpuTrace::OnPresent()
 {
     RehookImmediate();
+    if (::Log::Enabled())
+    {   // where the player's moved draws are (which passes the per-draw work has to cover), every 30 s
+        static ULONGLONG next = 0; const ULONGLONG now = GetTickCount64();
+        if (!next) next = now + 30000;
+        if (now >= next && g_Patched.load())
+        {
+            next = now + 30000;
+            LOGI("gpu6dof: the player's moved draws by pass kind: depth / motion-vector passes {}, other eye passes {}, static-world shadows {}, outside a known task {}; "
+                 "previous rows corrected (the TAA's motion vectors) {}", g_MovedByClass[1].load(), g_MovedByClass[3].load(), g_MovedByClass[2].load(),
+                 g_MovedByClass[0].load(), g_EyeFixed.load());
+        }
+    }
     if (g_CapturedVS) { DumpShader(g_CapturedVS); g_CapturedVS = nullptr; }
     FlushConstantDump();
     CreatePools();          // on one thread, outside any draw: never create resources inside the draw hook

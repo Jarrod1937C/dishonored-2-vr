@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "PassProfile.h"
+#include "CpuProfile.h"
 #include "GameInfo.h"
 #include "CameraHook.h"
 #include "ViewMatrixHook.h"
@@ -138,6 +139,53 @@ namespace
     struct Acc { bool on = false; uint32_t draws = 0, dispatches = 0, indirect = 0; uint64_t elems = 0, groups = 0;
                  uint32_t mapDiscard = 0, mapNoOver = 0, mapRead = 0, mapOther = 0, updates = 0, copies = 0; };
     thread_local Acc t_Acc;
+    // Which kind of pass the task running on this thread is (GpuTrace's per-draw work: PassProfile::TaskClass), set for
+    // every task once the executors are hooked, whatever else is on
+    int g_RowClass[kRows] = {};
+    thread_local int t_Class = PassProfile::kTaskNone;
+    struct ClassScope
+    {
+        int saved;
+        explicit ClassScope(int pass) : saved(t_Class) { t_Class = pass >= 0 && pass < kRows ? g_RowClass[pass] : PassProfile::kTaskNone; }
+        ~ClassScope() { t_Class = saved; }
+    };
+    // ---- the batching census (ProfileRenderPasses, the draw-by-draw frame): how many of a left-eye frame's draws
+    // repeat a mesh and a material already drawn in the same pass, i.e. how many an instanced draw could take in ----
+    struct BatRec { int row; unsigned task; uint64_t mesh, mat; uint32_t inst; bool indirect; };
+    struct Bat { bool on = false; ID3D11DeviceContext* c = nullptr; int row = -1; unsigned task = 0; std::vector<BatRec> v; };
+    thread_local Bat t_Bat;
+    std::mutex g_BatM;
+    std::vector<BatRec> g_BatRecs; unsigned long long g_BatFrame = 0;
+    std::atomic<unsigned> g_BatTasks{ 0 };
+    inline void HashMix(uint64_t& h, uint64_t v) { h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2); }
+    void BatDraw(ID3D11DeviceContext* c, uint32_t elems, uint32_t inst, bool indirect, uint32_t start, int base)
+    {
+        if (!c || c != t_Bat.c || t_Bat.v.size() >= 20000) return;
+        uint64_t mesh = 0, mat = 0;
+        ID3D11Buffer* ib = nullptr; DXGI_FORMAT ifmt = DXGI_FORMAT_UNKNOWN; UINT ioff = 0; c->IAGetIndexBuffer(&ib, &ifmt, &ioff);
+        ID3D11Buffer* vb = nullptr; UINT stride = 0, voff = 0; c->IAGetVertexBuffers(0, 1, &vb, &stride, &voff);
+        HashMix(mesh, (uintptr_t)ib); HashMix(mesh, ioff); HashMix(mesh, (uintptr_t)vb); HashMix(mesh, voff); HashMix(mesh, stride);
+        HashMix(mesh, elems); HashMix(mesh, start); HashMix(mesh, (uint32_t)base);
+        if (ib) ib->Release(); if (vb) vb->Release();
+        ID3D11VertexShader* vs = nullptr; c->VSGetShader(&vs, nullptr, nullptr);
+        ID3D11PixelShader* ps = nullptr; c->PSGetShader(&ps, nullptr, nullptr);
+        HashMix(mat, (uintptr_t)vs); HashMix(mat, (uintptr_t)ps);
+        if (ps)
+        {   // a material = its shaders and textures (a depth-only draw: its shaders alone)
+            ID3D11ShaderResourceView* srv[6] = {}; c->PSGetShaderResources(0, 6, srv);
+            for (auto* s : srv) { HashMix(mat, (uintptr_t)s); if (s) s->Release(); }
+        }
+        ID3D11RasterizerState* rs = nullptr; c->RSGetState(&rs); HashMix(mat, (uintptr_t)rs); if (rs) rs->Release();
+        if (vs) vs->Release(); if (ps) ps->Release();
+        t_Bat.v.push_back({ t_Bat.row, t_Bat.task, mesh, mat, inst, indirect });
+    }
+    void BatEnd()
+    {
+        if (!t_Bat.on) return;
+        std::lock_guard lk(g_BatM);
+        if (g_BatRecs.size() < 60000) g_BatRecs.insert(g_BatRecs.end(), t_Bat.v.begin(), t_Bat.v.end());
+        t_Bat = Bat{};
+    }
 
     // ---- one record per timed task ----
     constexpr int kSlots = 8192;                            // ring of task records (a frame has a few hundred tasks)
@@ -907,6 +955,8 @@ namespace
         const Desc savedDesc = t_Desc;
         const Rd savedRd = t_Rd;
         t_Desc = Desc{}; t_Rd = Rd{};
+        Bat savedBat = std::move(t_Bat); t_Bat = Bat{};
+        if (prof) CpuProfile::NoteTaskThread();
         if (slot >= 0 && (kind == kLeft || kind == kNoView))
         {
             const unsigned long long df = g_DescFrame.load(std::memory_order_relaxed);
@@ -914,6 +964,8 @@ namespace
             {
                 t_Rd.on = true; t_Rd.c = c; t_Rd.row = row;
                 if (kind == kLeft && DescRow(row)) { t_Desc.on = true; t_Desc.c = c; t_Desc.row = row; t_Desc.frame = df; }
+                if (kind == kLeft) { t_Bat.on = true; t_Bat.c = c; t_Bat.row = row; t_Bat.task = g_BatTasks.fetch_add(1); }
+                if (kind == kLeft) { std::lock_guard lk(g_BatM); if (g_BatFrame != df) { g_BatFrame = df; g_BatRecs.clear(); } }
             }
         }
         const bool fogProbe = prof && c && kind == kLeft && row == g_RowFogPass && FogProbe::Want();
@@ -926,6 +978,7 @@ namespace
         t_Acc = saved;
         if (t_Desc.on) DescClose();
         t_Desc = savedDesc; t_Rd = savedRd;
+        BatEnd(); t_Bat = std::move(savedBat);
         t_Mask = savedMask;
         if (learn) AfterLearn(c, eye, eff, ret);
         if (fovRow) Foveation::End(c, foveated);
@@ -967,11 +1020,13 @@ namespace
         const bool mask = g_MaskHook.load(std::memory_order_relaxed) || g_DepthOnly.load(std::memory_order_relaxed) || g_DepthCopies.load(std::memory_order_relaxed);
         const bool sss = g_SssHook.load(std::memory_order_relaxed), chars = g_CharHook.load(std::memory_order_relaxed);
         const bool share = PostShare::OutlinesOn() || PostShare::ExposureOn() || g_SneakFx.load(std::memory_order_relaxed);
-        if (!task || (!prof && !fog && !fov && !eff && !mask && !sss && !chars && !share)) return real(task);
+        if (!task) return real(task);
         uintptr_t* slot = (uintptr_t*)((uint8_t*)task + 0xD8);
         const uintptr_t fn = (uintptr_t)ReadPtr(slot);
         if (!fn || fn == (uintptr_t)&Thunk) return real(task);
         int pass = PassOf(fn);
+        const ClassScope cls(pass);   // (every task: which per-draw work of GpuTrace's applies to its draws)
+        if (!prof && !fog && !fov && !eff && !mask && !sss && !chars && !share) return real(task);
         if ((prof || chars) && (pass == g_RowShWorld || pass == g_RowShDyn))
         {   // a sun cascade's task or a lamp's
             int idx = -1, slices = 0;
@@ -1195,8 +1250,52 @@ namespace
     // ---- the draw-by-draw frame: armed, then read and written to the log a few frames later ----
     std::atomic<int> g_DescCount{ 0 };                       // draws described in the armed frame
     unsigned long long g_DescPrintAt = 0, g_DescPrinted = 0; int g_DescTries = 0; ULONGLONG g_NextDescAt = 0;
+    //! The batching census of the draw-by-draw frame, pass by pass: draws; those already instanced; distinct meshes;
+    //! distinct mesh + material pairs (shaders, the pixel shader's first textures, the rasterizer state). draws - pairs =
+    //! how many draws an instanced draw per pair could take in (the most batching could save, if the shaders took their
+    //! per-object data per instance); "after the same" = drawn right after a draw of the same pair in the same task (no
+    //! re-sorting needed).
+    void BatReport()
+    {
+        std::vector<BatRec> v; unsigned long long frame = 0;
+        { std::lock_guard lk(g_BatM); v.swap(g_BatRecs); frame = g_BatFrame; }
+        if (v.empty()) return;
+        struct Agg { int draws = 0, instanced = 0, indirect = 0, consecutive = 0; unsigned long long instances = 0;
+                     std::unordered_map<uint64_t, int> mesh, pair; std::unordered_map<uint64_t, int> mats; };
+        std::map<int, Agg> rows;
+        const BatRec* prev = nullptr;
+        int total = 0, totalPairs = 0;
+        for (const BatRec& r : v)
+        {
+            Agg& a = rows[r.row];
+            a.draws++; total++;
+            if (r.indirect) a.indirect++;
+            if (r.inst > 1) { a.instanced++; a.instances += r.inst; }
+            a.mesh[r.mesh]++; a.mats[r.mat]++;
+            uint64_t k = r.mesh; HashMix(k, r.mat);
+            a.pair[k]++;
+            if (prev && prev->task == r.task && prev->mesh == r.mesh && prev->mat == r.mat) a.consecutive++;
+            prev = &r;
+        }
+        std::vector<std::pair<int, int>> order;
+        for (auto& kv : rows) { order.push_back({ kv.second.draws, kv.first }); totalPairs += (int)kv.second.pair.size(); }
+        std::sort(order.begin(), order.end(), [](auto& a, auto& b) { return a.first > b.first; });
+        LOGI("PassProfile: batching census, left eye, frame #{}: {} draws in {} passes, {} distinct mesh + material pairs: at most {} draws ({:.0f}%) could be taken into "
+             "instanced draws. Per pass: draws | already instanced (their instances) | indirect | meshes | materials | mesh + material pairs | could merge | after the same",
+             frame, total, rows.size(), totalPairs, total - totalPairs, total ? 100.0 * (total - totalPairs) / total : 0.0);
+        for (auto& o : order)
+        {
+            const Agg& a = rows[o.second];
+            const int merge = a.draws - (int)a.pair.size();
+            int top = 0; for (auto& kv : a.pair) top = std::max(top, kv.second);
+            LOGI("PassProfile:   {:<34} {:5d} | {:4d} ({}) | {:4d} | {:5d} | {:5d} | {:5d} | {:5d} ({:.0f}%) | {:5d}; the most-repeated pair drawn {} times",
+                 RowName(o.second), a.draws, a.instanced, a.instances, a.indirect, a.mesh.size(), a.mats.size(), a.pair.size(), merge,
+                 a.draws ? 100.0 * merge / a.draws : 0.0, a.consecutive, top);
+        }
+    }
     void DescReport(unsigned long long frame)
     {
+        BatReport();
         struct Out { int row, idx; DWORD tid; double ms; D3D11_QUERY_DATA_PIPELINE_STATISTICS st; bool stats; uint64_t ps, vs; const void* psPtr; const void* cs;
                      uint32_t elems, inst, rtW, rtH, rtFmt, rtN; bool depth, indirect, dispatch;
                      const void* srcRes; const void* rtvRes; const void* dsvRes; uint32_t srcW, srcH, srcFmt, dsW, dsH, dsFmt; };
@@ -1403,14 +1502,22 @@ void PassProfile::Install()
         // Foveation: what shades the scene at the eye's resolution
         static const char* fov[] = { "DEPTHPASS", "DEPTHALPHA_LIT", "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY" };
         for (const char* n : fov) if (!strcmp(kPasses[i].name, n) && i < 64) g_FovRow[i] = true;
+        // the task classes (TaskClass): the passes that write the motion vectors (the depth pass's RG16F target, which
+        // the TAA reads); the static world's shadow casters (sun cascades' and lamps' cached faces: never the player's
+        // weapon); the other passes that draw into an eye's own targets, never into the backbuffer
+        static const char* motion[] = { "DEPTHPASS", "DEPTHALPHA_LIT" };
+        static const char* scene[] = { "FORWARD_WORLD", "FORWARD_DYNAMIC", "RENDER_WATER", "ALPHA_LIT", "EMISSIVE_ONLY", "SHADOWS_DYNAMIC lamps",
+                                       "SHADOWS_DYNAMIC sun", "SCREENSHADOWS", "SSAO", "DOF" };
+        for (const char* n : motion) if (!strcmp(kPasses[i].name, n)) g_RowClass[i] = kTaskMotion;
+        for (const char* n : { "SHADOWS_WORLD lamps", "SHADOWS_WORLD sun" }) if (!strcmp(kPasses[i].name, n)) g_RowClass[i] = kTaskStaticShadow;
+        for (const char* n : scene) if (!strcmp(kPasses[i].name, n)) g_RowClass[i] = kTaskScene;
     }
     g_FogHook = Fog::Wanted();
     g_FovHook = Foveation::Wanted();
     g_MaskHook = FovMask::Wanted();
     g_SssHook = ScreenShadows::Wanted();
     g_CharHook = ScreenShadows::CharactersWanted();
-    if ((!g_On.load() && !g_FogHook.load() && !g_FovHook.load() && !g_SkipEffects.load() && !g_MaskHook.load() && !g_SssHook.load() && !g_CharHook.load() && !g_DepthOnly.load() && !g_DepthCopies.load()
-         && !PostShare::OutlinesOn() && !PostShare::ExposureOn() && !g_SneakFx.load()) || g_Exec) return;
+    if (g_Exec) return;   // (hooked whatever is on: the task classes serve GpuTrace's per-draw work)
     QueryPerformanceFrequency(&g_QpcF);
     for (int i = 0; i < kSections; i++) g_SecOpen[i] = -1;
     for (int p = 0; p < kRows; p++) for (int k = 0; k < kKinds; k++) g_WantRt[p][k] = true;
@@ -1433,6 +1540,7 @@ void PassProfile::SetSkipEffects(int mode)
 }
 
 bool PassProfile::On() { return g_On.load(std::memory_order_relaxed); }
+int PassProfile::TaskClass() { return t_Class; }
 
 int PassProfile::CharTask() { return t_CharTask; }
 bool PassProfile::DepthOnlyNow() { return t_DepthOnly; }
@@ -1459,8 +1567,9 @@ void PassProfile::SetDepthOnly(bool on)
 }
 int PassProfile::CharEye() { return t_CharEye; }
 
-void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect)
+void PassProfile::NoteDraw(ID3D11DeviceContext* c, unsigned elements, unsigned instances, bool indirect, unsigned start, int base)
 {
+    if (t_Bat.on) BatDraw(c, elements, instances, indirect, start, base);
     if (t_Mask.on)
     {   // FovMask: before the depth pass's first draw into the scene's depth (its own draw comes back through here: off first)
         t_Mask.on = false;

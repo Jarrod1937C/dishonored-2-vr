@@ -254,9 +254,15 @@ namespace
         unsigned long long tasksSkipped = 0, tasksRun = 0;
         int lastJobs = 0, lastFaces = 0;
         // why the right frames' faces are new (the log every 15 s): the left frame's faces, to compare with
-        struct Face { const void* light; int face, w, h; const void* entry; bool dirty; };
-        std::vector<Face> leftFaces;
+        struct Face { const void* light; int face, w, h; const void* entry; bool dirty; int page, x, y; uint64_t mat; };
+        std::vector<Face> leftFaces, prevLeftFaces;
         unsigned long long leftsDirty = 0, leftDirtyFaces = 0, rightDirtyFaces = 0;
+        // why a left frame's face is new (against the previous left frame's same light and face): not there, its matrix
+        // changed (the light moved / turned), its size changed, or the same face again (the cache let it go)
+        unsigned long long ldNotBefore = 0, ldMoved = 0, ldResized = 0, ldSame = 0;
+        // why the jobs differed (a right frame's faces against its left frame's): a face not in the left frame, a left
+        // face not in the right, another atlas place, size, matrix, cache entry
+        unsigned long long dfNotInLeft = 0, dfLeftOnly = 0, dfPlace = 0, dfSize = 0, dfMatrix = 0, dfEntry = 0, dfFrames = 0;
         unsigned long long rdAlsoLeft = 0, rdCleanLeft = 0, rdNotInLeft = 0, rdBigger = 0, rdSmaller = 0, rdSameEntry = 0;
         int samples = 0; std::string sampleText;
         double needMax = 0, needSum = 0; unsigned long long needN = 0;   // a left frame's faces, in 2048 x 2048 cache slices
@@ -293,12 +299,17 @@ namespace
         if (!obj) { const uint8_t* e = *(const uint8_t* const*)params; if (Readable(e, 0x18)) obj = *(const uint8_t* const*)(e + 0x10); }
         if (!Plausible(obj)) return false;
         for (uint32_t lo : kJobLists) if (!Readable(obj + lo, 16)) return false;
-        sig = 0xCBF29CE484222325ull; dirty = false; jobs = 0; faces = 0;
-        for (uint32_t lo : kJobLists)
+        // The signature does not depend on the order of the jobs (2026-11-03: 3,552 of 5,622 right frames "differed"; the
+        // lists are sorted per view, so the same jobs can come in another order): each job and each face is hashed on its
+        // own (with its list), and the hashes are summed and xor-ed.
+        dirty = false; jobs = 0; faces = 0;
+        unsigned long long sum = 0, xr = 0;
+        auto take = [&](unsigned long long h) { sum += h; xr ^= h * 0x9E3779B97F4A7C15ull + (h >> 29); };
+        for (int li = 0; li < 3; li++)
         {
+            const uint32_t lo = kJobLists[li];
             const uint8_t* const* arr = *(const uint8_t* const* const*)(obj + lo);
             const uint32_t n = *(const uint32_t*)(obj + lo + 8) & 0xFFFFFF;
-            Mix(sig, &n, 4);
             if (!n) continue;
             if (n > 4096 || !Readable(arr, (size_t)n * 8)) return false;   // once per list
             for (uint32_t j = 0; j < n; j++)
@@ -306,11 +317,13 @@ namespace
                 const uint8_t* job = arr[j];
                 if (!Plausible(job)) return false;
                 const uint8_t* light = *(const uint8_t* const*)job;
-                Mix(sig, &light, 8);
-                if (!light) continue;
+                unsigned long long hj = 0xCBF29CE484222325ull;
+                Mix(hj, &li, 4); Mix(hj, &light, 8);
+                if (!light) { take(hj); continue; }
                 if (!Plausible(light)) return false;
                 const int type = *(const int*)(light + 0x5C);
-                Mix(sig, &type, 4);
+                Mix(hj, &type, 4);
+                take(hj);
                 const int nf = type < 0 ? 0 : type <= 1 ? 6 : type == 2 ? (int)(*(const uint32_t*)(job + 0x18) & 0xFFFFFF) : 0;
                 if (nf > 64) return false;
                 const uint8_t* rec = *(const uint8_t* const*)(job + 0x10);
@@ -319,20 +332,27 @@ namespace
                 for (int f = 0; f < nf; f++)
                 {
                     const uint8_t* r = rec + (size_t)f * 0x100;
-                    Mix(sig, r + 4, 20);                        // page, rect (x0 -1 = no face)
-                    if (*(const int*)(r + 8) == -1) continue;
-                    Mix(sig, r + 0xA0, 64);                     // its light matrix
-                    Mix(sig, r + 0xE0, 8);                      // its cache entry
+                    unsigned long long hf = hj;
+                    Mix(hf, &f, 4);
+                    Mix(hf, r + 4, 20);                         // page, rect (x0 -1 = no face)
+                    if (*(const int*)(r + 8) == -1) { take(hf); continue; }
+                    unsigned long long hm = 0xCBF29CE484222325ull;
+                    Mix(hm, r + 0xA0, 64);                      // its light matrix
+                    Mix(hf, &hm, 8);
+                    Mix(hf, r + 0xE0, 8);                       // its cache entry
+                    take(hf);
                     if (r[0xF0]) dirty = true;
                     faces++;
                     if (list && list->size() < 256)
                     {
                         const int* rc = (const int*)(r + 8);
-                        list->push_back({ light, f, rc[2] - rc[0], rc[3] - rc[1], *(const void* const*)(r + 0xE0), r[0xF0] != 0 });
+                        list->push_back({ light, f, rc[2] - rc[0], rc[3] - rc[1], *(const void* const*)(r + 0xE0), r[0xF0] != 0,
+                                          *(const int*)(r + 4), rc[0], rc[1], hm });
                     }
                 }
             }
         }
+        sig = sum ^ (xr * 0xFF51AFD7ED558CCDull) ^ ((unsigned long long)faces << 48) ^ ((unsigned long long)jobs << 32);
         return true;
     }
     // ---- the sun's nearest cascade ([Performance] StereoSunShadowReuse) ----
@@ -457,10 +477,22 @@ namespace
                 if (g_Sh.leftSerial != p.pair)
                 {   // the first spot / omni task of this left frame: its job lists
                     unsigned long long sig = 0; bool dirty = false; int jobs = 0, faces = 0;
+                    g_Sh.prevLeftFaces.swap(g_Sh.leftFaces);
                     if (ShadowJobsSig(task, sig, dirty, jobs, faces, &g_Sh.leftFaces))
                     {
                         g_Sh.leftSerial = p.pair; g_Sh.leftSig = sig; g_Sh.lefts++; g_Sh.lastJobs = jobs; g_Sh.lastFaces = faces;
                         if (dirty) g_Sh.leftsDirty++;
+                        if (dirty && !g_Sh.prevLeftFaces.empty() && ::Log::Enabled())   // (the log's reasons only)
+                            for (const auto& fc : g_Sh.leftFaces)
+                            {
+                                if (!fc.dirty) continue;
+                                const ShadowState::Face* q = nullptr;
+                                for (const auto& pf : g_Sh.prevLeftFaces) if (pf.light == fc.light && pf.face == fc.face) { q = &pf; break; }
+                                if (!q) g_Sh.ldNotBefore++;
+                                else if (q->mat != fc.mat) g_Sh.ldMoved++;
+                                else if (q->w != fc.w || q->h != fc.h) g_Sh.ldResized++;
+                                else g_Sh.ldSame++;
+                            }
                         double need = 0;
                         for (const auto& fc : g_Sh.leftFaces)
                         {
@@ -502,7 +534,27 @@ namespace
                             }
                         }
                     }
-                    else if (sig != g_Sh.leftSig) g_Sh.rightsDiffer++;
+                    else if (sig != g_Sh.leftSig)
+                    {
+                        g_Sh.rightsDiffer++;
+                        if (::Log::Enabled()) g_Sh.dfFrames++;   // (the log's reasons only)
+                        if (::Log::Enabled()) for (const auto& fc : mine)
+                        {
+                            const ShadowState::Face* l = nullptr;
+                            for (const auto& lf : g_Sh.leftFaces) if (lf.light == fc.light && lf.face == fc.face) { l = &lf; break; }
+                            if (!l) { g_Sh.dfNotInLeft++; continue; }
+                            if (l->page != fc.page || l->x != fc.x || l->y != fc.y) g_Sh.dfPlace++;
+                            if (l->w != fc.w || l->h != fc.h) g_Sh.dfSize++;
+                            if (l->mat != fc.mat) g_Sh.dfMatrix++;
+                            if (l->entry != fc.entry) g_Sh.dfEntry++;
+                        }
+                        if (::Log::Enabled()) for (const auto& lf : g_Sh.leftFaces)
+                        {
+                            bool there = false;
+                            for (const auto& fc : mine) if (fc.light == lf.light && fc.face == lf.face) { there = true; break; }
+                            if (!there) g_Sh.dfLeftOnly++;
+                        }
+                    }
                     else { g_Sh.skip = true; g_Sh.rightsSkipped++; }
                 }
                 skip = g_Sh.skip;
@@ -751,6 +803,10 @@ void StereoSync::OnPresent()
                  g_Sh.leftsDirty, g_Sh.leftDirtyFaces, g_Sh.rightDirtyFaces, g_Sh.rdAlsoLeft, g_Sh.rdCleanLeft, g_Sh.rdNotInLeft,
                  g_Sh.rdBigger, g_Sh.rdSmaller, g_Sh.rdSameEntry, g_Sh.needN ? g_Sh.needSum / (double)g_Sh.needN : 0.0, g_Sh.needMax,
                  CVars::GetInt("r_shadowCacheSliceCnt", -1), g_Sh.sampleText.empty() ? "" : "; e.g." + g_Sh.sampleText);
+            LOGI("StereoSync: lamp shadows, why a left frame's face was new (against the previous left frame's): not there {}, the light moved / turned {}, "
+                 "resized {}, the same face again {}; why the jobs differed ({} right frames, by face): not in the left frame {}, only in the left frame {}, "
+                 "another atlas place {}, size {}, matrix {}, cache entry {}", g_Sh.ldNotBefore, g_Sh.ldMoved, g_Sh.ldResized, g_Sh.ldSame, g_Sh.dfFrames,
+                 g_Sh.dfNotInLeft, g_Sh.dfLeftOnly, g_Sh.dfPlace, g_Sh.dfSize, g_Sh.dfMatrix, g_Sh.dfEntry);
             g_Sh.samples = 0; g_Sh.sampleText.clear(); g_Sh.needMax = g_Sh.needSum = 0; g_Sh.needN = 0;
         }
     }

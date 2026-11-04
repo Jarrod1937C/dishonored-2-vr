@@ -27,4 +27,6 @@ namespace Watchdog
     //! vr stall <ms>: the render thread sleeps that long at the next Present -- a game hitch on demand (tests)
     void Stall(int ms);
     std::string Status();                     //!< the heartbeat line
+    unsigned long RenderThreadId();           //!< the thread that calls Present (0 before the first); CpuProfile's labels
+    unsigned long FrameThreadId();            //!< the mod's OpenXR frame thread (0 = none)
 }
