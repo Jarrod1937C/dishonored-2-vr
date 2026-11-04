@@ -1546,7 +1546,7 @@ namespace
     void LogHeldItemDraw(int hand, UINT draw, UINT bytes, const InstLayout* L, const float* in, const float* out, const Factored& f,
                          const Rigid& vinv, const Rigid& dv, bool gadget, float inPalmDet, bool useModel, bool usePrev)
     {
-        if (hand < 0 || hand > 1) return;
+        if (!::Log::Enabled() || hand < 0 || hand > 1) return;   // (for the log only: no lock or lookup with logging off)
         const uint32_t cls = BodyHide::HeldItemClass(hand);
         {
             std::lock_guard lk(g_HeldLogM);

@@ -1066,7 +1066,7 @@ bool StereoTaa::FixPrevRows(ID3D11DeviceContext* c, ID3D11Buffer* viewCb, const 
     // objmotion (heartbeat statistics): one draw in 32 per thread is plenty for a distribution, and spares every other
     // draw a 4x4 inverse and two products
     thread_local unsigned t_OmTick = 0;
-    if (cur && (++t_OmTick & 31) == 0) NoteObjMotion(c, d, cur, prev);
+    if (cur && ::Log::Enabled() && (++t_OmTick & 31) == 0) NoteObjMotion(c, d, cur, prev);   // (statistics for the log only)
     return changed;
 }
 
@@ -1209,8 +1209,8 @@ void StereoTaa::OnDispatch(ID3D11DeviceContext* c, int kind, unsigned x, unsigne
     if (eye == -1 && g_MonoNotBad.load()) { g_MonoDisp++; BindFreshest(c, t, frame, p); DumpAtDispatch(c, t, -1); return; }   // a mono view (gated sync stereo)
     if (eye < 0) { g_NoEye++; DumpAtDispatch(c, t, -2); return; }
     g_EyeN[eye & 1]++;
-    if (g_VPOff.load() >= 0 && g_PrevVPOff.load() >= 0)
-    {   // the camera motion this dispatch is handed (see g_PvLast)
+    if (::Log::Enabled() && g_VPOff.load() >= 0 && g_PrevVPOff.load() >= 0)
+    {   // the camera motion this dispatch is handed (see g_PvLast; for the log only)
         float vp[16], pvp[16]; bool have = false;
         ID3D11Buffer* cb = nullptr; c->CSGetConstantBuffers(t.viewCb, 1, &cb);
         if (cb)
@@ -1328,7 +1328,7 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
         g_InUseIdle = d != g_InUseDisp ? 0 : g_InUseIdle + 1; g_InUseDisp = d;
         const bool use = g_InUseIdle <= 60;
         static unsigned tick = 0; static float lastAmount = -12345.f;   // the game's TAA sharpness slider, when it changes
-        if (++tick % 30 == 0 && CVars::Address("r_TAAAmount"))
+        if (::Log::Enabled() && ++tick % 30 == 0 && CVars::Address("r_TAAAmount"))
         {
             const float a = CVars::GetFloat("r_TAAAmount", -1.f);
             if (a != lastAmount) { LOGI("StereoTaa: the game's TAA sharpness r_TAAAmount = {}", a); lastAmount = a; }
@@ -1369,8 +1369,10 @@ void StereoTaa::OnPresent(IDXGISwapChain* sc)
             if (!VRRuntime::Stereo() && g_FellBack) { g_FellBack = false; ApplySkip(false); }
             if (active != g_WasActive) { g_BadWindows = 0; g_WinFrames = 0; g_WinDisp0 = g_Dispatches; g_WinSwap0 = g_Swapped; g_WinFirst0 = g_FirstUse; g_WinMono0 = g_MonoDisp; }
             g_WasActive = active;
+            if (::Log::Enabled())
             {   // the health of the per-eye TAA in the log, every 10 s while it runs (the counters are cumulative): whether each
-                // eye found its own history and previous matrices -- the heartbeat file has it only when StatusFile is on
+                // eye found its own history and previous matrices -- the heartbeat file has it only when StatusFile is on.
+                // Only with logging on: its motion check reads a full-resolution texture back (a GPU stall) every 5 s
                 static ULONGLONG nextHealth = 0; const ULONGLONG now = GetTickCount64();
                 bool running = false; { std::lock_guard lk(g_HM); running = g_Hist[0][0] != nullptr; }
                 if (!active || !running) nextHealth = 0;

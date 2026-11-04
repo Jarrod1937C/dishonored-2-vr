@@ -918,9 +918,10 @@ namespace
         }
         const bool fogProbe = prof && c && kind == kLeft && row == g_RowFogPass && FogProbe::Want();
         if (fogProbe) FogProbe::Begin();
-        LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+        LARGE_INTEGER t0{}, t1{};
+        if (slot >= 0) QueryPerformanceCounter(&t0);   // (the task's CPU time: profiling only)
         const uintptr_t ret = real(task);
-        LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
+        if (slot >= 0) QueryPerformanceCounter(&t1);
         const Acc mine = t_Acc;
         t_Acc = saved;
         if (t_Desc.on) DescClose();

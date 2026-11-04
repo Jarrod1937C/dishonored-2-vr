@@ -714,7 +714,7 @@ namespace
     {
         float rx = 0, ry = 0, rz = 0; bool have = false;
         const bool tap = TempleTapStep(in, allowed, rx, ry, rz, have);
-        if (!have) { g_TapDiag.on = false; return tap; }
+        if (!have || !::Log::Enabled()) { g_TapDiag.on = false; return tap; }   // (the diagnostics are for the log only)
         // the log: each quick motion of the right hand in towards the head, near it, once it ends (the first 400)
         TapDiag& d = g_TapDiag;
         const bool close = rx > -0.05f && rx < 0.40f && ry > -0.30f && ry < 0.30f && rz > -0.30f && rz < 0.25f;
