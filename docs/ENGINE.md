@@ -1175,6 +1175,19 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   TALK, ASSASSINATE, CHOKE, CARRY_BODY, ... (changes reach the HUD as arkMsgHudInteractionChange). Not found yet: where
   the sensor's chosen interaction is kept, and where a keyhole is in the world.
 
+### 8.6 People's reactions (static only, 2026-11-05)
+- AI message ids (the ARK_MSG enum): 0x23 AI_QUEUE_STIM (29 senders, payload 4: e.g. 2 from exe+0x3E943B), 0x24
+  AI_PANIC_INDUCED, 0x53 / 0x54 AI_ESCALATE_TO_ALERT / SUSPICIOUS, 0x87 AI_HEARD_SOUND, 0x8B AI_PANIC (payload 1, four
+  senders), 0x8C AI_PANIC_CLEAR, 0x8F AI_GREETINGS_START (payload 4: the other's id; sent at exe+0x3F0FE3), 0x90
+  AI_GREETINGS_FINISHED, 0xD5 AI_SUSPICION_LEVEL_CHANGED, 0xFB ENTITY_HEARD_BY_AI, 0x1B0 AI_PANIC_FINISHED, 0x1C4 / 0x1C5
+  AI_PICKPOCKETED_ON / OFF.
+- **exe+0x5EBF80(hearing component, source entity, sound, bool)**: an NPC hearing a sound. Needs the component of type
+  exe+0x39D68B0 on the source; the sound's kind at sound+0x8 (a bit of comp+0x78 masks kinds out). Sends AI_HEARD_SOUND
+  {kind, source id} to the hearer (exe+0x5EC230) and, for kinds 0x1A / 0x1B, AI_PANIC_INDUCED {1, kind} (exe+0x5EC278).
+  Called from exe+0x5ED0E6 (exe+0x5ED090).
+- Names seen: arkCpntAIReasoner_Greetings / _Panic / _Flee, arkCpntFleeManager, ANIMOVERRIDE_COWER, panic conditions
+  PANIC_COND_HEARD_IMPACT(_SWORD), _HEARD_DANGER, _ALARM...; stimuli AISTIMULUS_HEARING / SIGHT / TOUCH / TOUCH_BLIND.
+
 ## 9. Interface, menus, videos, HUD
 
 ### 9.1 How the interface is drawn

@@ -138,6 +138,10 @@ Other limitations:
   the further in, and open again as you slow down (`MovementVignette`, 0.6; 0 = off; VR Controls tab, Comfort).
   Walking in your room, leaning and turning your head do not count.
 - **Lean and peek** with your body: there is no lean button.
+- **Climb with your hands** (experimental): put both hands on a ledge at chest height or above and pull down, as if
+  pulling yourself up, and the character climbs it, where the game can (`ClimbByHand`).
+- **Swim with your arms** (experimental): in the water, sweep an arm back to swim forward; keep stroking to keep going.
+  The stick still swims (`SwimStrokes`).
 - **Wall fade.** If your head goes into a wall, floor or door, the headset fades to dark blue until you step back out,
   instead of showing the inside of the level.
 - **Camera pitch fix.** The game's camera no longer slides forward and back as you look down and up.
@@ -191,6 +195,8 @@ pistol with an empty right hand.
   - How hard: `KnockoutSpeed` (8 m/s in the shipped ini; a firm punch is about 4 to 6 m/s).
   - How squarely behind him (60° off straight behind) and how close to his head (35 cm) are hidden settings.
   - A hit sound plays (`KnockoutSoundVolume`); put your own `DVR_knockout.wav` in the game folder to replace it.
+- **Choke by hand (new, experimental):** with the blue dot showing, put a hand on each side of his neck and hold them
+  there for a second: he is knocked out, as by the game's choke but without its animation (`ChokeByHands`).
 
 ### Pistol, crossbow and powers
 
@@ -255,6 +261,10 @@ side, so you can look around and still find your hips.
 - **Drawers and cabinets:** put your hand on one, squeeze the grip and pull back to open it; push it shut. Locks and
   keys work as in the game.
 - **Windows:** rest a hand on a sliding window and slide it up or down.
+- **Pickpocket by hand** (experimental): sneaking, behind or beside someone, put your right hand at his belt, squeeze
+  the grip and pull back: the game's pickpocket, where it offers one (`PickpocketByHand`).
+- **Wave to talk** (experimental): wave your empty hand side to side at someone facing you within 3 m, while looking at
+  him, to talk to him where the game lets you (`WaveToTalk`).
 - **Buttons, switches and levers** (experimental): with an empty hand, press a button or a switch, or squeeze the grip
   on a lever and pull it, and it works as the interact button would (`TouchToUse`, on by default). The interact
   button still works too.
@@ -361,6 +371,11 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Right grip on a body, drag; hand up over your shoulder | Drag it; onto your back |
 | Sword held across an enemy's blow | Parry it |
 | Press a button with your hand, or grip a lever and pull | Use it |
+| Both hands on a ledge, pull down | Climb it |
+| Sweep an arm back, in the water | Swim forward |
+| A hand each side of a guard's neck from behind, 1 s | Knock him out |
+| Sneaking, right hand at someone's belt, grip, pull back | Pickpocket |
+| Wave at someone facing you, close | Talk to him |
 | Point at something out of reach, right grip, flick back | It flies to your hand (keep the grip to catch it) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |

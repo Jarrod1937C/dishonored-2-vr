@@ -131,6 +131,8 @@ set(MOD_SOURCES
     Src/BodyDrag.cpp  Src/BodyDrag.h
     Src/GravityGlove.cpp  Src/GravityGlove.h
     Src/SwordParry.cpp  Src/SwordParry.h
+    Src/NpcGestures.cpp  Src/NpcGestures.h
+    Src/AiResearch.cpp  Src/AiResearch.h
     Src/ControllerBindings.cpp Src/ControllerBindings.h
     Src/PostShare.cpp Src/PostShare.h
     "${CMAKE_BINARY_DIR}/generated/Version.rc"

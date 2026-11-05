@@ -65,6 +65,8 @@ namespace KbmInject
     //! That hand's grip is closed and doing nothing else (not taking, pulling a drawer, drawing, drinking, holding or
     //! carrying): GravityGlove may use it to pull something to the hand.
     bool GripIdle(int hand);
+    //! [Gameplay.Interaction] SwimStrokes: in the water an arm's stroke swims forward (the forward key for a glide).
+    void SetSwimStrokes(bool on);
     //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
     //! character (the game's crouch key), standing up stands it.
     void SetPhysicalCrouch(bool on, float depth);

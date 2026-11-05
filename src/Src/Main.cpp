@@ -59,6 +59,8 @@
 #include "BodyDrag.h"
 #include "GravityGlove.h"
 #include "SwordParry.h"
+#include "NpcGestures.h"
+#include "AiResearch.h"
 #include "ControllerBindings.h"
 #include "TestAids.h"
 #include "Seeds.h"
@@ -178,6 +180,11 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "gravitygloves" })) GravityGlove::SetEnabled(Settings::GravityGloves());
     if (has({ "touchtouse" })) Collision::SetUsables(Settings::TouchToUse());
     if (has({ "swordparry" })) SwordParry::SetEnabled(Settings::SwordParry());
+    if (has({ "pickpocketbyhand" })) NpcGestures::SetPickpocket(Settings::PickpocketByHand());
+    if (has({ "wavetotalk" })) NpcGestures::SetWaveToTalk(Settings::WaveToTalk());
+    if (has({ "climbbyhand" })) Collision::SetClimb(Settings::ClimbByHand());
+    if (has({ "swimstrokes" })) KbmInject::SetSwimStrokes(Settings::SwimStrokes());
+    if (has({ "chokebyhands" })) MeleeAim::SetChokeByHands(Settings::ChokeByHands());
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
@@ -281,6 +288,11 @@ static DWORD WINAPI InitThread(LPVOID)
     GravityGlove::SetEnabled(Settings::GravityGloves());
     Collision::SetUsables(Settings::TouchToUse());
     SwordParry::SetEnabled(Settings::SwordParry());
+    NpcGestures::SetPickpocket(Settings::PickpocketByHand());
+    NpcGestures::SetWaveToTalk(Settings::WaveToTalk());
+    Collision::SetClimb(Settings::ClimbByHand());
+    KbmInject::SetSwimStrokes(Settings::SwimStrokes());
+    MeleeAim::SetChokeByHands(Settings::ChokeByHands());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());
@@ -378,6 +390,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ViewMatrixHook::Install();
     Roomscale::Install();            // walking in the room walks the character: its character proxy follows the head
     SwordParry::Install();           // an enemy's blow parried by the blade held across it
+    AiResearch::Install();           // (log on only) research for the gestures at people: the AI's messages, what NPCs hear
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
     ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s
     ScreenShadows::InstallSmallObjects();   // ScreenSpaceShadowSmallObjects: small moving objects out of the sun's maps

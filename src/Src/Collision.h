@@ -36,6 +36,16 @@ namespace Collision
     //! [Gameplay.Interaction] TouchToUse: buttons, switches and levers by hand -- an empty hand poking into one, or its
     //! grip closed on one and pulled -- the game's interact on it (only if the sensor, aimed there, picks it).
     void SetUsables(bool on);
+    //! [Gameplay.Interaction] ClimbByHand: both hands on a top edge at chest height or above (resting on it), then pulled
+    //! down 10 cm (as when pulling yourself up): the game's jump -- its climb onto the ledge, if it has one there.
+    void SetClimb(bool on);
+    //! KbmInject: a climb was asked for (once).
+    bool TakeClimbRequest();
+    //! The game's interact on an entity, aimed at a world point (KbmInject sends it only once the sensor, aimed there,
+    //! picks that entity): what a hand's push on a door does. Game thread (NpcGestures: pickpocket, a wave to talk).
+    void RequestUse(int hand, uint32_t id, const float point[3]);
+    //! A character (a person, a creature; alive or not).
+    bool IsCharacterEnt(void* ent);
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();

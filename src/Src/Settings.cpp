@@ -69,6 +69,11 @@ namespace
         { "gameplay.dragbodies",        Kind::Bool,   "1", 0, 0, nullptr },   // BodyDrag: a gripped body is dragged; up over the shoulder it is carried
         { "gameplay.gravitygloves",     Kind::Bool,   "1", 0, 0, nullptr },   // GravityGlove: point, grip and flick: an object out of reach flies to the hand
         { "gameplay.touchtouse",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: buttons, switches and levers by hand
+        { "gameplay.pickpocketbyhand",  Kind::Bool,   "1", 0, 0, nullptr },   // NpcGestures: sneaking, hand at a belt, grip, pull back
+        { "gameplay.wavetotalk",        Kind::Bool,   "1", 0, 0, nullptr },   // NpcGestures: a wave at someone within 3 m talks to him
+        { "gameplay.climbbyhand",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: both hands on a ledge, pull down: climb
+        { "gameplay.swimstrokes",       Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: an arm's stroke in the water swims forward
+        { "gameplay.chokebyhands",      Kind::Bool,   "1", 0, 0, nullptr },   // MeleeAim: a hand each side of the neck from behind, 1 s: knocked out
         { "gameplay.sitholdtime",       Kind::Float,  "0.8", 0, 3, nullptr },   // KbmInject: B held this long (s) while crouched sits down (0 = off)
         { "gameplay.sitheight",         Kind::Float,  "80", 40, 130, nullptr },  // cm the eye is over the feet when sitting
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
@@ -429,6 +434,11 @@ float Settings::SitHoldTime() { return F("gameplay.sitholdtime"); }
 bool Settings::DragBodies() { return B("gameplay.dragbodies"); }
 bool Settings::GravityGloves() { return B("gameplay.gravitygloves"); }
 bool Settings::TouchToUse() { return B("gameplay.touchtouse"); }
+bool Settings::PickpocketByHand() { return B("gameplay.pickpocketbyhand"); }
+bool Settings::WaveToTalk() { return B("gameplay.wavetotalk"); }
+bool Settings::ClimbByHand() { return B("gameplay.climbbyhand"); }
+bool Settings::SwimStrokes() { return B("gameplay.swimstrokes"); }
+bool Settings::ChokeByHands() { return B("gameplay.chokebyhands"); }
 bool Settings::SwordParry() { return B("gameplay.swordparry"); }
 float Settings::SitHeight() { return F("gameplay.sitheight") / 100.f; }
 float Settings::MovementVignette() { return F("controls.movementvignette"); }
@@ -639,6 +649,11 @@ namespace
         { "dragbodies", "1" },
         { "gravitygloves", "1" },
         { "touchtouse", "1" },
+        { "pickpocketbyhand", "1" },
+        { "wavetotalk", "1" },
+        { "climbbyhand", "1" },
+        { "swimstrokes", "1" },
+        { "chokebyhands", "1" },
         { "sitholdtime", "0.8" },
         { "sitheight", "80" },
         { "renderscale", "1" },

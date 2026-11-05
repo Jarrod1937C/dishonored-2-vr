@@ -533,6 +533,14 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::atomic<bool> g_GripIdle[2] = { false, false };   // that grip is closed and doing nothing else (GravityGlove's)
+    // [Gameplay.Interaction] SwimStrokes: in the water, a stroke of an arm (the hand swept back past the head, as in a
+    // breaststroke or a crawl) swims forward -- the game's forward key held for a glide after each stroke, longer with
+    // strokes in a row. The stick swims as ever.
+    std::atomic<bool> g_SwimStrokes{ true };
+    struct StrokeHand { bool valid = false; float prev[3] = {}; float back = 0.f; double startAt = 0; } g_Stroke[2];
+    double g_SwimUntil = -1; int g_StrokeLogs = 0; unsigned long long g_Strokes = 0;
+    // ClimbByHand (Collision): the jump held a moment for the climb
+    double g_ClimbUntil = -1;
     //! The item goes back where it was taken from (refused, let go, out of reach): it flies there, then is drawn as is.
     void CarryReturn()
     {
@@ -1747,10 +1755,48 @@ void KbmInject::Tick()
         return;
     }
 
+    // SwimStrokes: in the water, each arm's stroke (the hand swept back past the head, 18 cm at 0.6 m/s or more,
+    // relative to the head, along its heading) holds the forward key for a glide
+    bool swimW = false;
+    if (g_SwimStrokes.load() && PlayerState::Running("Swimming"))
+    {
+        const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
+        if (hp.valid && g_Dt > 1e-4 && g_Dt < 0.1)
+        {
+            float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
+            float f[3] = { hf[0], 0.f, hf[2] }; const float fl = sqrtf(f[0] * f[0] + f[2] * f[2]);
+            if (fl > 1e-3f) { f[0] /= fl; f[2] /= fl; }
+            for (int h = 0; h < 2; h++)
+            {
+                StrokeHand& S = g_Stroke[h];
+                const XRHandPose& p = in.hand[h];
+                if (!p.valid || p.held) { S.valid = false; continue; }
+                const float rel[3] = { p.posX - hp.pos[0], p.posY - hp.pos[1], p.posZ - hp.pos[2] };
+                if (S.valid)
+                {
+                    const float d = -((rel[0] - S.prev[0]) * f[0] + (rel[2] - S.prev[2]) * f[2]);   // back, along the heading
+                    const float v = d / (float)g_Dt;
+                    if (v > 0.6f) { if (S.back <= 0.f) S.startAt = g_Now; S.back += d; }
+                    else if (v < 0.15f) S.back = 0.f;
+                    if (S.back >= 0.18f)
+                    {
+                        g_Strokes++;
+                        g_SwimUntil = std::min(std::max(g_SwimUntil, g_Now) + 0.7, g_Now + 1.6);
+                        if (g_StrokeLogs++ < 60) LOGI("KbmInject: {} arm stroke in the water ({:.0f} cm back in {:.2f} s): swims forward for {:.1f} s", h ? "right" : "left",
+                                                      S.back * 100.f, g_Now - S.startAt, g_SwimUntil - g_Now);
+                        S.back = -1.f;   // (until the hand comes forward again)
+                    }
+                }
+                memcpy(S.prev, rel, 12); S.valid = true;
+            }
+        }
+        swimW = g_Now < g_SwimUntil;
+    }
+    else { g_Stroke[0].valid = g_Stroke[1].valid = false; g_SwimUntil = -1; }
     // Movement: eight steady directions (or the old PWM on request).
     if (g_MovePwm.load())
     {
-        Hold(kW, in.moveY > 0 && Pwm(in.moveY));
+        Hold(kW, (in.moveY > 0 && Pwm(in.moveY)) || swimW);
         Hold(kS, in.moveY < 0 && Pwm(in.moveY));
         Hold(kD, in.moveX > 0 && Pwm(in.moveX));
         Hold(kA, in.moveX < 0 && Pwm(in.moveX));
@@ -1758,7 +1804,7 @@ void KbmInject::Tick()
     else
     {
         MoveKeys(in.moveX, in.moveY, g_MoveKeys);
-        Hold(kW, g_MoveKeys[0]); Hold(kS, g_MoveKeys[1]); Hold(kD, g_MoveKeys[2]); Hold(kA, g_MoveKeys[3]);
+        Hold(kW, g_MoveKeys[0] || swimW); Hold(kS, g_MoveKeys[1]); Hold(kD, g_MoveKeys[2]); Hold(kA, g_MoveKeys[3]);
     }
     const bool moving = g_MoveKeys[0] || g_MoveKeys[1] || g_MoveKeys[2] || g_MoveKeys[3] || fabsf(in.moveX) > 0.25f || fabsf(in.moveY) > 0.25f;
     // Sprint latches on the stick click, like a console: pushing the stick AND holding its click is a strain on a
@@ -1774,7 +1820,8 @@ void KbmInject::Tick()
     if (moving) g_StillSince = g_Now; else if (g_Now - g_StillSince > 0.3) g_SprintLatch = false;
     Hold(kShift, (g_SprintLatch || g_Now < slideShiftUntil) && moving);   // L stick click: sprint (latched)
     // Touch layout -> game actions
-    Hold(kSpace, (live & kXRBtnA) != 0);                  // A            : jump
+    if (Collision::TakeClimbRequest()) { g_ClimbUntil = g_Now + 0.25; LOGI("KbmInject: climb by hand: jump held 0.25 s (the game climbs where it can)"); }
+    Hold(kSpace, (live & kXRBtnA) != 0 || g_Now < g_ClimbUntil);   // A            : jump (and a climb by hand)
     const bool bKept = VirtualStand(pressed, live);
     Hold(kC,     (live & kXRBtnB) != 0 && !bKept);        // B            : crouch (the game's C toggles; see VirtualStand)
     SitTick(pressed, live, moving, bKept);                // B held while crouched: sit (SitHoldTime)
@@ -2349,6 +2396,7 @@ void KbmInject::SetMouthPotions(bool on)
     g_MouthPotions = on;
     LOGI("KbmInject: elixirs at the mouth {}", on ? "on: a grip squeezed with that hand at your mouth drinks -- left hand health, right hand Addermire (MouthPotions = 1)" : "off");
 }
+void KbmInject::SetSwimStrokes(bool on) { g_SwimStrokes = on; LOGI("KbmInject: swimming {}", on ? "with the arms too: a stroke swims forward (SwimStrokes)" : "with the stick only"); }
 void KbmInject::SetSitting(float holdSec, float heightM)
 {
     g_SitHold = std::clamp(holdSec, 0.f, 3.f); g_SitHeight = std::clamp(heightM, 0.3f, 1.4f);

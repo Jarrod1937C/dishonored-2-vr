@@ -58,6 +58,9 @@ namespace MeleeAim
     //! [Gameplay] KnockoutSpeed: how fast (m/s, relative to the player) the fist, pistol or sword's pommel must move for
     //! a blow to knock out, 1..20.
     void SetKnockoutSpeed(float mps);
+    //! [Gameplay.Knockout] ChokeByHands: while the takedown is offered, a hand on each side of his neck held 1 s knocks
+    //! him out (the choke's knockout, without its animation).
+    void SetChokeByHands(bool on);
     //! [Gameplay] KnockoutAngle / KnockoutRadius: from how far off straight behind the target (deg) a knockout / stealth
     //! kill is possible (the blue dot shows), and how close to his head's centre (m) the blow must land.
     void SetKnockoutZone(float angleDeg, float radiusM);

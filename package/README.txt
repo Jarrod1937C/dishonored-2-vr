@@ -237,6 +237,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Press a button, grip a lever ...... with an empty hand: press it, or squeeze the grip on it and
                                        pull, and it works as interact would (TouchToUse)
    Sword across an enemy's blow ...... parries it (SwordParry)
+   Both hands on a ledge, pull down .. climb it (ClimbByHand)
+   An arm's stroke in the water ...... swim forward (SwimStrokes)
+   Hands each side of a neck ......... from behind, held 1 s: knock him out (ChokeByHands)
+   Hand at a belt, grip, pull back ... sneaking: pickpocket (PickpocketByHand)
+   Wave at someone facing you ........ within 3 m: talk to him (WaveToTalk)
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -317,6 +322,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                GravityGloves = 1 (experimental: point, grip and flick back: an object out of reach flies to your hand)
                TouchToUse = 1 (experimental: press buttons and switches, grip and pull levers by hand)
                SwordParry = 1 (experimental: the sword held across an enemy's blow parries it)
+               ChokeByHands = 1 (experimental: a hand each side of a guard's neck from behind, 1 s: knocked out)
+               PickpocketByHand = 1 (experimental: sneaking, right hand at a belt, grip, pull back)
+               WaveToTalk = 1 (experimental: wave at someone facing you within 3 m to talk to him)
+               ClimbByHand = 1 (experimental: both hands on a ledge, pull down: climb)
+               SwimStrokes = 1 (experimental: in the water, an arm's stroke swims forward)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
                HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at

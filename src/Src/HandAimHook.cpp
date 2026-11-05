@@ -5,6 +5,8 @@
 #include "BodyDrag.h"
 #include "GravityGlove.h"
 #include "SwordParry.h"
+#include "NpcGestures.h"
+#include "AiResearch.h"
 #include "ThrowGesture.h"
 #include "MeleeAim.h"
 #include "Holster.h"
@@ -296,6 +298,8 @@ namespace
         GravityGlove::Tick();                   // an object out of reach pulled to the hand (GravityGloves)
         Collision::KeyholeProbe();              // research (logging on): the head at a door, for the keyhole peek
         SwordParry::Tick();                     // the blade's recent positions (an enemy's blow across them is parried)
+        NpcGestures::Tick();                    // gestures at people: a wave, a pickpocket (and research: a weapon held on someone, a tap)
+        AiResearch::Tick();                     // (log on only) the AI messages posted since, with their payloads
         ThrowGesture::GameTick();               // a grenade released this frame leaves now (the real throw)
         Roomscale::Tick();                      // the wall fade's ray: the head in a wall the character cannot enter
         MeleeAim::TickTakedown();               // is a stealth kill on offer (the blade then clicks the attack)
