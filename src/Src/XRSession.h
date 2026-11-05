@@ -44,6 +44,9 @@ struct XRWristLayer
     float pos[3] = {};
     int space = 1;                             //!< 1 = the left AIM pose (what the mod draws the arm from), 0 = grip
     bool gamma = false;                        //!< the source is gamma-encoded, premultiplied in gamma space (WristHud::Texture)
+    //! Pointers on the dial's rim (ObjectiveWatch): each a direction on the face (x right, y down) and a strength (0..1)
+    int needles = 0;
+    float needle[4][3] = {};
 };
 
 //! A flat panel in the room (XRSession::SetPanelLayer): a crop of a texture drawn into its own swapchain with rounded,

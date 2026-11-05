@@ -16,6 +16,8 @@
 #include "ScreenMode.h"
 #include "Roomscale.h"
 #include <detours/detours.h>
+#include <algorithm>
+#include <cmath>
 
 namespace
 {

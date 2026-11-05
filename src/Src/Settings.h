@@ -28,6 +28,8 @@ namespace Settings
     bool WeaponCollision();                       //!< [Gameplay] WeaponCollision: the held weapons too, and at bodies (Collision)
     bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
     bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
+    bool DoorsFollowHand();                       //!< [Gameplay.Collision] DoorsFollowHand: a pushed door swings only as far as the hand pushes it (DoorHold)
+    bool WatchObjectives();                       //!< [Display.Hud] WatchObjectives: the objectives' directions on the watch, the game's markers hidden (ObjectiveWatch)
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
     bool FinisherAnimations();
     float KnockoutSoundVolume();

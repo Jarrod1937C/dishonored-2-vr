@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "ScreenMode.h"
+#include "Probes.h"
+#include "ObjectiveWatch.h"
 #include "PassProfile.h"
 #include "XRSession.h"
 #include "KbmInject.h"
@@ -717,6 +719,11 @@ void ScreenMode::PlayHud(XRSession& xr, const float quat[4], const float pos[3],
         p.nHoles = used;
         if (used) g_MarkPanels++;
     }
+    if (p.nHoles < 8)
+    {   // where the objective markers are parked while the watch shows their directions (WatchObjectives)
+        float r[4];
+        if (ObjectiveWatch::ParkHole(tw, th, r)) { for (int k = 0; k < 4; k++) p.holes[p.nHoles][k] = r[k]; p.nHoles++; }
+    }
     p.trim = g_HudTrim.load();
     if (p.trim && p.nHoles < 8)
     {   // the cluster the watch shows (and keeps on against the player's HUD setting): not on the panel as well
@@ -756,7 +763,15 @@ namespace
     }
     void* MarkerProjHook(void* cam, const float* world, float* out)
     {
+        Probes::OnMarkerProj(world);   // (research logging, ProfileRenderPasses only)
+        const bool objective = ObjectiveWatch::OnMarker(world);   // (its point kept for the watch)
         void* r = g_RealMarkerProj(cam, world, out);
+        if (objective && out && ObjectiveWatch::Active())
+        {   // shown on the watch instead (WatchObjectives): off the HUD, to the spot its panel leaves out
+            int w = 0, h = 0;
+            if (HudSize(w, h)) ObjectiveWatch::Park(out, w, h);
+            return r;
+        }
         if (!g_MarkersOn.load(std::memory_order_relaxed) || !world || !out || g_Flat.load() || g_Wheel.load()) return r;
         float mat[16], org[3], axis[9], head[9]; unsigned long long serial = 0;
         if (!ViewMatrixHook::RenderView(mat, org, axis, &serial, head)) return r;

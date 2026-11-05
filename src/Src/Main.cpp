@@ -20,6 +20,9 @@
 #include "FovMask.h"
 #include "SkyMotion.h"
 #include "PaceLog.h"
+#include "Probes.h"
+#include "DoorHold.h"
+#include "ObjectiveWatch.h"
 #include "ScreenShadows.h"
 #include "BodyView.h"
 #include "VRRuntime.h"
@@ -98,6 +101,7 @@ static void OnPresent(IDXGISwapChain* sc)
     PassProfile::OnPresent(sc);   // [Advanced] ProfileRenderPasses: GPU ms per render pass
     PassProfile::EndSection(PassProfile::kSecProfiler);
     Fog::OnPresent(sc);           // [Display] CheapFog: its colour and the frame's distances, to the log every 10 s
+    Probes::OnPresent();          // research logging (ProfileRenderPasses): 30 s summaries
     Reticle::Tick();              // the game's crosshair off while the hand reticles are on
     VrTweaks::OnPresent();        // the ini's VR graphics tweaks, while the headset shows the game
     PassProfile::BeginSection(2);
@@ -181,6 +185,8 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "weaponcollision" })) Collision::SetWeapons(Settings::WeaponCollision());
     if (has({ "pushobjects" })) Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     if (has({ "pushdoors" })) Collision::SetDoors(Settings::PushDoors());
+    if (has({ "doorsfollowhand" })) DoorHold::SetEnabled(Settings::DoorsFollowHand());
+    if (has({ "watchobjectives" })) ObjectiveWatch::SetEnabled(Settings::WatchObjectives());
     if (has({ "pulltoopen" })) Collision::SetOpenables(Settings::PullToOpen());
     if (has({ "physicalpickup" })) Collision::SetItems(Settings::PhysicalPickup());
     if (has({ "swipedials" })) Collision::SetDials(Settings::SwipeDials());
@@ -276,6 +282,8 @@ static DWORD WINAPI InitThread(LPVOID)
     SwordContact::SetBloodflyReach(Settings::SwordBloodflyReach());
     Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     Collision::SetDoors(Settings::PushDoors());
+    DoorHold::SetEnabled(Settings::DoorsFollowHand());          // (hooks the animation players' update when on)
+    ObjectiveWatch::SetEnabled(Settings::WatchObjectives());
     Collision::SetOpenables(Settings::PullToOpen());
     Collision::SetItems(Settings::PhysicalPickup());
     Collision::SetDials(Settings::SwipeDials());
@@ -353,6 +361,7 @@ static DWORD WINAPI InitThread(LPVOID)
     VrTweaks::InstallMenuFilter();          // the game's options menus without what the mod decides in VR
     VrTweaks::InstallViewDistance();        // ViewDistance: the game's view-distance level, whatever its menu says
     PassProfile::Install();          // [Advanced] ProfileRenderPasses only
+    if (Settings::ProfileRenderPasses()) Probes::Install();   // research logging: doors, hit reactions, objective markers
     XInputHook::Install();
     XInputHook::SetEnabled(false);       // pad emulation reaches the engine's event queue but not the player yet (see ENGINE.md)
     PadProbe::Install();

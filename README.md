@@ -233,7 +233,10 @@ side, so you can look around and still find your hips.
 
 ### Your hands in the world
 
-- **Doors:** push a closed door with either hand to open it, push an open one to close it.
+- **Doors:** push a closed door with either hand to open it, push an open one to close it. A door swings only as far
+  as you push it: push slowly and it moves with your hand, stop and it stops (to peek through a gap or open it quietly),
+  push again and it goes on. A quick shove swings it open by itself; push it from the other side to turn it back.
+  The interact button still opens or closes it at the game's speed (`DoorsFollowHand`, on by default).
 - **Drawers and cabinets:** put your hand on one, squeeze the grip and pull back to open it; push it shut. Locks and
   keys work as in the game.
 - **Windows:** rest a hand on a sliding window and slide it up or down.
@@ -270,10 +273,14 @@ you would for real, instead of only pointing at it and pressing a button.
 
 - **Stereo HUD:** the game's interface on one layer for both eyes at 2 m, not doubled, with its edges brought inward
   (`HudScale`).
-- **Markers in the world:** a guard's alert marker and the objective markers float over the characters, at their
-  distance.
+- **Markers in the world:** a guard's alert marker floats over him, at his distance (and the objective markers too,
+  with `WatchObjectives` off).
 - **Wrist watch:** look at the back of your left wrist, like checking a watch, for health, mana and the equipped item
   with its ammo.
+- **Objectives on the watch:** a gold pointer on the watch's rim points the way to each objective (the top of the
+  watch is straight ahead of you); the nearest objective's pointer is the largest and brightest. The game's own
+  objective markers are kept off the screen, and their option is hidden from the game's menu while the watch shows
+  them (`WatchObjectives`, on by default; 0 brings the game's markers and their option back).
 - **Menu screen:** menus, loading screens, the journal, the shops and the character choice show on a big screen fixed
   in the room. While paused, the world stops and dims around it.
 - **VR options in the game:** Options has VR tabs (VR Controls, VR Gameplay, VR Display, VR Performance, VR
@@ -329,7 +336,7 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |
-| Look at the back of your left wrist | The watch: health, mana, ammo |
+| Look at the back of your left wrist | The watch: health, mana, ammo, the way to your objectives |
 | Crouch, lean, walk for real | The character does too |
 
 ### Touch-style controllers: Quest, Rift, Pico, Reverb G2, Vive Cosmos, Vive Focus 3

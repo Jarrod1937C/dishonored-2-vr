@@ -64,6 +64,7 @@ namespace
         { "gameplay.swordbodydepth",    Kind::Float,  "4", 0, 15, nullptr, true },  // cm the blade sinks into a body before it stops
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
+        { "gameplay.doorsfollowhand",   Kind::Bool,   "1", 0, 0, nullptr },   // DoorHold: a pushed door swings only as far as the hand pushes it
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
         { "gameplay.knockoutspeed",     Kind::Float,  "8.0", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
         { "gameplay.swordbloodflyreach", Kind::Float, "0.6", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
@@ -120,6 +121,7 @@ namespace
         { "display.maxrendermegapixels", Kind::Float, "0", 0, 200, nullptr, true },   // RenderRes: a budget for the render size (0 = only the headset's own limit)
         { "display.wristhud",           Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.wristhudsize",       Kind::Float,  "8.5", 4, 15, nullptr },
+        { "display.watchobjectives",    Kind::Bool,   "1", 0, 0, nullptr },   // ObjectiveWatch: the objectives' directions on the watch, not on the HUD
         // 0 mono, 1 synchronised stereo, 2 the alternating stereo of 1.0 (whose ini had 1 / true for that one: it gets
         // the synchronised one now, which is what 1 meant to the player)
         { "display.stereo3d",           Kind::Choice, "1", 0, 0, "0|1|2|true|false|on|off|yes|no", true },   // hidden: the mod is made for 1
@@ -385,6 +387,8 @@ bool Settings::HandCollision() { return B("gameplay.handcollision"); }
 bool Settings::WeaponCollision() { return B("gameplay.weaponcollision"); }
 bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
 bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
+bool Settings::DoorsFollowHand() { return B("gameplay.doorsfollowhand"); }
+bool Settings::WatchObjectives() { return B("display.watchobjectives"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
 float Settings::KnockoutSoundVolume() { return F("gameplay.knockoutsoundvolume"); }
@@ -614,6 +618,7 @@ namespace
         { "sworddamagescale", "1" },
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
+        { "doorsfollowhand", "1" },
         { "renderscale", "1" },
         { "taasharpening", "0.5" },
         { "disablemetaasw", "1" },
@@ -622,6 +627,7 @@ namespace
         { "huddistance", "2" },
         { "hudscale", "0.8" },
         { "wristhudsize", "8.5" },
+        { "watchobjectives", "1" },
         { "menuscreensize", "62" },
         { "menuscreendistance", "2.4" },
         { "menubackground", "0.22" },

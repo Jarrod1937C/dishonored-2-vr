@@ -155,8 +155,11 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        The world stops and dims around the menu screen
    BOTH STICKS PRESSED TOGETHER ...... same as the menu button (for controllers without one)
    Look at the back of your LEFT
-     wrist, like checking a watch .... health, mana and the equipped item with its ammo
-                                       (hidden while the left trigger is held)
+     wrist, like checking a watch .... health, mana and the equipped item with its ammo, and a gold
+                                       pointer on its rim for each objective (the top of the watch =
+                                       straight ahead; the nearest one is the largest). The game's own
+                                       objective markers are kept off the screen meanwhile
+                                       (WatchObjectives) (hidden while the left trigger is held)
    Lean, peek, crouch for real ....... just do it with your body: the view follows your head.
                                        There is no lean button.
    Hand to your mouth, squeeze grip .. drink an elixir: left hand health, right hand Addermire
@@ -221,7 +224,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        draws a weapon
    Crouch for real ................... the character crouches (PhysicalCrouch); stand up to stand
    Doors and windows ................. push a door with either hand to open it, push an open one
-                                       to close it; slide either hand up / down on a window
+                                       to close it: it swings only as far as you push it (stop and
+                                       it stops; a quick shove swings it open by itself;
+                                       DoorsFollowHand); slide either hand up / down on a window
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -303,6 +308,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PushObjects = 1   PushStrength = 0.8 (with those: hands and weapons push loose objects; kg)
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
                PushDoors = 1 (with HandCollision: push a door with your hand to open it)
+               DoorsFollowHand = 1 (with PushDoors: the door swings only as far as the hand pushes it)
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
                SwipeDials = 1 (with HandCollision: slide your hand up / down a safe's number wheel to turn it)
                SlideWindows = 1 (with HandCollision: slide your right hand up / down a window to raise / lower it)
@@ -314,6 +320,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PhysicalPickup = 1 (with HandCollision: grab items with the right hand and
                                  put them behind your back to keep them, or food to your mouth)
    [Display]   Reticle = 1 (Core VR: the hands' pointers)  WristHud = 1  WristHudSize = 8.5 (cm)
+               WatchObjectives = 1 (the way to each objective on the watch's rim; the game's objective
+                                 markers off the screen and their option hidden from its menu)
                MinimalReticle = 1 (hidden: only a dot where each hand points; 0 = lines)  ReticleOpacity = 0.4
                StereoHud = 1 (3D: the game's interface on one layer for both eyes, not doubled)
                HudDistance = 2 (m, how far away that layer floats)

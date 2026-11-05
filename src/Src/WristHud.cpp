@@ -8,6 +8,7 @@
 #include "CVars.h"
 #include "Settings.h"
 #include "ScreenMode.h"
+#include "ObjectiveWatch.h"
 #include <algorithm>
 #include <cmath>
 #include <d3d11.h>
@@ -675,6 +676,11 @@ void WristHud::OnXrFrame(XRSession& xr, bool inMenu)
         l.edgeFade = 0.03f * hs;
         const float a = g_Alpha * g_Alpha * (3.f - 2.f * g_Alpha);   // smoothstep: eases in and out
         l.alpha = a; l.backdrop = g_W.backdrop; l.size = g_W.size;
+        {   // the objectives' directions on the rim (WatchObjectives)
+            ObjectiveWatch::Needle nd[4];
+            l.needles = ObjectiveWatch::Needles(nd);
+            for (int i = 0; i < l.needles; i++) { l.needle[i][0] = nd[i].x; l.needle[i][1] = nd[i].y; l.needle[i][2] = nd[i].strength; }
+        }
         xr.SetWristLayer(l);
         g_WS.submitted++;
     }
@@ -693,7 +699,7 @@ std::string WristHud::WatchStatus()
         drawn = fmt::format("drawnwrist {:.3f} {:.3f} {:.3f}", -le, u, -f);
     }
     std::lock_guard lk(g_WM);
-    return fmt::format("watch on {} shown {} alpha {:.2f} why {} facing {:.0f} gaze {:.0f} dist {:.2f} frames {} shownframes {} submitted {} userhud {} {} face {:.3f} {:.3f} {:.3f}",
+    return ObjectiveWatch::Status() + "; " + fmt::format("watch on {} shown {} alpha {:.2f} why {} facing {:.0f} gaze {:.0f} dist {:.2f} frames {} shownframes {} submitted {} userhud {} {} face {:.3f} {:.3f} {:.3f}",
                        g_WristOn.load(), g_Shown ? 1 : 0, g_Alpha, kWhy[g_WS.why], g_WS.facing, g_WS.gaze, g_WS.dist, g_WS.frames,
                        g_WS.shown, g_WS.submitted, g_UserHud, drawn, -g_W.back, g_W.side, g_W.along);
 }

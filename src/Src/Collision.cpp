@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "Collision.h"
+#include "Probes.h"
+#include "DoorHold.h"
 #include "GameInfo.h"
 #include "GpuTrace.h"
 #include "HandAimHook.h"
@@ -986,6 +988,7 @@ void Collision::NoteInteract(uint32_t id)
     if (!id || id == 0x3FFF0010u) return;
     { std::lock_guard lk(g_FrontM); if (g_InteractAt.size() > 256) g_InteractAt.clear(); g_InteractAt[id] = Now(); }
     void* e = BodyHide::EntityById((int)id);
+    if (e) DoorHold::OnInteract(e);
     if (!e || !IsUsableFront(e)) return;
     int now = 0;
     { std::lock_guard lk(g_FrontM); if (g_FrontOpen.size() > 256) g_FrontOpen.clear(); now = g_FrontOpen[id] ^= 1; }
@@ -1013,15 +1016,15 @@ bool Collision::WorldRay(const float a[3], const float b[3], float& dist)
 
 void Collision::Tick()
 {
-    if (!g_Hands.load() && !g_Weapons.load()) return;
-    if (HandAimHook::Mode() < 2) { std::lock_guard lk(g_PubM); g_Pub[0].n = g_Pub[1].n = 0; return; }
+    if (!g_Hands.load() && !g_Weapons.load()) { DoorHold::Tick(Now()); return; }
+    if (HandAimHook::Mode() < 2) { { std::lock_guard lk(g_PubM); g_Pub[0].n = g_Pub[1].n = 0; } DoorHold::Tick(Now()); return; }
     const double now = Now();
     const double dt = g_LastTick > 0 ? now - g_LastTick : 0.0;
     g_LastTick = now;
     g_Ticks++;
 
     float eye[3], view[9];
-    if (!HandAimHook::RealCamera(eye, view)) return;
+    if (!HandAimHook::RealCamera(eye, view)) { DoorHold::Tick(now); return; }
     // a snap turn or a teleport moves every point at once: start each again from the eye
     const float yaw = atan2f(view[1], view[0]) * 57.29578f;
     bool jump = !g_CamValid || dt <= 0.0 || dt > 0.25;
@@ -1140,14 +1143,18 @@ void Collision::Tick()
                 void* e = cents[i];
                 if (!e || !IsDoor(e)) continue;
                 if (g_Windows.load() && IsWindowEnt(e)) continue;   // a window moves by sliding, not pushing
-                auto it = g_DoorAt.find(e);
-                if (it != g_DoorAt.end() && now - it->second < C.doorGap) continue;
                 int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
                 if (pi < 0) continue;
                 float v[3]; for (int k = 0; k < 3; k++) v[k] = (goal[pi][k] - S.prevRaw[pi][k]) / (float)dt;
                 const float into = -Dot(v, cs[i].n);
                 const float d[3] = { goal[pi][0] - cs[i].p[0], goal[pi][1] - cs[i].p[1], goal[pi][2] - cs[i].p[2] };
                 const float past = cs[i].clear - Dot(d, cs[i].n);    // how far the real point is behind the surface
+                // a door whose swing the hand drives (DoorsFollowHand): the press sets how far it goes; pushed against
+                // its swing (from the other side), the interact below turns it round
+                const int held = DoorHold::Press(e, h, cs[i].p, cs[i].n, past, into, now);
+                if (held == 1) continue;
+                auto it = g_DoorAt.find(e);
+                if (it != g_DoorAt.end() && now - it->second < C.doorGap) continue;
                 if (into < C.doorSpeed && past < C.doorPress) continue;
                 if (g_DoorAt.size() > 64) g_DoorAt.clear();
                 g_DoorAt[e] = now;
@@ -1159,9 +1166,10 @@ void Collision::Tick()
                 if (g_DoorMem.size() > 128) g_DoorMem.clear();
                 const char* how = "";
                 const int dstate = DoorOpen(e, &how);
-                if (dstate == 1)
-                {
+                if (dstate == 1 || held == -1)
+                {   // (a held door pushed against its swing: the interact turns it round, whichever way it was going)
                     const float at[3] = { cs[i].p[0] - cs[i].n[0] * 0.02f, cs[i].p[1] - cs[i].n[1] * 0.02f, cs[i].p[2] - cs[i].n[2] * 0.02f };
+                    DoorHold::Begin(e, now);   // (before the interact: it is the hand's, the swing stays held)
                     RequestInteract(h, id, at, now);
                     g_DoorMem[e] = 0;
                     LOGI("Collision: {} hand pushed OPEN door '{}' (id {:#x}; {}) at {:.2f} m/s, {:.0f} cm past its surface: interact to close it",
@@ -1169,8 +1177,9 @@ void Collision::Tick()
                     VRRuntime::Vibrate(h, 0.35f, 0.04f);
                     continue;
                 }
+                if (Probes::DoorImpulseTest(e, cs[i].p, cs[i].n, h)) { VRRuntime::Vibrate(h, 0.35f, 0.04f); continue; }   // (research, profiling only)
                 const bool ok = PushDoor(e, an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].ent : nullptr);
-                if (ok) g_DoorMem[e] = 1;
+                if (ok) { g_DoorMem[e] = 1; DoorHold::Begin(e, now); }
                 LOGI("Collision: {} hand pushed door '{}' (id {:#x}; {}) at {:.2f} m/s, {:.0f} cm past its surface: {}",
                      h ? "right" : "left", EntityName(e), id, how, into, past * 100.f, ok ? "the game's door push sent" : "COULD NOT SEND");
                 VRRuntime::Vibrate(h, 0.35f, 0.04f);
@@ -1441,6 +1450,7 @@ void Collision::Tick()
         Pub& P = g_Pub[h]; P.n = nc; P.at = now;
         for (int i = 0; i < nc; i++) P.c[i] = cs[i];
     }
+    DoorHold::Tick(now);   // the held doors' swings: how far this frame's presses take them
 }
 
 bool Collision::Apply(int hand, const float r[9], float t[3], float applied[3])
@@ -1478,6 +1488,7 @@ void Collision::SetBodyContacts(int hand, const Contact* c, int n)
 std::string Collision::Stats()
 {
     std::ostringstream o;
+    o << DoorHold::Status() << "; ";
     o << "hands " << g_Hands.load() << " weapons " << g_Weapons.load() << " push " << g_Push.load() << " ticks " << g_Ticks.load()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()

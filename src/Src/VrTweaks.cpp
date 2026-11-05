@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "CrashLog.h"
 #include "VrTweaks.h"
+#include "ObjectiveWatch.h"
 #include "VRRuntime.h"
 #include "CVars.h"
 #include "Game.h"
@@ -33,6 +34,7 @@ namespace
     std::atomic<float> g_LodZoom{ 1.f };   // StaticLodZoom (1 = the game's own, never written)
     std::atomic<bool> g_NoBob{ true };     // DisableHeadBob
     int g_UserNoBob = -1;                  // the game's pm_noBob, to put back (render thread)
+    int g_UserObjMarkers = -1;             // the game's ark_ui_show_objective_markers, to put back (render thread)
 
     // ViewDistance: the game's view-distance preset (ARK_VISUALSETTING_VIEW_DISTANCE, r_viewDistPreset; set by the
     // menu's environment detail with the others) is applied by exe+0x5105A0(settings, level) -- reached from
@@ -208,6 +210,7 @@ namespace
         if ((is("ARK_GPSETTING_CROSSHAIR_STYLE") || is("ARK_GPSETTING_CROSSHAIR_OPACITY")) && Reticle::Mode() != 0) return "the hands' reticles instead (Reticle)";
         if (is("ARK_GPSETTING_KILLCAM") && !Settings::FinisherAnimations()) return "no kill cam (FinisherAnimations = 0)";
         if (is("ARK_GPSETTING_HEADBOB") && Settings::DisableHeadBob()) return "no head bob in VR (DisableHeadBob)";
+        if (is("ARK_GPSETTING_SHOW_OBJECTIVE_MARKERS") && ObjectiveWatch::Active()) return "the objectives on the watch (WatchObjectives)";
         return "";
     }
     bool ListHook(int which, void* section, void* desc)
@@ -345,6 +348,21 @@ void VrTweaks::OnPresent()
             {
                 CVars::SetInt("pm_noBob", g_UserNoBob); g_UserNoBob = -1;
                 LOGI("VrTweaks: head bob back (pm_noBob as the game had it)");
+            }
+        }
+        {   // WatchObjectives: the game keeps its objective markers only while ark_ui_show_objective_markers is on -- held
+            // on while the watch shows them (ObjectiveWatch; their option is hidden from the game's menu meanwhile)
+            const bool obj = ObjectiveWatch::Active();
+            const int cur = CVars::GetInt("ark_ui_show_objective_markers", -1);
+            if (obj && cur == 0)
+            {
+                if (g_UserObjMarkers < 0) g_UserObjMarkers = cur;
+                if (CVars::SetInt("ark_ui_show_objective_markers", 1)) LOGI("VrTweaks: objective markers held on (ark_ui_show_objective_markers 1): their directions are on the watch (WatchObjectives)");
+            }
+            else if (!obj && g_UserObjMarkers >= 0)
+            {
+                CVars::SetInt("ark_ui_show_objective_markers", g_UserObjMarkers); g_UserObjMarkers = -1;
+                LOGI("VrTweaks: objective markers back to the game's option");
             }
         }
         const bool want = active && !g_Fog.load() && !g_MapFog;

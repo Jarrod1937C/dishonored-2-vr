@@ -1112,6 +1112,30 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   aimed at it.
 - Hiding the arm with the game's own Hide (vtable +0x80) works: entity flags 0x8B hidden, 0x88 shown.
 
+### 8.4 Doors: what swings them (measured 2026-11-04, research rounds 1-5)
+- A door (`arkDoor`, an `arkCpntOpenable`, vtable exe+0x1C569C8) opens with the openable's state machine
+  (component+0x40..: `arkStateOpenable_Closed` exe+0x1C56908, `_Animated` exe+0x1C56948, `_Opened` exe+0x1C56988). The
+  Animated state's update **exe+0x74E7A0** only MEASURES the door: the angle between its forward and the closed one
+  (state+0x2C = 0 closed .. 1 open; state+0x28 = 1 / 2 by whether that went up or down since the last frame -- it
+  flips as a stopped door settles), and ends when the animation component [component+0xF8] stops playing slot 0
+  (exe+0x53E770).
+- The door's body is kinematic (impulses of 20-150 move it not at all). It follows its **arkReferenceFrame**
+  ([entity+0x358], vtable exe+0x1C573E8): the pre-physics update exe+0x7545A0 (from arkReferenceFramePrePhysicsUpdateTask
+  exe+0x7551C0, parents first) computes in exe+0x7506D0 the target pose -- the parent's (+0x3C8: the
+  'door_structure_animated_single_*' entity), at its joint +0x3D0 (1) of the animation +0x400 (the openable's own),
+  times the local offset (+0x3D4, rotation quaternion +0x3E0: 90 deg about z) -- and writes the velocity that reaches it
+  into its velocity request (+0x88 linear, +0x94 angular, flags +0xA0 / +0xD4 = 0x101; exe+0x7546D7). The physics
+  component exe+0x80B9E0 gives the body that velocity (exe+0x877EF0). The swing: ramps up for ~0.2 s, ~2.77 rad/s, a
+  small spring at the end. The door entity's origin (+0x300) is on the hinge; its rotation rows at +0x30C (yaw =
+  atan2(+0x310, +0x30C)).
+- The animation's player is animation+0x338; its update **exe+0x6E2650(player, lod, time, a4, skipTime, a6, a7)** (from
+  the animation component's update exe+0x540F20, the time from exe+0x878030) takes the time as a double passed in r8,
+  steps the graph by dt = time - [player+0x38] (kept at player+0x40, exe+0x6E26C2) and stores the time at +0x38. The
+  door animation's own time runs in its variable block [[animation+0x338]]+0x74 (frames at 30/s). Giving a player a
+  time of its own slows or stops that animation alone: DoorsFollowHand (DoorHold.cpp).
+- exe+0x540D30(animation, slot, id, rate) sets a 'simpleAnim' graph node's speed: a door's animation has none (it fails);
+  the game never calls it for doors.
+
 ---
 
 ## 9. Interface, menus, videos, HUD
@@ -1153,6 +1177,11 @@ nearly straight down; a ray that lands on a placed mine places nothing).
   divides by w; then out = ((ndc.x + 1) * W / 2, (1 - ndc.y) * H / 2, ndc.z) with W, H the ints at
   [exe+0x39A5290]+0x340EA8 / +0x340EAC. Only the marker code calls it. Off-screen clamping (ellipse / rectangle)
   follows on the result. The mod re-projects for the headset (ScreenMode, `HudMarkers`).
+- Objective markers: `arkEntityMarkerObjective` (vtable exe+0x1B7E748), +0x3C the world point (the target's at +0x24),
+  +0xD8 the distance, +0x648 a type (0, 6 seen), +0x78 the manager (pool of 52 at +0x18, objectives in slots 16-51,
+  the slot at marker+0xD4). They exist only while `ark_ui_show_objective_markers` is on: switched off, the game
+  releases them at once (they come back when it is on). WatchObjectives (ObjectiveWatch.cpp) holds it on, reads the
+  points as they are projected and parks the markers in a corner of the HUD the panel leaves out.
 - The auto-exposure: `PostFX/Luminance/buffAutoExposure` (an `arkStructuredBuffer<autoExposure_t>`), `exposureIndex`,
   `customEVBias`, `white_level`; passes RENDER_POSTFX_DOWNSAMPLE_LUMINANCE / RENDER_POSTFX_AUTOEXPOSURE (Fog finds the
   buffer by reflecting the shaders that bind it).

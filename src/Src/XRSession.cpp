@@ -947,7 +947,7 @@ V vs(uint id : SV_VertexID)
     o.uv = t; o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
 }
-cbuffer C : register(b0) { float4 crop; float4 src; float4 opt; };   // crop: centre x, y, half side, edge fade (px); src: w, h, alpha, backdrop; opt.x: gamma source
+cbuffer C : register(b0) { float4 crop; float4 src; float4 opt; float4 nd[4]; };   // crop: centre x, y, half side, edge fade (px); src: w, h, alpha, backdrop; opt.x: gamma source, opt.y: pointers; nd: each pointer's direction (x right, y down), strength
 Texture2D tx : register(t0); SamplerState sm : register(s0);
 float3 Linear(float3 s) { return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4); }
 float4 ps(V i) : SV_Target
@@ -962,7 +962,24 @@ float4 ps(V i) : SV_Target
     c *= 1 - smoothstep(0.86, 1.0, r);
     float ba = src.w * (1 - smoothstep(0.78, 0.98, r));
     float4 b = float4(float3(0.012, 0.012, 0.016) * ba, ba);
-    return (c + b * (1 - c.a)) * src.z;
+    float4 o = c + b * (1 - c.a);
+    // the objectives' pointers (WatchObjectives): a wedge on the rim pointing out, wide at its base, dark-edged
+    [unroll] for (int k = 0; k < 4; k++)
+    {
+        float on = step(k + 0.5, opt.y);
+        float2 u = nd[k].xy; float s = nd[k].z;
+        float t = dot(d, u), q = abs(d.x * u.y - d.y * u.x);
+        float r0 = lerp(0.74, 0.68, s), r1 = 0.97;
+        float hw = lerp(0.07, 0.11, s) * saturate((r1 - t) / (r1 - r0));
+        float e = min(min(t - r0, r1 - t), hw - q);
+        float aa = max(fwidth(e), 1e-4);
+        float edgeA = saturate((e + 0.03) / aa + 0.5) * 0.85 * on;
+        float fillA = saturate(e / aa + 0.5) * on;
+        float3 gold = float3(1.0, 0.56, 0.13) * lerp(0.45, 1.0, s);
+        o = float4(0, 0, 0, edgeA) + o * (1 - edgeA);
+        o = float4(gold * fillA, fillA) + o * (1 - fillA);
+    }
+    return o * src.z;
 }
 )";
 struct WristRenderer
@@ -999,7 +1016,7 @@ struct WristRenderer
         dev->CreateSamplerState(&sd, &smp);
         D3D11_RASTERIZER_DESC rd = {}; rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
         dev->CreateRasterizerState(&rd, &rs);
-        D3D11_BUFFER_DESC bd = {}; bd.ByteWidth = 48; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        D3D11_BUFFER_DESC bd = {}; bd.ByteWidth = 112; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         dev->CreateBuffer(&bd, nullptr, &cb);
         ID3D11Device1* d1 = nullptr;
         if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11Device1), (void**)&d1)) && d1)
@@ -1027,7 +1044,9 @@ struct WristRenderer
         if (FAILED(ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1)) || !c1) { rtv->Release(); return false; }
         ID3DDeviceContextState* prev = nullptr;
         c1->SwapDeviceContextState(state, &prev);
-        const float k[12] = { l.center[0], l.center[1], l.half, l.edgeFade, (float)l.srcW, (float)l.srcH, l.alpha, l.backdrop, l.gamma ? 1.f : 0.f, 0.f, 0.f, 0.f };
+        float k[28] = { l.center[0], l.center[1], l.half, l.edgeFade, (float)l.srcW, (float)l.srcH, l.alpha, l.backdrop, l.gamma ? 1.f : 0.f,
+                        (float)std::clamp(l.needles, 0, 4), 0.f, 0.f };
+        for (int i = 0; i < 4; i++) { k[12 + i * 4] = l.needle[i][0]; k[13 + i * 4] = l.needle[i][1]; k[14 + i * 4] = l.needle[i][2]; k[15 + i * 4] = 0.f; }
         c1->UpdateSubresource(cb, 0, nullptr, k, 0, 0);
         const float clear[4] = { 0, 0, 0, 0 };
         c1->ClearRenderTargetView(rtv, clear);
