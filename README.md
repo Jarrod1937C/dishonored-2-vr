@@ -15,13 +15,16 @@ it builds on.
 - **Knockout blows, a new game mechanic**: sneak up behind a guard and knock him out by hand with a blow to the back
   of his head, a VR-friendly non-lethal takedown with no choke animation. The game's own takedowns from behind still
   work too.
-- **Solid hands and weapons** that stop at walls and push loose objects; push doors, pull drawers open, slide windows,
-  turn safe dials, take items and eat food by hand.
+- **Solid hands and weapons** that stop at walls and push loose objects; push doors open only as far as you push them,
+  pull drawers open, slide windows, turn safe dials, take items and eat food by hand. People's bodies give under your
+  hands instead of standing like statues.
 - **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
   inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
   head zooms the mask's spyglass.
 - **Real stereo 3D** at the headset's full refresh, menus on a big screen in the room, the HUD as a watch on your
-  wrist, and cutscenes played around you.
+  wrist with pointers to your objectives, and cutscenes played around you.
+- **Comfort options**: snap or smooth turning, a comfort vignette while you move, Far Reach that takes you there at
+  once like Blink, no head bob, and a sit-down view.
 
 > **Release coming soon: no build is available to download yet.**
 >
@@ -129,7 +132,6 @@ Other limitations:
 - **Sit down.** Hold the crouch button (B) while crouched and standing still (`SitHoldTime`, 0.8 s) and the view goes
   down to sitting height (`SitHeight`, 80 cm over the feet; the game's crouch is about 120) to take in the view. The
   character stays crouched; B again stands up, and walking off ends it. Both are in the VR Gameplay tab (Sitting).
-  While sitting the character does not step after your head as you look around.
 - **Comfort vignette.** While the character moves (the stick, Blink, falling) the edges of the view darken, the faster
   the further in, and open again as you slow down (`MovementVignette`, 0.6; 0 = off; VR Controls tab, Comfort).
   Walking in your room, leaning and turning your head do not count.
@@ -303,6 +305,7 @@ you would for real, instead of only pointing at it and pressing a button.
 - **Turning:** snap (30° steps by default, with a short dim during each snap) or smooth (120°/s).
 - **Far Reach VR comfort option** (`FarReachVRComfortOption`, on by default, in the VR Gameplay options): Far Reach puts you where it
   landed at once instead of pulling you through the air. Where it takes you is unchanged.
+- **No head bob:** neither the walking bob nor the rise and fall of the character's breathing while standing.
 - **No motion blur or depth of field** in VR; Meta's ASW is switched off for the game on Link / Air Link.
 - **A tidier game Options menu:** in VR the game's own Options screens leave out the settings the mod decides there:
   field of view, adaptive resolution, triple buffering, V-Sync and the frame-rate limiter (the headset paces the
@@ -437,7 +440,17 @@ rendering one flat frame per Present from one camera. The mod changes the pipeli
    model-view-projection matrix and the skinning palette the vertex shaders receive: the weapon is found by its
    equipment entity, anchored to the controller, and the arm skeletons are solved with inverse kinematics to reach it.
    Engine hooks then make the game agree with what you see: shots, sword hits, power effects and thrown objects leave
-   from the hand as drawn, by answering the engine's joint and camera queries with the drawn pose.
+   from the hand as drawn, by answering the engine's joint and camera queries with the drawn pose. The hands are placed
+   in the room through the same anchor as the view (game yaw = room yaw + the servo's offset), so hands, weapons and
+   view always turn together.
+4. **Depth of the first-person models.** The engine draws the arms and weapons with a depth scale of their own (5 on
+   them, 1 on the world) so that in the flat game they never sink into a wall. In VR the hands are where your real
+   hands are, so the mod gives them the world's scale: they sort by their real distance and whatever is in front of
+   them hides them.
+5. **The game clock.** The game advances its simulation in a whole number of fixed 1/120 s steps per frame (the
+   time passed, rounded to steps). At a 90 Hz refresh that is one step on some frames and two on others, an uneven
+   motion when moving sideways. The mod sets the step to the headset's own refresh period, so every frame advances the
+   world by exactly one step (hidden `SimStepAtRefresh`, on by default).
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains every subsystem in detail.
 
@@ -465,7 +478,8 @@ The engine draws one view per frame. Real stereo is built on top of that:
 - **TAA per eye.** The game's temporal anti-aliasing blends with the previous frame, which in stereo is the other eye.
   Each eye gets its own pair of history textures (read one, write the other: no copies), its own "previous" view and
   jitter, and every draw's cached previous matrix is matched to the same eye's last frame, so moving objects stay sharp
-  in both eyes.
+  in both eyes. The game gives the sky no motion vectors; the mod writes the head turn's motion into them, so TAA keeps
+  the sky fixed in the world as the head turns.
 - **The pose the image was rendered from.** The engine's pipeline is deeper than one Present. Every view gets a serial
   that travels with the command lists that draw it, so each image is submitted with exactly the pose it was rendered
   from and the compositor's reprojection corrects the true difference.
