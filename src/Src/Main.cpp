@@ -55,6 +55,7 @@
 #include "Settings.h"
 #include "PostShare.h"
 #include "Roomscale.h"
+#include "Vignette.h"
 #include "ControllerBindings.h"
 #include "TestAids.h"
 #include "Seeds.h"
@@ -169,6 +170,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "fpscounter", "fpscountersize", "fpscounterangle" })) VRRuntime::SetFpsCounter(Settings::FpsCounter(), Settings::FpsCounterSize(), Settings::FpsCounterAngle());
     if (fog) Fog::SetParams(Settings::CheapFog());
     if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
+    if (has({ "movementvignette" })) Vignette::SetStrength(Settings::MovementVignette());
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
@@ -267,6 +269,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Fog::SetParams(Settings::CheapFog());
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
+    Vignette::SetStrength(Settings::MovementVignette());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());

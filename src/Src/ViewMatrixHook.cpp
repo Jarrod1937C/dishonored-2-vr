@@ -788,6 +788,7 @@ namespace
                     // state's view holds (see g_PivotBody).
                     float pivFull[2] = {}, pivLoco[2] = {}, pivL[2] = {}, pivErr = 0.f; bool pivAnchor = false, pivOk = false;
                     float pitchCorrF = 0.f, pitchCorrZ = 0.f;    // the game eye's travel with its pitch (g_PitchFix)
+                    float pitchZApplied = 0.f;                   // the part of it taken out of this view's height (CrouchLift's camera height is the level one)
                     if (g_PivotFix.load())
                     {
                         float off = 0;
@@ -830,7 +831,7 @@ namespace
                     const AnimOut ao = AnimViewStep(o, a, hp, pivErr, ps.head);
                     if (pivAnchor && !g_AnimViewOn.load())
                     {   // play
-                        o[0] += pivFull[0]; o[1] += pivFull[1]; o[2] -= pitchCorrZ;
+                        o[0] += pivFull[0]; o[1] += pivFull[1]; o[2] -= pitchCorrZ; pitchZApplied = pitchCorrZ;
                         if (pivOk) { g_PivotBody[0] = pivL[0]; g_PivotBody[1] = pivL[1]; g_PivotBodyValid = true; g_PivotFixed++; }
                     }
                     else if (pivAnchor && ao.loco)
@@ -838,7 +839,7 @@ namespace
                         // hand-back's glide carries it over to play's
                         o[0] += pivLoco[0] + (pivFull[0] - pivLoco[0]) * ao.blend;
                         o[1] += pivLoco[1] + (pivFull[1] - pivLoco[1]) * ao.blend;
-                        o[2] -= pitchCorrZ;
+                        o[2] -= pitchCorrZ; pitchZApplied = pitchCorrZ;
                     }
                     if (g_PossessView.load() && KbmInject::Possessing() && !g_AnimViewOn.load())
                     {   // Inside a host the camera sways with the host's walk and idle (measured pitch +-1.5, roll
@@ -893,10 +894,19 @@ namespace
                         }
                         float ua[9]; memcpy(ua, tmpAxis, 36);
                         VRMath::ComposeHead(ps.head.valid ? ps.head.pos : hp.pos, q0, g_RefPos, sc, uo, ua);
-                        // for the character to follow (not in a takedown's view or a host)
-                        if (Roomscale::Enabled()) Roomscale::Publish(uo, !g_AnimViewOn.load() && !KbmInject::Possessing());
+                        // for the character to follow (not in a takedown's view or a host, nor sitting: reported 2026-11-04,
+                        // sitting and looking up / down the feet were heard -- the head goes forward and back round the neck,
+                        // past the deadzone, and the character stepped after it)
+                        if (Roomscale::Enabled()) Roomscale::Publish(uo, !g_AnimViewOn.load() && !KbmInject::Possessing() && !KbmInject::Sitting());
                     }
-                    o[2] += CrouchLift(org, snap) * hostScale;     // PhysicalCrouch: the real head's height (see CrouchLift)
+                    {   // PhysicalCrouch / sitting: the real head's height (see CrouchLift), from the camera's height over the
+                        // feet as it is with the view level -- the pitch fix's travel out of it. The raw camera height brought
+                        // that travel back: the lift (stand - camera) and the sitting drop (SitHeight - camera - lift) undid
+                        // the pitch fix's height, so with either on the eye sank as the head looked down (reported 2026-11-04:
+                        // sitting, looking down "rotates off axis")
+                        const float orgLevel[3] = { org[0], org[1], org[2] - pitchZApplied };
+                        o[2] += CrouchLift(orgLevel, snap) * hostScale;
+                    }
                     {   // the wall fade: the head where the view puts it, against the game's own eye
                         const float head[3] = { o[0] + uo[0], o[1] + uo[1], o[2] + uo[2] };
                         Roomscale::PublishHead(org, head);

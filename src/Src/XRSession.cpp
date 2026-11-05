@@ -16,6 +16,7 @@
 #include "PassProfile.h"
 #include "PaceLog.h"
 #include "ControllerBindings.h"
+#include "Vignette.h"
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -195,12 +196,20 @@ V vs(uint id : SV_VertexID)
     return o;
 }
 Texture2D tx : register(t0); SamplerState sm : register(s0);
-cbuffer C : register(b0) { float4 k; };   // x: brightness (the fade back in after a menu); yzw: a colour added (a tinted fade)
-float4 ps(V i) : SV_Target { return float4(tx.Sample(sm, i.uv).rgb * k.x + k.yzw, 1); }
+// The comfort vignette (Vignette.h): g.x the clear radius, g.y where it is black, as angles off the eye's forward
+// (radians); g.z 0 = none. `t` the pixel's direction as tans.
+float Vig(float2 t, float4 g) { return g.z > 0 ? 1 - smoothstep(g.x, g.y, atan(length(t))) : 1; }
+// k.x: brightness (the fade back in after a menu); k.yzw: a colour added (a tinted fade); vt: the image's tans L R U D
+cbuffer C : register(b0) { float4 k; float4 vt; float4 vg; };
+float4 ps(V i) : SV_Target
+{
+    const float v = Vig(float2(lerp(vt.x, vt.y, i.uv.x), lerp(vt.z, vt.w, i.uv.y)), vg);
+    return float4((tx.Sample(sm, i.uv).rgb * k.x + k.yzw) * v, 1);
+}
 // The warp: the image was rendered in a frame turned from the eye's (a stereo eye turned to its frustum's centre, a mono
 // image on canted displays). Each eye pixel is a direction in the eye's frame (its native fov, linear in tan), taken into
 // the render frame by the rows r0..r2 and looked up in the image at its own tans; what it does not cover is black.
-cbuffer W : register(b1) { float4 kw; float4 dstT; float4 srcT; float4 r0; float4 r1; float4 r2; };   // tans: L R U D
+cbuffer W : register(b1) { float4 kw; float4 dstT; float4 srcT; float4 r0; float4 r1; float4 r2; float4 vgw; };   // tans: L R U D
 float4 psw(V i) : SV_Target
 {
     const float3 e = float3(lerp(dstT.x, dstT.y, i.uv.x), lerp(dstT.z, dstT.w, i.uv.y), -1);
@@ -209,14 +218,17 @@ float4 psw(V i) : SV_Target
     const float2 s = d.xy / -d.z;
     const float2 uv = float2((s.x - srcT.x) / (srcT.y - srcT.x), (srcT.z - s.y) / (srcT.z - srcT.w));
     if (any(uv < 0) || any(uv > 1)) return float4(0, 0, 0, 1);
-    return float4(tx.SampleLevel(sm, uv, 0).rgb * kw.x + kw.yzw, 1);
+    return float4((tx.SampleLevel(sm, uv, 0).rgb * kw.x + kw.yzw) * Vig(e.xy, vgw), 1);
 }
 )";
 struct Blitter
 {
     bool failed = false, ready = false;
     ID3D11VertexShader* vs = nullptr; ID3D11PixelShader* ps = nullptr; ID3D11SamplerState* smp = nullptr;
-    ID3D11RasterizerState* rs = nullptr; ID3D11Buffer* cb = nullptr; float cbK[4] = { -1.f, 0, 0, 0 };
+    ID3D11RasterizerState* rs = nullptr; ID3D11Buffer* cb = nullptr; float cbK[12] = { -1.f };
+    // the comfort vignette for the eye draws (DrawInto sets it for its draw and clears it after; the menu's snapshot
+    // copies have none): x clear to, y black from (rad off the eye's forward), z 1 = on; vigTan the image's tans
+    float vig[4] = {}, vigTan[4] = {};
     ID3D11PixelShader* psw = nullptr; ID3D11Buffer* cbw = nullptr;   // the warp (psw)
     unsigned long long warps = 0;
     ID3DDeviceContextState* state = nullptr;
@@ -252,9 +264,9 @@ struct Blitter
         dev->CreateSamplerState(&sd, &smp);
         D3D11_RASTERIZER_DESC rd = {}; rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
         dev->CreateRasterizerState(&rd, &rs);
-        D3D11_BUFFER_DESC bd = {}; bd.ByteWidth = 16; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        D3D11_BUFFER_DESC bd = {}; bd.ByteWidth = 3 * 16; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         dev->CreateBuffer(&bd, nullptr, &cb);
-        bd.ByteWidth = 6 * 16; dev->CreateBuffer(&bd, nullptr, &cbw);
+        bd.ByteWidth = 7 * 16; dev->CreateBuffer(&bd, nullptr, &cbw);
         ID3D11Device1* d1 = nullptr;
         if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11Device1), (void**)&d1)) && d1)
         {
@@ -345,7 +357,10 @@ struct Blitter
         { const HRESULT hr = ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1); if (FAILED(hr) || !c1) { rtv->Release(); return Fail("context1", hr); } }
         ID3DDeviceContextState* prev = nullptr;
         c1->SwapDeviceContextState(state, &prev);
-        { const float k[4] = { scale, add[0], add[1], add[2] }; if (memcmp(k, cbK, 16)) { c1->UpdateSubresource(cb, 0, nullptr, k, 0, 0); memcpy(cbK, k, 16); } }
+        {
+            const float k[12] = { scale, add[0], add[1], add[2], vigTan[0], vigTan[1], vigTan[2], vigTan[3], vig[0], vig[1], vig[2], vig[3] };
+            if (memcmp(k, cbK, sizeof k)) { c1->UpdateSubresource(cb, 0, nullptr, k, 0, 0); memcpy(cbK, k, sizeof k); }
+        }
         const float black[4] = { 0, 0, 0, 1 };
         if (clear) c1->ClearRenderTargetView(rtv, black);
         c1->OMSetRenderTargets(1, &rtv, nullptr);
@@ -386,8 +401,8 @@ struct Blitter
         { const HRESULT hr = ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&c1); if (FAILED(hr) || !c1) { rtv->Release(); return Fail("context1", hr); } }
         ID3DDeviceContextState* prev = nullptr;
         c1->SwapDeviceContextState(state, &prev);
-        const float k[24] = { scale, add[0], add[1], add[2], dstT[0], dstT[1], dstT[2], dstT[3], srcT[0], srcT[1], srcT[2], srcT[3],
-                              m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0 };
+        const float k[28] = { scale, add[0], add[1], add[2], dstT[0], dstT[1], dstT[2], dstT[3], srcT[0], srcT[1], srcT[2], srcT[3],
+                              m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, vig[0], vig[1], vig[2], vig[3] };
         c1->UpdateSubresource(cbw, 0, nullptr, k, 0, 0);
         c1->OMSetRenderTargets(1, &rtv, nullptr);
         D3D11_VIEWPORT vp = { 0.f, 0.f, (float)dd.Width, (float)dd.Height, 0.f, 1.f };
@@ -415,6 +430,15 @@ struct Blitter
         cbK[0] = -1.f; failed = false;
     }
 } g_Blit;
+
+//! This frame's comfort vignette (Vignette::Frame, once per submitted frame, as Blitter::vig): the eye draws use it.
+float g_FrameVig[4] = {};
+void TakeVignette()
+{
+    float a = 0.f, b = 0.f;
+    if (Vignette::Frame(a, b)) { g_FrameVig[0] = a; g_FrameVig[1] = b; g_FrameVig[2] = 1.f; g_FrameVig[3] = 0.f; }
+    else memset(g_FrameVig, 0, sizeof g_FrameVig);
+}
 
 //! Shaders of the mod's own passes, compiled at run time (d3dcompiler_47 ships with Windows 10/11).
 bool CompileFx(ID3D11Device* dev, const char* hlsl, const char* name, ID3D11VertexShader** vs, ID3D11PixelShader** ps)
@@ -2211,6 +2235,7 @@ void XRSession::SubmitFrame(ID3D11Texture2D* source, int onlyEye)
     const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
     for (int c = 0; c < 3; c++) { m_DrawTint[c] = m_FrameTint[c] * (1.f - fade); m_FrameTint[c] = 0.f; }   // (DimFrameTo)
     m_FrameFade = 1.f; m_FrameDim = 1.f;
+    TakeVignette();
 
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
 
@@ -2496,6 +2521,7 @@ bool XRSession::DrawInto(int i, ID3D11Texture2D* source, ID3D11ShaderResourceVie
     const bool turned = !declare && warp && fabsf(warp[3]) < 0.9999999f;
     float claim[7]; memcpy(claim, pose, 28);
     bool drawn = false;
+    memcpy(g_Blit.vig, g_FrameVig, 16); memcpy(g_Blit.vigTan, tan, 16);   // (the comfort vignette: these draws only)
     if (turned)
     {   // the eye's native fov, each of its pixels looked up in the turned image (Blitter::DrawWarp)
         ID3D11ShaderResourceView* v = srv;
@@ -2518,6 +2544,7 @@ bool XRSession::DrawInto(int i, ID3D11Texture2D* source, ID3D11ShaderResourceVie
     else
         drawn = srv ? g_Blit.DrawSrv(g.device, g.context, srv, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade, true, m_DrawTint)
                     : g_Blit.Draw(g.device, g.context, source, dst, x0, y0, rw, rh, (DXGI_FORMAT)m_SwapFormat, fade, m_DrawTint);
+    memset(g_Blit.vig, 0, sizeof g_Blit.vig);
     if (!drawn) return false;
     m_LastEyeTex[i] = dst;
     m_ContentX[i] = (int)lroundf(x0); m_ContentY[i] = (int)lroundf(y0);
@@ -2583,6 +2610,7 @@ bool XRSession::SubmitPair(ID3D11Texture2D* right, const float quat[4], const fl
     const float fade = fk < 0.f ? 0.f : (fk > 1.f ? 1.f : fk);
     for (int c = 0; c < 3; c++) { m_DrawTint[c] = m_FrameTint[c] * (1.f - fade); m_FrameTint[c] = 0.f; }   // (DimFrameTo)
     m_FrameFade = 1.f; m_FrameDim = 1.f; m_ResyncEyes = false; m_RenderPoseValid = false;
+    TakeVignette();
     const float poseR[7] = { quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2] };
     XrCompositionLayerProjectionView projViews[kMaxEyes] = {};
     DrawEye(0, nullptr, m_PairSrv, m_PairPose, m_PairTan, m_PairWarp, fade, projViews[0]);

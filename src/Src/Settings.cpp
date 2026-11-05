@@ -32,6 +32,7 @@ namespace
         { "controls.snapturnangle",     Kind::Float,  "30", 10, 90, nullptr },
         { "controls.snapturnblank",     Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: black during a snap turn
         { "controls.snapturnblankopacity", Kind::Float, "0.4", 0, 1, nullptr, true },   // how dark: 1 = black
+        { "controls.movementvignette",  Kind::Float,  "0.6", 0, 1, nullptr },   // Vignette: the view's edges darken while the character moves (0 = off)
         { "controls.quickslotholdtime", Kind::Float,  "0.5", 0.15f, 2, nullptr },
         { "controls.layout",            Kind::Choice, "default", 0, 0, "default|classic|index", true },
         { "controls.haptics",           Kind::Bool,   "1", 0, 0, nullptr },
@@ -49,8 +50,6 @@ namespace
         { "controls.focusgamewindow",   Kind::Bool,   "1", 0, 0, nullptr, true },
         { "controls.physicalcrouch",    Kind::Bool,   "1", 0, 0, nullptr, true },   // KbmInject: crouching for real crouches the character
         { "controls.physicalcrouchdepth", Kind::Float, "30", 10, 80, nullptr }, // cm the head goes under its standing height to crouch
-        { "controls.sitholdtime",       Kind::Float,  "0.8", 0, 3, nullptr },   // KbmInject: B held this long (s) while crouched sits down (0 = off)
-        { "controls.sitheight",         Kind::Float,  "80", 40, 130, nullptr },  // cm the eye is over the feet when sitting
         { "controls.roomscale",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Roomscale: walking in the room walks the character
         { "controls.wallfade",          Kind::Bool,   "1", 0, 0, nullptr },   // Roomscale: the headset darkens with the head in a wall
         { "controls.wallfadecolor",     Kind::Text,   "20,34,82", 0, 0, nullptr, true },   // its colour, R,G,B 0-255
@@ -66,6 +65,8 @@ namespace
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
         { "gameplay.doorsfollowhand",   Kind::Bool,   "1", 0, 0, nullptr },   // DoorHold: a pushed door swings only as far as the hand pushes it
         { "gameplay.softcharacters",    Kind::Bool,   "1", 0, 0, nullptr },   // SoftBody: characters' bodies give where a hand presses
+        { "gameplay.sitholdtime",       Kind::Float,  "0.8", 0, 3, nullptr },   // KbmInject: B held this long (s) while crouched sits down (0 = off)
+        { "gameplay.sitheight",         Kind::Float,  "80", 40, 130, nullptr },  // cm the eye is over the feet when sitting
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
         { "gameplay.knockoutspeed",     Kind::Float,  "8.0", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
         { "gameplay.swordbloodflyreach", Kind::Float, "0.6", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
@@ -420,8 +421,9 @@ void Settings::WallFadeColor(float srgb[3])
 float Settings::RoomscaleDeadzone() { return F("controls.roomscaledeadzone") / 100.f; }
 float Settings::RoomscaleMaxSpeed() { return F("controls.roomscalemaxspeed"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
-float Settings::SitHoldTime() { return F("controls.sitholdtime"); }
-float Settings::SitHeight() { return F("controls.sitheight") / 100.f; }
+float Settings::SitHoldTime() { return F("gameplay.sitholdtime"); }
+float Settings::SitHeight() { return F("gameplay.sitheight") / 100.f; }
+float Settings::MovementVignette() { return F("controls.movementvignette"); }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
 bool Settings::PhysicalPickup() { return B("gameplay.physicalpickup"); }
 bool Settings::MouthPotions() { return B("gameplay.mouthpotions"); }
@@ -612,20 +614,21 @@ namespace
         { "smoothturnspeed", "120" },
         { "snapturnangle", "30" },
         { "snapturnblank", "1" },
+        { "movementvignette", "0.6" },
         { "quickslotholdtime", "0.5" },
         { "haptics", "1" },
         { "gripthresholdleft", "0.6" },
         { "gripthresholdright", "0.45" },
         { "controllerpitchoffset", "0" },
         { "physicalcrouchdepth", "30" },
-        { "sitholdtime", "0.8" },
-        { "sitheight", "80" },
         { "wallfade", "1" },
         { "sworddamagescale", "1" },
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
         { "doorsfollowhand", "1" },
         { "softcharacters", "1" },
+        { "sitholdtime", "0.8" },
+        { "sitheight", "80" },
         { "renderscale", "1" },
         { "taasharpening", "0.5" },
         { "disablemetaasw", "1" },

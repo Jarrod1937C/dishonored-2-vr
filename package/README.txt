@@ -291,6 +291,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    [Controls]  TurnMode = snap (or smooth)       SmoothTurnSpeed = 120 (deg/s)  SnapTurnAngle = 30
                SnapTurnBlank = 1 (snap turning: darker for the moment of each snap)
                SnapTurnBlankOpacity = 0.4 (how dark: 1 = black)
+               MovementVignette = 0.6 (comfort: the view's edges darken while the character moves, the
+                                 faster the further in; 0 = off, 1 = strongest)
                ControllerBindings = auto (which controller profile, below)   Haptics = 1 (vibration)
                FocusGameWindow = 1 (the game is brought back to the front when you use the controllers)
    Controller profiles: VRControllerBindings\<name>.json (index.json: Valve Index), one per controller, hold what

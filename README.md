@@ -128,7 +128,11 @@ Other limitations:
   stays at your real head's height. How deep counts as crouching is a setting (`PhysicalCrouchDepth`, 30 cm).
 - **Sit down.** Hold the crouch button (B) while crouched and standing still (`SitHoldTime`, 0.8 s) and the view goes
   down to sitting height (`SitHeight`, 80 cm over the feet; the game's crouch is about 120) to take in the view. The
-  character stays crouched; B again stands up, and walking off ends it.
+  character stays crouched; B again stands up, and walking off ends it. Both are in the VR Gameplay tab (Sitting).
+  While sitting the character does not step after your head as you look around.
+- **Comfort vignette.** While the character moves (the stick, Blink, falling) the edges of the view darken, the faster
+  the further in, and open again as you slow down (`MovementVignette`, 0.6; 0 = off; VR Controls tab, Comfort).
+  Walking in your room, leaning and turning your head do not count.
 - **Lean and peek** with your body: there is no lean button.
 - **Wall fade.** If your head goes into a wall, floor or door, the headset fades to dark blue until you step back out,
   instead of showing the inside of the level.

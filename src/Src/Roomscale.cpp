@@ -2,6 +2,7 @@
 #include "Roomscale.h"
 #include "GameInfo.h"
 #include "Collision.h"
+#include "Vignette.h"
 #include <detours/detours.h>
 #include <cmath>
 #include <algorithm>
@@ -51,9 +52,29 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
+    //! the tick's step time (POD)
+    float StepDt(const void* step)
+    {
+        __try { return *(const float*)((const uint8_t*)step + kStepDelta); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
+    }
+    //! The comfort vignette's speed: the proxy's move this tick, less roomscale's part `rs` (the head's), across the floor
+    void VignetteStep(const float p0[3], const float p1[3], const float rs[2], float dt)
+    {
+        Vignette::OnStep(p1[0] - p0[0] - rs[0], p1[1] - p0[1] - rs[1], dt);
+    }
+    uintptr_t Real(void* proxy, void* step, void* a, void* b, void* c)
+    {   // not following: the call as it is, its move measured for the vignette (when it is on)
+        float p0[3], v0[3], p1[3], v1[3];
+        const bool vig = Vignette::Strength() > 0.f && proxy && step && ReadProxy((const uint8_t*)proxy, p0, v0);
+        const uintptr_t r = g_Real(proxy, step, a, b, c);
+        if (vig && ReadProxy((const uint8_t*)proxy, p1, v1)) { const float none[2] = {}; VignetteStep(p0, p1, none, StepDt(step)); }
+        return r;
+    }
+
     uintptr_t Hook(void* proxy, void* step, void* a, void* b, void* c)
     {
-        if (!g_On.load() || !proxy || !step) return g_Real(proxy, step, a, b, c);
+        if (!g_On.load() || !proxy || !step) return Real(proxy, step, a, b, c);
         float e[2] = {};   // the displacement asked of this tick
         float dt = 0.f;
         {
@@ -82,7 +103,7 @@ namespace
         }
         const float el = sqrtf(e[0] * e[0] + e[1] * e[1]);
         float p0[3], v0[3];
-        if (el < 1e-5f || !ReadProxy((const uint8_t*)proxy, p0, v0)) return g_Real(proxy, step, a, b, c);
+        if (el < 1e-5f || !ReadProxy((const uint8_t*)proxy, p0, v0)) return Real(proxy, step, a, b, c);
         float* vel = (float*)((uint8_t*)proxy + kProxyVel);
         vel[0] += e[0] / dt; vel[1] += e[1] / dt;
         const uintptr_t r = g_Real(proxy, step, a, b, c);
@@ -93,6 +114,7 @@ namespace
         float along = ((p1[0] - p0[0]) - v0[0] * dt) * ux + ((p1[1] - p0[1]) - v0[1] * dt) * uy;
         along = along < -el ? -el : along > el ? el : along;   // (pushed back by the collision: credited too)
         const float mx = along * ux, my = along * uy;
+        { const float rs[2] = { mx, my }; VignetteStep(p0, p1, rs, dt); }
         // the game keeps only its own velocity (its acceleration, animation and footsteps go by it)
         const float vk = along > 0.f ? along : 0.f;
         vel[0] -= vk * ux / dt; vel[1] -= vk * uy / dt;
@@ -202,7 +224,7 @@ void Roomscale::Reset()
 std::string Roomscale::Stats()
 {
     std::lock_guard lk(g_M);
-    return fmt::format("roomscale {} ticks {} pushes {} blocked {} (stopped {}) starts {} moved {:.1f} m offset {:.2f} m{}; wall fade rays {} hits {} fades {}", g_On.load() ? "on" : "off", g_Ticks, g_Pushed,
+    return fmt::format("roomscale {} ticks {} pushes {} blocked {} (stopped {}) starts {} moved {:.1f} m offset {:.2f} m{}{}; wall fade rays {} hits {} fades {}; {}", g_On.load() ? "on" : "off", g_Ticks, g_Pushed,
                        g_Blocked, g_BlockStops, g_Starts, g_MovedTotal, sqrtf(g_Offset[0] * g_Offset[0] + g_Offset[1] * g_Offset[1]), g_Following ? " following" : "",
-                       g_FadeRays.load(), g_FadeHits.load(), g_Fades.load());
+                       g_Allowed ? "" : " (held: a takedown's view, a host or sitting)", g_FadeRays.load(), g_FadeHits.load(), g_Fades.load(), Vignette::Status());
 }
