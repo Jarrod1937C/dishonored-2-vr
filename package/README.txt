@@ -87,6 +87,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
  | those to the window in front. The mod brings the game back to the front by itself when you |
  | press a controller button or put the headset on. If Windows does not let it, click the     |
  | game's window on the PC once (or Alt+Tab to it).                                           |
+ | IF YOUR LEFT CONTROLLER DOESN'T SEEM TO REGISTER INPUT, LIKELY THE WINDOW NEEDS FOCUS      |
  +--------------------------------------------------------------------------------------------+
 
  * Walk around your room and the character walks with you, so you rarely need to recenter
