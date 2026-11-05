@@ -78,8 +78,8 @@ it builds on.
 5. Set the game to **windowed** mode, start it from Steam, click the game's window once so it is in front, and put the
    headset on. VR switches on by itself a moment after you are in control of your character.
 
-The zip's `README.txt` has everything for players: setup, the controls, every setting and troubleshooting. To
-uninstall, delete those files (the game itself is never modified).
+The zip's `README.txt` is the players' guide: installing, playing, the controls, the main settings and
+troubleshooting. To uninstall, delete those files (the game itself is never modified).
 
 ### Requirements
 
