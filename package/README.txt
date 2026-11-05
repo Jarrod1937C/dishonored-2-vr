@@ -230,6 +230,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Press on a person ................. his body gives where you press (a shoulder turns away, an arm
                                        is pushed aside) and springs back when you let go; squeeze the
                                        grip on him to pull that part along (SoftCharacters)
+   Right grip on a body .............. drag it by the part you took hold of; bring the hand up over
+                                       your shoulder to put it on your back (DragBodies)
+   Point, right grip, flick back ..... an object out of reach flies to your hand; keep the grip
+                                       squeezed to catch it (GravityGloves)
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -306,6 +310,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                PhysicalCrouchDepth = 30 (cm)   WallFade = 1
                SitHoldTime = 0.8 (s B is held while crouched to sit; 0 = off)   SitHeight = 80 (cm)
                FarReachVRComfortOption = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
+               DragBodies = 1 (experimental: grip a body to drag it; hand up over your shoulder = onto your back)
+               GravityGloves = 1 (experimental: point, grip and flick back: an object out of reach flies to your hand)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
                HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at

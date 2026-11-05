@@ -56,6 +56,8 @@
 #include "PostShare.h"
 #include "Roomscale.h"
 #include "Vignette.h"
+#include "BodyDrag.h"
+#include "GravityGlove.h"
 #include "ControllerBindings.h"
 #include "TestAids.h"
 #include "Seeds.h"
@@ -171,6 +173,8 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (fog) Fog::SetParams(Settings::CheapFog());
     if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     if (has({ "movementvignette" })) Vignette::SetStrength(Settings::MovementVignette());
+    if (has({ "dragbodies" })) BodyDrag::SetEnabled(Settings::DragBodies());
+    if (has({ "gravitygloves" })) GravityGlove::SetEnabled(Settings::GravityGloves());
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
@@ -270,6 +274,8 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetSnapBlankOpacity(Settings::SnapTurnBlankOpacity());
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     Vignette::SetStrength(Settings::MovementVignette());
+    BodyDrag::SetEnabled(Settings::DragBodies());
+    GravityGlove::SetEnabled(Settings::GravityGloves());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());

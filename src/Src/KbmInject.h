@@ -62,6 +62,9 @@ namespace KbmInject
     Stats GetStats();
     //! Inside a possessed host (EnterPossessedHost began it; the arms coming back, death or a load end it).
     bool Possessing();
+    //! That hand's grip is closed and doing nothing else (not taking, pulling a drawer, drawing, drinking, holding or
+    //! carrying): GravityGlove may use it to pull something to the hand.
+    bool GripIdle(int hand);
     //! [Controls] PhysicalCrouch / PhysicalCrouchDepth: the real head this far (m) under its standing height crouches the
     //! character (the game's crouch key), standing up stands it.
     void SetPhysicalCrouch(bool on, float depth);

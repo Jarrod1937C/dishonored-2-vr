@@ -17,7 +17,8 @@ it builds on.
   work too.
 - **Solid hands and weapons** that stop at walls and push loose objects; push doors open only as far as you push them,
   pull drawers open, slide windows, turn safe dials, take items and eat food by hand. People's bodies give under your
-  hands instead of standing like statues.
+  hands instead of standing like statues; drag bodies by hand and lift them onto your back; pull objects out of reach
+  to your hand with a flick, like Half-Life: Alyx's gravity gloves.
 - **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
   inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
   head zooms the mask's spyglass.
@@ -256,8 +257,13 @@ side, so you can look around and still find your hips.
 - **Taking items by hand:** see [Your backpack](#your-backpack).
 - **Eating and drinking:** bring food to your mouth to eat it; bring a hand to your mouth and squeeze to drink an elixir
   (left = health, right = mana).
-- **Grab and carry objects** with the right grip: an object stays in your hand while you hold the grip. Bodies are
-  picked up the game's own way, onto your shoulder, not held in your hand.
+- **Grab and carry objects** with the right grip: an object stays in your hand while you hold the grip.
+- **Drag bodies** (experimental): squeeze the right grip on a body, dead or unconscious, and drag it by the arm, leg or
+  collar you took hold of -- along the floor, into a corner, out of the light. Bring that hand up over your shoulder
+  and the body goes onto your back, the game's own carry; grip again to put it down (`DragBodies`, on by default).
+- **Gravity gloves** (experimental, as in Half-Life: Alyx): point your right hand at a loose object out of reach (a
+  bottle, a glass, coins, an elixir), squeeze the grip and flick your hand back towards you: it flies to your hand.
+  Keep the grip squeezed to catch it; let go and it falls (`GravityGloves`, on by default).
 
 ### Your backpack
 
@@ -346,6 +352,8 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Left trigger held, swing, let go | Throw a grenade or springrazor |
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
 | Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
+| Right grip on a body, drag; hand up over your shoulder | Drag it; onto your back |
+| Point at something out of reach, right grip, flick back | It flies to your hand (keep the grip to catch it) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |
 | Look at the back of your left wrist | The watch: health, mana, ammo, the way to your objectives |

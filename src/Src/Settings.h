@@ -71,6 +71,8 @@ namespace Settings
     bool SkipIntroVideos();                       //!< [Advanced] SkipIntroVideos: the start-up videos end at once (BinkVideo)                  //!< [Gameplay] KnockoutSoundVolume: the knockout blow's hit sound, 0..1                    //!< [Gameplay] FinisherAnimations: 0 = the game's finishing moves and kill cam off (MeleeAim)
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
+    bool DragBodies();                            //!< [Gameplay.Interaction] DragBodies: a gripped body is dragged; up over the shoulder it is carried (BodyDrag)
+    bool GravityGloves();                         //!< [Gameplay.Interaction] GravityGloves: point, grip and flick pulls an object to the hand (GravityGlove)
     float SitHoldTime();                          //!< [Gameplay.Sitting] SitHoldTime: s B is held while crouched to sit (0 = off)
     float SitHeight();                            //!< [Gameplay.Sitting] SitHeight: m (the ini says cm) the eye is over the feet when sitting
     float MovementVignette();                     //!< [Controls.Comfort] MovementVignette: 0..1, the view's edges darken while the character moves (Vignette)

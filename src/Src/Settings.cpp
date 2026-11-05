@@ -65,6 +65,8 @@ namespace
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
         { "gameplay.doorsfollowhand",   Kind::Bool,   "1", 0, 0, nullptr },   // DoorHold: a pushed door swings only as far as the hand pushes it
         { "gameplay.softcharacters",    Kind::Bool,   "1", 0, 0, nullptr },   // SoftBody: characters' bodies give where a hand presses
+        { "gameplay.dragbodies",        Kind::Bool,   "1", 0, 0, nullptr },   // BodyDrag: a gripped body is dragged; up over the shoulder it is carried
+        { "gameplay.gravitygloves",     Kind::Bool,   "1", 0, 0, nullptr },   // GravityGlove: point, grip and flick: an object out of reach flies to the hand
         { "gameplay.sitholdtime",       Kind::Float,  "0.8", 0, 3, nullptr },   // KbmInject: B held this long (s) while crouched sits down (0 = off)
         { "gameplay.sitheight",         Kind::Float,  "80", 40, 130, nullptr },  // cm the eye is over the feet when sitting
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
@@ -422,6 +424,8 @@ float Settings::RoomscaleDeadzone() { return F("controls.roomscaledeadzone") / 1
 float Settings::RoomscaleMaxSpeed() { return F("controls.roomscalemaxspeed"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 float Settings::SitHoldTime() { return F("gameplay.sitholdtime"); }
+bool Settings::DragBodies() { return B("gameplay.dragbodies"); }
+bool Settings::GravityGloves() { return B("gameplay.gravitygloves"); }
 float Settings::SitHeight() { return F("gameplay.sitheight") / 100.f; }
 float Settings::MovementVignette() { return F("controls.movementvignette"); }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
@@ -627,6 +631,8 @@ namespace
         { "knockoutsoundvolume", "0.8" },
         { "doorsfollowhand", "1" },
         { "softcharacters", "1" },
+        { "dragbodies", "1" },
+        { "gravitygloves", "1" },
         { "sitholdtime", "0.8" },
         { "sitheight", "80" },
         { "renderscale", "1" },

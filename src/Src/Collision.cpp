@@ -3,6 +3,8 @@
 #include "Probes.h"
 #include "DoorHold.h"
 #include "SoftBody.h"
+#include "BodyDrag.h"
+#include "GravityGlove.h"
 #include "GameInfo.h"
 #include "GpuTrace.h"
 #include "HandAimHook.h"
@@ -10,6 +12,8 @@
 #include "GrabHand.h"
 #include "VRRuntime.h"
 #include "Game.h"
+#include "PlayerState.h"
+#include "ViewMatrixHook.h"
 #include <cmath>
 #include <algorithm>
 #include <sstream>
@@ -984,6 +988,61 @@ bool Collision::TakeCloseRequest(int hand, uint32_t* id, float point[3])
 }
 std::string Collision::PointerDescribe() { std::lock_guard lk(g_TouchM); return g_PointerDesc; }
 void Collision::Push(void* ent, const float impulse[3], const float at[3]) { if (ent) PostImpulse(ent, impulse, at); }
+bool Collision::PullRay(const float a[3], const float b[3], PullHit& out)
+{
+    out = PullHit{};
+    BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+    void* skip[8]; int nskip = 0;
+    for (int k = 0; k < BodyHide::aCount && nskip < 7; k++) if (an[k].valid && an[k].ent) skip[nskip++] = an[k].ent;
+    if (void* held = GrabHand::HeldEntity()) skip[nskip++] = held;
+    RayHit h;
+    if (!CastHand(a, b, skip, nskip, h)) { out.why = "nothing in reach"; return false; }
+    out.hitEnt = h.ent; memcpy(out.p, h.pos, 12); out.dist = h.dist;
+    if (!h.ent) { out.why = "the level (no entity)"; return false; }
+    void* e = h.ent;
+    if (IsCharacter(e)) { out.why = "a character"; return false; }
+    if (IsDoor(e)) { out.why = "a door"; return false; }
+    if (!Pushable(e)) { out.why = "fixed (not a loose physics object)"; return false; }
+    int kind = 0;
+    if (HasComponent(e, kPickableSimpleType)) kind = 1;
+    else if (IsHandItem(e)) kind = 2;
+    if (!kind) { out.why = "loose, but not something the game holds or takes"; return false; }
+    uint32_t id = 0; if (!SafeRead(&id, (uint8_t*)e + kEntId, 4) || !id || id == 0x3FFF0010u) { out.why = "no id"; return false; }
+    out.ent = e; out.id = id; out.kind = kind; memcpy(out.p, h.pos, 12); out.dist = h.dist;
+    return true;
+}
+void Collision::KeyholeProbe()
+{
+    if (!Log::Enabled()) return;
+    static int logs = 0; static uint32_t lastDoor = 0; static double lastAt = -1e9;
+    if (logs >= 80) return;
+    float eye[3], ax[9];
+    if (!HandAimHook::RealCamera(eye, ax)) return;
+    {   // the real head, where the view puts it
+        float vo[3], go[3], hm[3];
+        if (ViewMatrixHook::ViewAnchor(vo, go, hm)) for (int i = 0; i < 3; i++) { const float d = vo[i] - go[i]; if (fabsf(d) < 1.5f) eye[i] += d; }
+    }
+    const float to[3] = { eye[0] + ax[0] * 0.30f, eye[1] + ax[1] * 0.30f, eye[2] + ax[2] * 0.30f };
+    RayHit h;
+    if (!CastHand(eye, to, nullptr, 0, h) || !h.ent || !IsDoor(h.ent) || h.dist > 0.22f) return;
+    uint32_t id = 0; SafeRead(&id, (uint8_t*)h.ent + kEntId, 4);
+    const double now = Now();
+    if (id == lastDoor && now - lastAt < 8.0) { lastAt = now; return; }   // the same approach
+    lastDoor = id; lastAt = now; logs++;
+    float org[3] = {}, da[9] = {};
+    const bool fr = SafeRead(org, (uint8_t*)h.ent + 0x300, 12) && SafeRead(da, (uint8_t*)h.ent + 0x30C, 36);
+    auto local = [&](const float* w, float o[3]) { const float d[3] = { w[0] - org[0], w[1] - org[1], w[2] - org[2] }; for (int r = 0; r < 3; r++) o[r] = d[0] * da[r * 3] + d[1] * da[r * 3 + 1] + d[2] * da[r * 3 + 2]; };
+    float le[3] = {}, lh[3] = {}; if (fr) { local(eye, le); local(h.pos, lh); }
+    BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
+    const float feet = an[BodyHide::aPlayer].valid ? an[BodyHide::aPlayer].org[2] : eye[2];
+    LOGI("Collision: keyhole research: the eyes {:.0f} cm from door {:#x} ({}), {:.2f} m over the feet; in the door's frame (fwd, left, up from its origin) the eyes ({:.2f}, {:.2f}, {:.2f}), the point looked at ({:.2f}, {:.2f}, {:.2f}); the interaction sensor has {:#x} ({}){}",
+         h.dist * 100.f, id, DescribeEnt(h.ent), eye[2] - feet, le[0], le[1], le[2], lh[0], lh[1], lh[2], (uint32_t)GrabHand::TargetId(), PointerDescribe(),
+         PlayerState::Running("Peeking") ? ", peeking now" : "");
+}
+bool Collision::EntityVelocity(void* ent, float v[3])
+{
+    return ent && SafeRead(v, (uint8_t*)ent + kEntVelocity, 12) && Finite(v, 3);
+}
 void Collision::NoteInteract(uint32_t id)
 {
     if (!id || id == 0x3FFF0010u) return;
@@ -1490,7 +1549,7 @@ void Collision::SetBodyContacts(int hand, const Contact* c, int n)
 std::string Collision::Stats()
 {
     std::ostringstream o;
-    o << DoorHold::Status() << "; " << SoftBody::Status() << "; ";
+    o << DoorHold::Status() << "; " << SoftBody::Status() << "; " << BodyDrag::Status() << "; " << GravityGlove::Status() << "; ";
     o << "hands " << g_Hands.load() << " weapons " << g_Weapons.load() << " push " << g_Push.load() << " ticks " << g_Ticks.load()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()

@@ -1156,6 +1156,17 @@ nearly straight down; a ray that lands on a placed mine places nothing).
 
 ---
 
+### 8.5 Keyholes (static only, 2026-11-05)
+- The peek is the player state arkPlayerStatePeeking (PlayerState "Peeking"; an arkFSM of STATE_INACTIVE / ENTER /
+  PEEKING / EXIT; UpdateEnter, UpdateTargetPosition, UpdateTargetAngle), its decl arkDeclPlayerStatePeeking.
+- A door's decl (reflection at exe+0x1737000..: m_animatedPartDef +0x78, m_attachementTag +0x80, **m_peekingTag +0x88**
+  (idAtomicString), m_frontTag +0x90, m_backTag +0x98, m_handleTag +0xA0, m_usageOpen +0xA8 / m_usageClose +0xD0 /
+  m_usageLocked +0xF8 / m_usageBlocked +0x120 / **m_usageKeyhole +0x148** (arkInteractionDef, 0x28 each), m_animOpenCW
+  +0x170.. m_animWindblastCCW +0x1A8, **m_allowKeyhole +0x1B0** (bool), m_defaultState +0x1B4, m_locked +0x1B8).
+- The HUD's interaction kinds: ARK_UI_INTERACTION_INVALID, USE, PICK_UP, CARRY, READ, KEYHOLE, OPEN_DOOR, LOCKED_DOOR,
+  TALK, ASSASSINATE, CHOKE, CARRY_BODY, ... (changes reach the HUD as arkMsgHudInteractionChange). Not found yet: where
+  the sensor's chosen interaction is kept, and where a keyhole is in the world.
+
 ## 9. Interface, menus, videos, HUD
 
 ### 9.1 How the interface is drawn
