@@ -96,9 +96,10 @@ uninstall, delete those files (the game itself is never modified).
 game, and VR asks far more of it: every game tick is drawn twice (once per eye), at the headset's resolution, which is
 much higher than a monitor's. At 90 Hz that is 90 stereo pairs, or 180 rendered frames, every second.
 
-Tested on an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**, the game still had a hard time holding a constant 90 fps
-(stereo pairs), despite the many optimizations the mod employs (see
-[Performance optimizations](#performance-optimizations)). Expect to tune it for your PC:
+A large part of the mod's work went into making the game fast enough for this (see
+[Performance optimizations](#performance-optimizations)). With them, an **NVIDIA RTX 5090 with an AMD Ryzen 7 9800X3D**
+holds a stable 90 fps (stereo pairs) at 3700x3700 per eye. A less powerful PC, or a higher resolution or refresh rate,
+will still need tuning:
 
 - Turn on the **FPS counter** (VR Performance tab, or `FpsCounter` in the ini): green at the headset's refresh rate,
   amber below it, red under three quarters of it.
@@ -491,8 +492,14 @@ The engine draws one view per frame. Real stereo is built on top of that:
 
 ### Performance optimizations
 
-Stereo draws the world twice per game tick, so the mod trims what VR does not need. **Visible** settings are in the VR
-Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`), most on by default.
+Stereo draws the world twice per game tick, at a far higher resolution than a monitor, and the unmodified engine
+was nowhere near fast enough for that. Performance has been one of the mod's biggest efforts: each optimization
+below came from profiling the game's GPU passes and CPU threads frame by frame, and reverse engineering the engine
+code behind them, to find work that VR does not need, work done twice that can be done once per stereo pair, and
+places where the game waited on itself. Together they let the game render each pair of eye images far faster than it
+would unmodified: an RTX 5090 with a Ryzen 7 9800X3D holds a stable 90 frames a second (stereo pairs) at 3700x3700 per
+eye. **Visible** settings are in the VR Performance and VR Display tabs; **hidden** ones are in the ini (`@hidden`),
+most on by default.
 
 **Visible**
 
