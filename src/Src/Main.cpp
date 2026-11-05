@@ -23,6 +23,7 @@
 #include "Probes.h"
 #include "DoorHold.h"
 #include "SoftBody.h"
+#include "SimStep.h"
 #include "ObjectiveWatch.h"
 #include "ScreenShadows.h"
 #include "BodyView.h"
@@ -64,6 +65,7 @@ static void OnPresent(IDXGISwapChain* sc)
 {
     PassProfile::BeginSection(0); // [Advanced] ProfileRenderPasses: the mod's own GPU / CPU work at Present
     Watchdog::OnPresent(sc);      // the heartbeat its thread watches (and vr stall's test hitch)
+    SimStep::OnPresent();         // the game's simulation step follows the headset's refresh
     WristHud::BeginPresent(sc);   // the game's interface for this frame is complete (and the mod's own draws start)
     static bool first = true;
     if (first)
@@ -226,6 +228,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "shadowlampkeepcache" })) ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
     if (has({ "taaskymotion" })) SkyMotion::SetEnabled(Settings::TaaSkyMotion());
     if (has({ "handdepth" })) GpuTrace::SetHandDepth(Settings::HandDepth());
+    if (has({ "simstepatrefresh" })) SimStep::SetEnabled(Settings::SimStepAtRefresh());
     Commands::SettingsChanged();   // turning, layout, menu screen, cutscenes, gestures, reticle, wrist HUD, cheats ...
 }
 
@@ -328,6 +331,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
     SkyMotion::SetEnabled(Settings::TaaSkyMotion());
     GpuTrace::SetHandDepth(Settings::HandDepth());
+    SimStep::SetEnabled(Settings::SimStepAtRefresh());   // (points the game clock's step rate at the mod's own float)
     ScreenShadows::SetLampCacheSlices(Settings::ShadowLampCacheSlices());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();

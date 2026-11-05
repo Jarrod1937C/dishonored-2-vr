@@ -391,6 +391,11 @@ the copy.
   at most 12, with `g_physicsStepTolerance` (0.2) keeping n from flipping and `g_limitPhysicStepVariation` (0) limiting
   it to one step of change per frame. Above 120 game frames a second some frames get no physics step (the community
   FPS patches' "physics issues"); at 90 ticks/s the steps go 1, 1, 2. Clock 0's step is the real time, clamped to 0.5 s.
+  The two 120s: the step is the float 1/120 at exe+0x2280A54 (writable, read only at exe+0x59F55); the rate n is
+  counted with is the 120.0 at exe+0x1AC9C28 (read-only, read at exe+0x59E0D and four other places). The physics step
+  (arkPhysicsStep, exe+0x97BC0) takes the largest clock dt and gives Havok the time and round(dt * 120) substeps
+  (exe+0xC9F6C0), so it simulates the clock's time whatever its step. SimStepAtRefresh (SimStep.cpp) sets both to the
+  headset's refresh: one step per frame, no 1, 1, 2 judder.
 
 ### 4.5b Render passes (the frame's task list)
 The renderer runs each view as a list of named passes (Forward+: depth prepass, tiled light culling, forward

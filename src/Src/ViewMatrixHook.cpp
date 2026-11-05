@@ -143,10 +143,16 @@ namespace
         unsigned long long samples = 0, rejected = 0, applied = 0;
         float lastCorrF = 0, lastCorrZ = 0;
     };
-    PitchCurve g_Pf; std::mutex g_PfM;
+    // One curve per posture: crouched, the body bends further over and the eye travels a different way with the pitch
+    // (reported 2026-11-04: sitting -- crouched -- looking down, the view slid a little "off axis"), so standing and
+    // crouched each learn their own; a crouched band not learnt yet uses the standing one's.
+    PitchCurve g_PfSet[2]; std::mutex g_PfM;
+    std::atomic<int> g_PfPosture{ 0 };   // the curve the last view used (0 standing, 1 crouched)
     int PfBinOf(float p) { int b = (int)floorf((p + 90.f) / kPfBin); return b < 0 ? 0 : b >= kPfBins ? kPfBins - 1 : b; }
     //! the eye's travel (forward, up; m) from level to pitch p: the learned slopes integrated (g_PfM held)
-    void PfCurve(float p, float& f, float& z)
+    void PfCurveOf(const PitchCurve& c, const PitchCurve* fb, float p, float& f, float& z);
+    void PfCurve(float p, float& f, float& z) { PfCurveOf(g_PfSet[0], nullptr, p, f, z); }
+    void PfCurveOf(const PitchCurve& c, const PitchCurve* fb, float p, float& f, float& z)
     {
         f = 0; z = 0;
         if (p > 89.f) p = 89.f; if (p < -89.f) p = -89.f;
@@ -157,15 +163,17 @@ namespace
             const int b = PfBinOf(at + dir * 1e-3f);
             const float edge = -90.f + (b + (dir > 0 ? 1 : 0)) * kPfBin;      // the band's far edge in this direction
             const float to = dir > 0 ? std::min(edge, p) : std::max(edge, p);
-            if (g_Pf.w[b] > 0.f) { f += g_Pf.slopeF[b] * (to - at); z += g_Pf.slopeZ[b] * (to - at); }
+            const PitchCurve* u = c.w[b] > 0.f ? &c : (fb && fb->w[b] > 0.f ? fb : nullptr);
+            if (u) { f += u->slopeF[b] * (to - at); z += u->slopeZ[b] * (to - at); }
             at = to;
         }
     }
     //! one view of play: learn from it (standing still), and return the eye's travel at its pitch
-    void PfStep(float pitch, float fwd, float up, const float pl[3], bool learn, float& corrF, float& corrZ)
+    void PfStep(float pitch, float fwd, float up, const float pl[3], bool learn, bool crouched, float& corrF, float& corrZ)
     {
         std::lock_guard lk(g_PfM);
-        PitchCurve& c = g_Pf;
+        PitchCurve& c = g_PfSet[crouched ? 1 : 0];
+        if (g_PfPosture.exchange(crouched ? 1 : 0) != (crouched ? 1 : 0)) c.lastValid = false;   // a new posture: a new anchor
         // measured against an anchor view, kept until the pitch has moved a degree (a slow nod moves it a fraction of a
         // degree a view) or the player moves; dropped after ~0.7 s (90 views), so idle sway cannot pile up in it
         bool reanchor = !learn || !c.lastValid || ++c.anchorAge > 90;
@@ -194,7 +202,7 @@ namespace
             }
         }
         if (reanchor) { c.lastP = pitch; c.lastF = fwd; c.lastZ = up; memcpy(c.lastPl, pl, 12); c.lastValid = learn; c.anchorAge = 0; }
-        PfCurve(pitch, corrF, corrZ);
+        PfCurveOf(c, crouched ? &g_PfSet[0] : nullptr, pitch, corrF, corrZ);
         c.lastCorrF = corrF; c.lastCorrZ = corrZ; c.applied++;
     }
     constexpr float kStandingEye = 1.70f;                      // m, a standing Corvo's camera over his feet (measured)
@@ -294,11 +302,19 @@ namespace
         LARGE_INTEGER t, f; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&f);
         const double now = (double)t.QuadPart / (double)f.QuadPart;
         float target = 0.f;
+        static bool told = false;
         if (camOk && KbmInject::Sitting())
         {
             const float eye = g_CamH.load() + lift, h = KbmInject::SitHeight();
             if (eye > h) target = h - eye;
+            if (!told)
+            {
+                told = true;
+                LOGI("ViewMatrixHook: sitting: the game's eye {:.2f} m over the feet (camera {:.2f} + crouch lift {:.2f}; standing {:.2f}): lowered by {:.2f} to {:.2f} m, then your real head's own height change on top",
+                     eye, g_CamH.load(), lift, g_StandCamH.load(), -target, eye + target);
+            }
         }
+        else told = false;
         if (!camOk) cur = 0.f;
         const double dt = std::clamp(now - last, 0.0, 0.1); last = now;
         cur += (target - cur) * (float)(1.0 - exp(-dt / 0.2));
@@ -795,7 +811,8 @@ namespace
                                     // a slide), which is play's -- else the eye jumped by it as such a state began and ended
                                     const bool play = !g_AnimViewOn.load() && !KbmInject::Possessing();
                                     const float pitch = asinf(Clampf(a[2], -1.f, 1.f)) * kR2D;
-                                    PfStep(pitch, pivL[0], o[2] - pl.org[2], pl.org, play, pitchCorrF, pitchCorrZ);
+                                    const bool crouched = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch") || PlayerState::Running("WallCrouch");
+                                    PfStep(pitch, pivL[0], o[2] - pl.org[2], pl.org, play, crouched, pitchCorrF, pitchCorrZ);
                                     if (KbmInject::Possessing()) pitchCorrF = pitchCorrZ = 0.f;
                                     pivL[0] -= pitchCorrF;
                                 }
@@ -957,9 +974,12 @@ void ViewMatrixHook::SetPitchFix(bool on)
 std::string ViewMatrixHook::PitchFixStatus()
 {
     std::lock_guard lk(g_PfM);
-    std::string s = fmt::format("pitchfix {} samples {} rejected {} now fwd {:.1f} up {:.1f} cm; curve (deg: fwd/up cm)", g_PitchFix.load() ? 1 : 0,
-                                g_Pf.samples, g_Pf.rejected, g_Pf.lastCorrF * 100.f, g_Pf.lastCorrZ * 100.f);
+    std::string s = fmt::format("pitchfix {} samples {} / crouched {} rejected {} now ({}) fwd {:.1f} up {:.1f} cm; curve (deg: fwd/up cm)", g_PitchFix.load() ? 1 : 0,
+                                g_PfSet[0].samples, g_PfSet[1].samples, g_PfSet[0].rejected + g_PfSet[1].rejected, g_PfPosture.load() ? "crouched" : "standing",
+                                g_PfSet[g_PfPosture.load()].lastCorrF * 100.f, g_PfSet[g_PfPosture.load()].lastCorrZ * 100.f);
     for (float p : { -60.f, -30.f, 30.f, 60.f }) { float f, z; PfCurve(p, f, z); s += fmt::format(" {:.0f}: {:.1f}/{:.1f}", p, f * 100.f, z * 100.f); }
+    s += "; crouched";
+    for (float p : { -60.f, -30.f, 30.f, 60.f }) { float f, z; PfCurveOf(g_PfSet[1], &g_PfSet[0], p, f, z); s += fmt::format(" {:.0f}: {:.1f}/{:.1f}", p, f * 100.f, z * 100.f); }
     return s;
 }
 void ViewMatrixHook::SetPivotFix(bool on) { g_PivotFix = on; LOGI("ViewMatrixHook: eye pivot held in the room {} ({} frames so far)", on, g_PivotFixed.load()); }

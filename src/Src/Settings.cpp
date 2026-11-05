@@ -164,6 +164,7 @@ namespace
         { "display.fpscounter",         Kind::Choice, "off", 0, 0, "off|top-left|top-right|bottom-left|bottom-right" },   // XRSession: a frame-rate counter in the headset
         { "display.fpscountersize",     Kind::Float,  "1", 0.5f, 2, nullptr, true },   // ...its size (1 = 20 cm wide at 1 m)
         { "display.fpscounterangle",    Kind::Float,  "15", 5, 30, nullptr, true },    // ...degrees from the view's centre, sideways (0.8 of it up / down)
+        { "display.simstepatrefresh",   Kind::Bool,   "1", 0, 0, nullptr, true },   // SimStep: the game's simulation step = the headset's frame (not 1/120 s)
         { "display.menuscreen",         Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.menuscreensize",     Kind::Float,  "62", 30, 110, nullptr },
         { "display.menuscreendistance", Kind::Float,  "2.4", 0.8f, 10, nullptr },
@@ -488,6 +489,7 @@ float Settings::StaticLodZoom() { return F("display.staticlodzoom"); }
 int Settings::ViewDistance() { return (int)std::lround(F("display.viewdistance")); }
 bool Settings::DepthPassDepthOnly() { return B("display.depthpassdepthonly"); }
 bool Settings::SkipFrameSyncFlush() { return B("display.skipframesyncflush"); }
+bool Settings::SimStepAtRefresh() { return B("display.simstepatrefresh"); }
 bool Settings::DepthPassSkipRedundantCopies() { return B("display.depthpassskipredundantcopies"); }
 bool Settings::SkipEmptyOutlines() { return B("display.skipemptyoutlines"); }
 bool Settings::StereoExposureReuse() { return B("advanced.stereoexposurereuse"); }

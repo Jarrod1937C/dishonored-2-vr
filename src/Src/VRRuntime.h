@@ -127,6 +127,8 @@ namespace VRRuntime
         std::string runtime, system, error;
     };
     Status GetStatus();
+    //! The headset's display period (ns) of the frame begun last (xrWaitFrame's predictedDisplayPeriod), 0 before any.
+    long long DisplayPeriodNs();
     //! Count of runtime recenters (XrEventDataReferenceSpaceChangePending). Any thread.
     unsigned RecenterEvents();
     unsigned long long LostFrames(int dev);   //!< frames a lost device's last good pose was held: 0 left, 1 right, 2 head

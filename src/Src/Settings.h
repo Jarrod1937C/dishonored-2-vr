@@ -18,6 +18,7 @@ namespace Settings
     bool LogInput();                              //!< log every controller button change (diagnostics)
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
+    bool SimStepAtRefresh();                      //!< [Performance.FrameRate] SimStepAtRefresh (hidden): the game's simulation step at the headset's refresh (SimStep)
     bool TaaSkyMotion();                          //!< [Display.Picture] TaaSkyMotion (hidden): the sky's motion vectors for the game's TAA (SkyMotion)
     bool HandDepth();                             //!< [Display.Picture] HandDepth (hidden): the hands sort by their real distance, not drawn over the world (GpuTrace)
     float TaaSharpening();                        //!< [Display.Picture] TaaSharpening: the game's TAA result sharpened in the headset, 0..1 (0 = off)

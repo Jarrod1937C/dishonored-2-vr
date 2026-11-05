@@ -616,6 +616,7 @@ VRRuntime::RenderPoseStats VRRuntime::GetRenderPoseStats() { std::lock_guard lk(
 unsigned long long VRRuntime::OrthoDraws() { return g_Session.OrthoDraws(); }
 VRRuntime::Placement VRRuntime::GetPlacement(int i) { std::lock_guard lk(g_StatusMutex); return g_Place[i & 1]; }
 VRRuntime::Status VRRuntime::GetStatus() { std::lock_guard lk(g_StatusMutex); return g_Status; }
+long long VRRuntime::DisplayPeriodNs() { std::lock_guard lk(g_PoseMutex); return g_FramePeriod; }
 VRRuntime::HeadPose VRRuntime::GetHeadPose() { std::lock_guard lk(g_PoseMutex); return g_Head; }
 VRRuntime::HeadPose VRRuntime::GetEyePose(int i) { std::lock_guard lk(g_PoseMutex); return g_Eye[i & 1]; }
 void VRRuntime::GetEyePoses(HeadPose eyes[2], HeadPose* head)
