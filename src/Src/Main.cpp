@@ -381,6 +381,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ViewMatrixHook::Install();
     Roomscale::Install();            // walking in the room walks the character: its character proxy follows the head
     AiResearch::Install();           // (log on only) research for the gestures at people: the AI's messages, what NPCs hear
+    Undetected::Install();           // the cheat Undetected: nobody regards you as an enemy while it is on
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
     ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s
     ScreenShadows::InstallSmallObjects();   // ScreenSpaceShadowSmallObjects: small moving objects out of the sun's maps

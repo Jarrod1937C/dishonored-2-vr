@@ -297,7 +297,7 @@ namespace
         Collision::KeyholeProbe();              // research (logging on): the head at a door, for the keyhole peek
         NpcGestures::Tick();                    // research (logging on): a weapon held on someone, a tap on the shoulder
         AiResearch::Tick();                     // (log on only) the AI messages posted since, with their payloads
-        Undetected::Tick();                     // the cheat Undetected: the player's stealth attributes held
+        Undetected::Tick();                     // the cheat Undetected: the player's id (enemies regard you as neutral)
         ThrowGesture::GameTick();               // a grenade released this frame leaves now (the real throw)
         Roomscale::Tick();                      // the wall fade's ray: the head in a wall the character cannot enter
         MeleeAim::TickTakedown();               // is a stealth kill on offer (the blade then clicks the attack)

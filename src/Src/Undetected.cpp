@@ -2,102 +2,112 @@
 #include "Undetected.h"
 #include "BodyHide.h"
 #include "GameInfo.h"
+#include <detours/detours.h>
 #include <atomic>
 #include <cstring>
 
 namespace
 {
-    constexpr uintptr_t kGetComponent = 0x877720, kAttrType = 0x39EDB90, kFind = 0x60CE50;
-    constexpr size_t kEntries = 0x48, kStride = 0x28, kValue = 0x24;
-    struct Attr { const char* name; uintptr_t atom; float want; int idx = -1; float orig = 0.f; bool saved = false; };
-    Attr g_A[] = {
-        { "visibility", 0x32CD9F0, 0.f }, { "visibility when moving", 0x32CD9F8, 0.f },
-        { "running footstep noise", 0x32CDA08, 0.f }, { "sprinting footstep noise", 0x32CDA10, 0.f },
-        { "illumination", 0x32CDA88, 0.f }, { "invisible when still", 0x32CDA78, 1.f }, { "invisible when still crouched", 0x32CDA80, 1.f },
-    };
-    constexpr int kN = (int)(sizeof g_A / sizeof g_A[0]);
+    constexpr uintptr_t kGetRelationship = 0x604C60;   // int (void* manager, const int* idA, const int* idB): A regarding B
+    constexpr uintptr_t kSetRelationship = 0x605990;   // void (void* manager, entity A, entity B, int): A's own entry for B
+    constexpr int kNeutral = 1, kEnemy = 2;   // (0 ally, 3 undefined)
+    constexpr uint32_t kNoId = 0x3FFF0010u;
+    using FnRel = int (*)(void*, const int*, const int*);
+    FnRel g_Real = nullptr;
+    using FnSet = void (*)(void*, void*, void*, int);
+    FnSet g_RealSet = nullptr;
     std::atomic<bool> g_On{ false };
-    void* g_Comp = nullptr; bool g_Resolved = false; int g_Found = 0;
-    std::atomic<unsigned long long> g_Writes{ 0 };
+    std::atomic<uint32_t> g_PlayerId{ 0 };
+    std::atomic<unsigned long long> g_Masked{ 0 }, g_Blocked{ 0 }, g_PlayerRegards{ 0 };
+    unsigned long long g_LoggedMasked = 0; double g_LogAt = 0;
 
-    void* AttrComp(void* player)
+    double Now() { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart / (double)f.QuadPart; }
+
+    int Hook(void* mgr, const int* a, const int* b)
     {
-        __try { return ((void* (*)(void*, const void*, int))(GameInfo::Base() + kGetComponent))(player, (const void*)(GameInfo::Base() + kAttrType), 2); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+        const int r = g_Real(mgr, a, b);
+        if (r != kEnemy || !g_On.load(std::memory_order_relaxed) || !a || !b) return r;
+        const uint32_t pid = g_PlayerId.load(std::memory_order_relaxed);
+        if (!pid || pid == kNoId) return r;
+        if ((uint32_t)*b == pid && (uint32_t)*a != pid) { g_Masked.fetch_add(1, std::memory_order_relaxed); return kNeutral; }
+        if ((uint32_t)*a == pid) g_PlayerRegards.fetch_add(1, std::memory_order_relaxed);
+        return r;
     }
-    //! the entry of `atom` in the component's table, checked against its key (POD)
-    float* Entry(void* comp, uintptr_t atom, int* idx)
+    uint32_t ReadId(void* e)
     {
-        __try
+        if (!e) return 0;
+        __try { return *(const uint32_t*)((const uint8_t*)e + 0xA8); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+    //! someone turning on the player is not even written (the read is neutral anyway: a condition that sets it each
+    //! time it finds it unset would otherwise set it, and post its "relationship changed", over and over)
+    void HookSet(void* mgr, void* a, void* b, int rel)
+    {
+        if (rel == kEnemy && g_On.load(std::memory_order_relaxed) && a != b)
         {
-            const uintptr_t b = GameInfo::Base();
-            int out = -1;
-            ((int* (*)(void*, int*, const void*))(b + kFind))(comp, &out, (const void*)(b + atom));
-            *idx = out;
-            if (out < 0 || out > 4096) return nullptr;
-            uint8_t* entries = *(uint8_t**)((uint8_t*)comp + kEntries);
-            if (!entries) return nullptr;
-            uint8_t* e = entries + (size_t)out * kStride;
-            if (*(const uint64_t*)e != *(const uint64_t*)(b + atom)) return nullptr;   // not that attribute's entry
-            return (float*)(e + kValue);
+            const uint32_t pid = g_PlayerId.load(std::memory_order_relaxed);
+            if (pid && pid != kNoId && ReadId(b) == pid) { g_Blocked.fetch_add(1, std::memory_order_relaxed); return; }
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
-    }
-    bool Wr(float* p, float v, float* old)
-    {
-        __try { if (old) *old = *p; if (*p != v) { *p = v; return true; } return false; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    }
-    void Restore()
-    {
-        if (!g_Comp) return;
-        int restored = 0;
-        for (Attr& a : g_A)
-        {
-            if (!a.saved) continue;
-            int idx; if (float* p = Entry(g_Comp, a.atom, &idx)) { Wr(p, a.orig, nullptr); restored++; }
-            a.saved = false;
-        }
-        if (restored) LOGI("Undetected: off: {} of the player's stealth attributes put back as they were", restored);
+        g_RealSet(mgr, a, b, rel);
     }
 }
 
+bool Undetected::Install()
+{
+    if (g_Real || !GameInfo::IsSupportedBuild()) return g_Real != nullptr;
+    const uint8_t* p = (const uint8_t*)(GameInfo::Base() + kGetRelationship);
+    static const uint8_t kExpect[] = { 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x41, 0x56, 0x41, 0x57 };
+    if (p[0] != 0xE9 && memcmp(p, kExpect, sizeof kExpect) != 0) { LOGI("Undetected: exe+0x{:X} is not the relationship lookup (another game build?): the cheat does nothing", kGetRelationship); return false; }
+    g_Real = (FnRel)(GameInfo::Base() + kGetRelationship);
+    DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+    DetourAttach(&(PVOID&)g_Real, Hook);
+    const LONG r = DetourTransactionCommit();
+    if (r != NO_ERROR) g_Real = nullptr;
+    LOGI("Undetected: the relationship lookup exe+0x{:X} hooked (detour={}): while the cheat is on, nobody regards you as an enemy", kGetRelationship, r);
+    const uint8_t* q = (const uint8_t*)(GameInfo::Base() + kSetRelationship);
+    static const uint8_t kExpectSet[] = { 0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57 };
+    if (g_Real && (q[0] == 0xE9 || memcmp(q, kExpectSet, sizeof kExpectSet) == 0))
+    {
+        g_RealSet = (FnSet)(GameInfo::Base() + kSetRelationship);
+        DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)g_RealSet, HookSet);
+        const LONG r2 = DetourTransactionCommit();
+        if (r2 != NO_ERROR) g_RealSet = nullptr;
+        LOGI("Undetected: the relationship setter exe+0x{:X} hooked (detour={}): someone turning on you is not written while it is on", kSetRelationship, r2);
+    }
+    return g_Real != nullptr;
+}
 void Undetected::SetEnabled(bool on)
 {
-    if (!on && g_On.load()) { /* restored on the game thread */ }
     g_On = on;
-    LOGI("Undetected: {}", on ? "on: guards and hostile people do not notice you (the cheat Undetected; a fight still makes them fight back)" : "off");
+    LOGI("Undetected: {}", on ? "on: guards and hostile people regard you as neutral (they see you, and do not attack or hunt you)" : "off");
 }
 bool Undetected::Enabled() { return g_On.load(); }
 void Undetected::Tick()
 {
-    if (!g_On.load()) { if (g_Resolved) { Restore(); g_Resolved = false; g_Comp = nullptr; } return; }
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
-    if (!an[BodyHide::aPlayer].valid || !an[BodyHide::aPlayer].ent) return;
-    void* comp = AttrComp(an[BodyHide::aPlayer].ent);
-    if (!comp) return;
-    if (comp != g_Comp)
-    {   // a new player (a level loaded): find the entries again
-        g_Comp = comp; g_Resolved = true; g_Found = 0;
-        std::string list;
-        for (Attr& a : g_A)
-        {
-            a.saved = false; int idx = -1;
-            float* p = Entry(comp, a.atom, &idx);
-            a.idx = p ? idx : -1;
-            if (p) { float v = 0.f; Wr(p, *p, &v); a.orig = v; a.saved = true; g_Found++; }
-            list += fmt::format("{}{} {}", list.empty() ? "" : ", ", a.name, p ? fmt::format("= {:.2f} (entry {})", a.orig, idx) : std::string("NOT FOUND"));
-        }
-        LOGI("Undetected: the player's attributes component {}: {} of {} stealth attributes found -- {}", comp, g_Found, kN, list);
-    }
-    for (Attr& a : g_A)
+    if (an[BodyHide::aPlayer].valid && an[BodyHide::aPlayer].ent)
     {
-        if (a.idx < 0) continue;
-        int idx; float* p = Entry(comp, a.atom, &idx);
-        if (p && Wr(p, a.want, nullptr)) g_Writes++;
+        const uint32_t id = ReadId(an[BodyHide::aPlayer].ent);
+        if (id && id != g_PlayerId.load())
+        {
+            g_PlayerId = id;
+            LOGI("Undetected: the player's entity id {:#x}", id);
+        }
+    }
+    if (!g_On.load() || !Log::Enabled()) return;
+    const double now = Now();
+    if (now - g_LogAt < 30.0) return;
+    g_LogAt = now;
+    const unsigned long long m = g_Masked.load();
+    if (m != g_LoggedMasked)
+    {
+        LOGI("Undetected: in the last 30 s, {} reads of someone regarding you as an ENEMY turned to neutral ({} in all; someone turning on you not written: {}; the player regarding others as enemies: {}, left alone)",
+             m - g_LoggedMasked, m, g_Blocked.load(), g_PlayerRegards.load());
+        g_LoggedMasked = m;
     }
 }
 std::string Undetected::Status()
 {
-    return fmt::format("undetected {} ({} of {} attributes held; rewritten {} times)", g_On.load() ? "on" : "off", g_Found, kN, g_Writes.load());
+    return fmt::format("undetected {} (enemy reads of you turned neutral {}, turns against you not written {})", g_On.load() ? "on" : "off", g_Masked.load(), g_Blocked.load());
 }

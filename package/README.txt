@@ -416,7 +416,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                       "no AO" fill overwrites is skipped; 2 = also skip DOF's copy,
                                       which breaks water / electricity: do not use)
    [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 0   InfiniteAmmo = 0
-               InfiniteHealth = 0   Undetected = 0 (guards and hostile people do not notice you)
+               InfiniteHealth = 0   Undetected = 0 (guards and hostile people never treat you as an enemy)
                Or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
                UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs
    [Cheats.Powers] the powers, each on its own (the only way to unlock them): UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,

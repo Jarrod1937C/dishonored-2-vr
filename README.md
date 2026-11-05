@@ -16,8 +16,9 @@ it builds on.
   of his head, a VR-friendly non-lethal takedown with no choke animation. The game's own takedowns from behind still
   work too.
 - **Solid hands and weapons** that stop at walls and push loose objects; push doors open only as far as you push them,
-  pull drawers open, slide windows, turn safe dials, take items and eat food by hand. People's bodies give under your
-  hands instead of standing like statues; drag bodies by hand and lift them onto your back.
+  pull drawers open, slide windows, turn safe dials, press buttons and pull levers, take items and eat food by hand.
+  People's bodies give under your hands instead of standing like statues; drag bodies by hand and lift them onto your
+  back. Climb ledges with both hands and swim with your arms.
 - **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
   inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
   head zooms the mask's spyglass.
@@ -319,11 +320,16 @@ side, so you can look around and still find your hips.
 ### Cheats
 
 Optional, in the VR System / Cheats tab or the ini. The cheats are all off in the shipped ini (`InfiniteMana`,
-`InfiniteAmmo` and `InfiniteHealth` too). `Undetected` makes guards and other hostile people not notice you, to live in
-the world without being hunted (attacking someone still starts a fight). `UnlockEverything` gives the Outsider's mark, every upgrade, bone charm crafting, black market upgrade
-and weapon; the powers are switched on one by one (`[Cheats.Powers]`: Blink, Far Reach, Dark Vision, Possession,
-Devouring Swarm, Bend Time, Windblast, Domino, Doppelganger, Mesmerize, Shadow Walk). The game saves what the cheats
-change: use saves you do not mind changing.
+`InfiniteAmmo` and `InfiniteHealth` too).
+
+- **`Undetected`:** guards and other hostile people never treat you as an enemy, so you can walk around the world in
+  the open without being attacked or hunted, whatever you do. Everyone else still sees you and reacts as usual.
+- **`UnlockEverything`:** the Outsider's mark, every upgrade, bone charm crafting, every black market upgrade and
+  every weapon.
+- **Powers** are switched on one by one (`[Cheats.Powers]`: Blink, Far Reach, Dark Vision, Possession, Devouring
+  Swarm, Bend Time, Windblast, Domino, Doppelganger, Mesmerize, Shadow Walk).
+
+The game saves what the cheats change: use saves you do not mind changing.
 
 ## Controls
 
@@ -453,6 +459,16 @@ rendering one flat frame per Present from one camera. The mod changes the pipeli
    time passed, rounded to steps). At a 90 Hz refresh that is one step on some frames and two on others, an uneven
    motion when moving sideways. The mod sets the step to the headset's own refresh period, so every frame advances the
    world by exactly one step (hidden `SimStepAtRefresh`, on by default).
+6. **The hands act through the game's own systems.** The mod tests the drawn hands and weapons against the game's
+   physics world each frame. What they touch is then handed to the game the way it would come from a flat player:
+   - Pressing a button, pulling a lever, taking an item or lifting a body onto your back aims the game's interaction
+     sensor at the point the hand touched, then sends interact.
+   - Pushing a loose object or dragging a body sends the engine's own impulse message to its physics body.
+   - Climbing a ledge by hand presses the game's jump, so the game's own mantle runs where it can climb.
+   - `Undetected` changes how people regard you, not what they perceive. Every "how does this NPC regard the player"
+     question goes through one lookup in the game's relationship manager (his own entry for you, else his faction's
+     relationship to yours). While the cheat is on, an ENEMY answer reads NEUTRAL and turning against you is not
+     recorded, so guards see you as they would a passer-by.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains every subsystem in detail.
 

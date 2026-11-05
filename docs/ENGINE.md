@@ -1196,6 +1196,21 @@ nearly straight down; a ray that lands on a placed mine places nothing).
 - Names seen: arkCpntAIReasoner_Greetings / _Panic / _Flee, arkCpntFleeManager, ANIMOVERRIDE_COWER, panic conditions
   PANIC_COND_HEARD_IMPACT(_SWORD), _HEARD_DANGER, _ALARM...; stimuli AISTIMULUS_HEARING / SIGHT / TOUCH / TOUCH_BLIND.
 
+### 8.7 Relationships: who is an enemy (static only, 2026-11-05)
+
+- arkRelationship: **0 ALLY, 1 NEUTRAL, 2 ENEMY, 3 UNDEFINED** (enum table exe+0x2395C30).
+- **The lookup** exe+0x604C60(relationship manager, const int* A's entity id, const int* B's id) -> how A regards B:
+  the manager's hash map (buckets +0x20, mask +0x30) by A's id holds A's own entries {B's id, relationship} (list at
+  node+0x10 / count +0x18, 8 bytes each); none, or UNDEFINED, -> the factions': manager+0x00 = the factions (0x38 bytes
+  each), [faction A + 0x10][faction B] (the node's +0x08 byte is the entity's faction index). Wrappers:
+  exe+0x604BD0(manager, entity A, entity B) (79 callers), exe+0x604C30(manager, id A, id B).
+- **The setter** exe+0x605990(manager, entity A, entity B, relationship) writes A's entry for B (appends it if new),
+  then exe+0x606D10 posts ARK_MSG_AI_RELATIONSHIP_CHANGED (0x5D, payload B's id) to A; it is only called by
+  exe+0x605770(manager, A, B, relationship), which also sets it for the members of A's and B's groups (manager+0x00
+  entries' member lists). What turns a neutral NPC against the player: the RELATIONSHIP_COND_* conditions (seeing a
+  neutral player indoors = trespass, a corpse, carrying one, witnessing magic or a death, being hurt, aggression...).
+- The cheat Undetected hooks both: ENEMY regarding the player reads NEUTRAL, and setting it is skipped.
+
 ## 9. Interface, menus, videos, HUD
 
 ### 9.1 How the interface is drawn
@@ -1347,7 +1362,8 @@ index<<2 | variant) and a loop at exe+0x514B34. exe+0x456AA0(ps, decl) = index o
   exe+0x32CD9F0, _VISIBILITY_WHEN_MOVING_FACTOR 0x32CD9F8, _RUNNING_FOOTSTEP_NOISE_FACTOR 0x32CDA08,
   _SPRINTING_FOOTSTEP_NOISE_FACTOR 0x32CDA10, _STEALTH_ILLUMINATION_FACTOR 0x32CDA88, _INVISIBLE_WHEN_NOT_MOVING
   0x32CDA78, _INVISIBLE_WHEN_NOT_MOVING_CROUCHED 0x32CDA80. A subclass's virtual exe+0x435660 caches the indices it
-  uses (+0x70..; VISIBILITY_FACTOR's at +0xBC). Used by the cheat Undetected.
+  uses (+0x70..; VISIBILITY_FACTOR's at +0xBC). (The cheat Undetected first held these at 0; played: it did not
+  stop guards fighting, and it hid you from everyone. It works through relationships now, 8.7.)
 
 ## 11. Consolidated address table
 
