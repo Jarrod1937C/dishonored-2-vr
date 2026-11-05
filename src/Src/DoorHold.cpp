@@ -15,7 +15,7 @@ namespace
     constexpr uintptr_t kPlayerUpd = 0x6E2650;
     constexpr uint8_t kPlayerUpdBytes[7] = { 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10 };
     constexpr uintptr_t kGetComponent = 0x877720, kOpenableType = 0x39C59A0;
-    constexpr uintptr_t kVtAnimated = 0x1C56948;           // arkStateOpenable_Animated (+0x28 the phase: 1 opening, 2 closing)
+    constexpr uintptr_t kSlotPlaying = 0x53E770;           // (animation, slot) -> its slot plays (what the Animated state ends on)
     constexpr size_t kCompAnim = 0xF8, kAnimPlayer = 0x338, kPlayerTime = 0x38;
     constexpr size_t kEntPos = 0x300, kEntRot = 0x30C;     // the door entity's origin (on the hinge) and rotation rows
     constexpr float kOmega = 2.8f;     // rad/s: the swing's speed at rate 1 (measured 2.77 on two doors)
@@ -58,19 +58,13 @@ namespace
         __try { return ((void* (*)(const void*, const void*, int))(GameInfo::Base() + kGetComponent))(ent, (const void*)(GameInfo::Base() + kOpenableType), 2); }
         __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
     }
-    //! the openable's current state when it is Animated: its phase (1 opening, 2 closing), else -1
-    int AnimPhase(const void* comp)
+    //! the door's swing is playing: its animation's slot 0, the game's own test (exe+0x53E770, which the openable's
+    //! Animated state ends on). (Its state objects are kept inside the component -- the Animated one at +0x80 -- so the
+    //! pointers at +0x40.. are not the current state: measured, they never matched on a swinging door.)
+    bool Playing(void* anim)
     {
-        const uintptr_t vt = GameInfo::Base() + kVtAnimated;
-        for (size_t off = 0x40; off < 0x60; off += 8)
-        {
-            const void* st = PtrAt(comp, off);
-            uintptr_t v = 0;
-            if (!st || (uintptr_t)st < 0x10000 || !Rd(&v, st, 8) || v != vt) continue;
-            int ph = 0; Rd(&ph, (const uint8_t*)st + 0x28, 4);
-            return ph < 0 ? 0 : ph;
-        }
-        return -1;
+        __try { return ((bool (*)(void*, int))(GameInfo::Base() + kSlotPlaying))(anim, 0); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     void DoorName(const void* ent, char* out, size_t cap)
     {
@@ -250,9 +244,7 @@ void DoorHold::Tick(double now)
             float dy = yaw - s.yaw; while (dy > 3.14159265f) dy -= 6.2831853f; while (dy < -3.14159265f) dy += 6.2831853f;
             if (fabsf(dy) > 0.004f) { if (rate > 0.f) s.sign = dy > 0 ? 1 : -1; s.moved += fabsf(dy); s.yaw = yaw; }
         }
-        // (the Animated state's +0x28 says only which way the door moved last frame: it flips as a stopped door
-        // settles, so it is not read as a change of direction)
-        if (AnimPhase(s.comp) >= 0) s.seenAnim = true;
+        if (Playing(s.anim)) s.seenAnim = true;
         else if (s.seenAnim) { Let(s, "its swing ended", now); continue; }
         else if (now - std::max(s.t0, s.ourAt) > 2.5) { Let(s, "no swing started", now); continue; }
     }

@@ -683,6 +683,17 @@ namespace
     // sort by their real distance (and the item, like the hand, no longer sinks into a wall it is pushed against).
     // Keyed by the projection the arm draw used, so a pass of another view (shadow maps, reflections) keeps its own.
     struct ArmDepthHack { float p00 = 0, p11 = 0; float v[4] = {}; int n = 0; bool valid = false; };
+    // [Display.Picture] HandDepth (hidden, default 1): the hack is undone -- the value is 5 on the arms, 1 on the world
+    // (measured) -- on every draw of the player's own (arms, weapons, items in the hand, the torso), so the hands sort
+    // by their real distance: reported 2026-11-04, a hand put behind a lamp post was still seen through it. In the
+    // flat game the arms sit at the camera; in a headset they are at arm's length, among the things in the world.
+    std::atomic<bool> g_RealHandDepth{ true };
+    std::atomic<unsigned long long> g_DhUndone{ 0 };
+    void RealDepth(const InstLayout* L, float* out, UINT bytes)
+    {
+        if (!g_RealHandDepth.load(std::memory_order_relaxed) || !L || L->dh < 0 || (size_t)(L->dh + 1) * 4 > bytes) return;
+        if (out[L->dh] != 1.f) { out[L->dh] = 1.f; g_DhUndone++; }
+    }
     std::mutex g_DhM; ArmDepthHack g_ArmDh[6]; int g_ArmDhNext = 0;
     std::atomic<unsigned long long> g_CarryDhSet{ 0 }, g_CarryDhNone{ 0 }, g_CarryDhNoVar{ 0 };
     std::atomic<int> g_CarryDhLog{ 0 };          // log lines left for this carry
@@ -2182,6 +2193,7 @@ namespace
             {   // Full arm: the draw's own matrix stays exactly as the game made it (the model origin is the shoulder
                 // root, which does not move); everything happens per bone in the palette, in BeginSixDof.
                 memset(out, 0, kInstMaxBytes); memcpy(out, in, bytes);
+                RealDepth(L, out, bytes);
                 return true;
             }
             dv = useOwnDv ? ownDv : dvH[hand]; dvPrev = useOwnDv ? ownDv : dvPrevH[hand];
@@ -2232,6 +2244,7 @@ namespace
         }
         // (after the rows above are written: the log compares what the lighting gets with where the item is drawn)
         if (!torso && !carryDraw && !(ai && ai->side >= 0)) LogHeldItemDraw(hand, draw, bytes, L, in, out, f, vinv, dv, gadgetDraw, gadgetInPalmDet, useModel, usePrev);
+        RealDepth(L, out, bytes);   // (after the carried item took the arms' value: both back to the world's)
         return true;
     }
 
@@ -6280,6 +6293,11 @@ void GpuTrace::SetHandRest(int mode, float curl, int grip)
     LOGI("gpuhands: empty hand {}, curl {:.2f}, grip {}", mode ? "keeps one pose" : "as the game animates it", g_RestCurl.load(), g_RestGrip.load() ? "closes it" : "ignored");
 }
 void GpuTrace::ForgetHandRest() { g_RestForget = true; }
+void GpuTrace::SetHandDepth(bool real)
+{
+    g_RealHandDepth = real;
+    LOGI("gpuhands: the hands, weapons and held items {}", real ? "sort by their real distance: things in front of them hide them (HandDepth)" : "draw over the world, as in the flat game (HandDepth = 0)");
+}
 void GpuTrace::SetFingerTracking(bool on)
 {
     g_FingersOn = on;

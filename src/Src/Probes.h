@@ -18,4 +18,9 @@ namespace Probes
     //! Collision, a hand pushing a closed door: the first 3 times (profiling only) a physics impulse is sent instead of the
     //! game's door push (20, 60, 150) and the door's rotation and velocities logged for 1.5 s. True = the push was taken.
     bool DoorImpulseTest(void* door, const float point[3], const float normal[3], int hand);
+    //! SwordContact, a hand touching a standing character's body at a joint (profiling only, round 7): twice, 4 s apart, a
+    //! read / write watchpoint on that joint's pose entry (the animation's, then the array's tail) for 1.5 s, and the
+    //! skeleton object's pose array and remaps logged: where the pose goes to be drawn. (Any thread: queued.)
+    void NpcPushTest(void* npc, const float point[3], const float normal[3], float into, int hand, int joint);
+    void GameTick();                         //!< Collision::Tick, the game thread: a queued NpcPushTest is run
 }

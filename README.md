@@ -237,6 +237,10 @@ side, so you can look around and still find your hips.
   as you push it: push slowly and it moves with your hand, stop and it stops (to peek through a gap or open it quietly),
   push again and it goes on. A quick shove swings it open by itself; push it from the other side to turn it back.
   The interact button still opens or closes it at the game's speed (`DoorsFollowHand`, on by default).
+- **People give under your hands** (experimental): press on someone and his body gives where you press. Push a
+  shoulder and it turns away, push an arm aside, tilt a head; let go and it springs back with a little sway. Squeeze
+  the grip with your hand on him to pull that part along instead. Only what you see changes: he doesn't move or notice
+  (`SoftCharacters`, on by default).
 - **Drawers and cabinets:** put your hand on one, squeeze the grip and pull back to open it; push it shut. Locks and
   keys work as in the game.
 - **Windows:** rest a hand on a sliding window and slide it up or down.

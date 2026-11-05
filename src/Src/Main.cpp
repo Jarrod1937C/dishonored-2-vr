@@ -22,6 +22,7 @@
 #include "PaceLog.h"
 #include "Probes.h"
 #include "DoorHold.h"
+#include "SoftBody.h"
 #include "ObjectiveWatch.h"
 #include "ScreenShadows.h"
 #include "BodyView.h"
@@ -186,6 +187,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "pushobjects" })) Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     if (has({ "pushdoors" })) Collision::SetDoors(Settings::PushDoors());
     if (has({ "doorsfollowhand" })) DoorHold::SetEnabled(Settings::DoorsFollowHand());
+    if (has({ "softcharacters" })) SoftBody::SetEnabled(Settings::SoftCharacters());
     if (has({ "watchobjectives" })) ObjectiveWatch::SetEnabled(Settings::WatchObjectives());
     if (has({ "pulltoopen" })) Collision::SetOpenables(Settings::PullToOpen());
     if (has({ "physicalpickup" })) Collision::SetItems(Settings::PhysicalPickup());
@@ -223,6 +225,7 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "shadowlampfewerupdates" })) ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
     if (has({ "shadowlampkeepcache" })) ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
     if (has({ "taaskymotion" })) SkyMotion::SetEnabled(Settings::TaaSkyMotion());
+    if (has({ "handdepth" })) GpuTrace::SetHandDepth(Settings::HandDepth());
     Commands::SettingsChanged();   // turning, layout, menu screen, cutscenes, gestures, reticle, wrist HUD, cheats ...
 }
 
@@ -283,6 +286,7 @@ static DWORD WINAPI InitThread(LPVOID)
     Collision::SetPush(Settings::PushObjects(), Settings::PushStrength());
     Collision::SetDoors(Settings::PushDoors());
     DoorHold::SetEnabled(Settings::DoorsFollowHand());          // (hooks the animation players' update when on)
+    SoftBody::SetEnabled(Settings::SoftCharacters());           // (hooks the pose commit when on)
     ObjectiveWatch::SetEnabled(Settings::WatchObjectives());
     Collision::SetOpenables(Settings::PullToOpen());
     Collision::SetItems(Settings::PhysicalPickup());
@@ -323,6 +327,7 @@ static DWORD WINAPI InitThread(LPVOID)
     ScreenShadows::SetLampFewerUpdates(Settings::ShadowLampFewerUpdates());
     ScreenShadows::SetLampKeepCache(Settings::ShadowLampKeepCache());
     SkyMotion::SetEnabled(Settings::TaaSkyMotion());
+    GpuTrace::SetHandDepth(Settings::HandDepth());
     ScreenShadows::SetLampCacheSlices(Settings::ShadowLampCacheSlices());
     Watchdog::Install();          // a render thread that stops presenting is reported with where it is
     Seeds::Install();

@@ -117,6 +117,7 @@ set(MOD_SOURCES
     Src/PaceLog.cpp    Src/PaceLog.h
     Src/Probes.cpp     Src/Probes.h
     Src/DoorHold.cpp   Src/DoorHold.h
+    Src/SoftBody.cpp   Src/SoftBody.h
     Src/ObjectiveWatch.cpp Src/ObjectiveWatch.h
     Src/ScreenShadows.cpp    Src/ScreenShadows.h
     Src/KeyBinds.cpp   Src/KeyBinds.h

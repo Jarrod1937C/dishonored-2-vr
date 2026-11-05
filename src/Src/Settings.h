@@ -19,6 +19,7 @@ namespace Settings
     bool Haptics();                               //!< controller vibration
     float RenderScale();                          //!< the game's render size relative to the headset's pixel density (0 = the window's)
     bool TaaSkyMotion();                          //!< [Display.Picture] TaaSkyMotion (hidden): the sky's motion vectors for the game's TAA (SkyMotion)
+    bool HandDepth();                             //!< [Display.Picture] HandDepth (hidden): the hands sort by their real distance, not drawn over the world (GpuTrace)
     float TaaSharpening();                        //!< [Display.Picture] TaaSharpening: the game's TAA result sharpened in the headset, 0..1 (0 = off)
     float ControllerPitchOffset();                //!< degrees the controllers' pointing is tilted (+ = up)
     bool FingerTracking();                        //!< [Controls] FingerTracking, with Layout = index (XRSession, GpuTrace)
@@ -29,6 +30,7 @@ namespace Settings
     bool PushObjects();                           //!< [Gameplay] PushObjects: hands / weapons push loose props (Collision)
     bool PushDoors();                             //!< [Gameplay] PushDoors: a hand pushing a door opens it (Collision)
     bool DoorsFollowHand();                       //!< [Gameplay.Collision] DoorsFollowHand: a pushed door swings only as far as the hand pushes it (DoorHold)
+    bool SoftCharacters();                        //!< [Gameplay.Collision] SoftCharacters: characters' bodies give where a hand presses / pulls (SoftBody)
     bool WatchObjectives();                       //!< [Display.Hud] WatchObjectives: the objectives' directions on the watch, the game's markers hidden (ObjectiveWatch)
     bool KnockoutBlow();                          //!< [Gameplay] KnockoutBlow: a blow to the back of the head knocks out (MeleeAim)
     bool FinisherAnimations();

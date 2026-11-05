@@ -65,6 +65,7 @@ namespace
         { "gameplay.pushobjects",       Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: loose props are pushed
         { "gameplay.pushdoors",         Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: a hand pushing a door opens it
         { "gameplay.doorsfollowhand",   Kind::Bool,   "1", 0, 0, nullptr },   // DoorHold: a pushed door swings only as far as the hand pushes it
+        { "gameplay.softcharacters",    Kind::Bool,   "1", 0, 0, nullptr },   // SoftBody: characters' bodies give where a hand presses
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
         { "gameplay.knockoutspeed",     Kind::Float,  "8.0", 1, 20, nullptr },   // MeleeAim: m/s a knockout blow needs
         { "gameplay.swordbloodflyreach", Kind::Float, "0.6", 0, 1, nullptr, true },   // SwordContact: how much further from a bloodfly the blade touches it
@@ -128,6 +129,7 @@ namespace
         { "display.renderscale",        Kind::Float,  "1", 0, 2, nullptr },
         { "display.taasharpening",      Kind::Float,  "0.5", 0, 1, nullptr },   // TaaSharpen: the TAA's result sharpened in the headset (0 = off)
         { "display.taaskymotion",       Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: SkyMotion: the sky given motion vectors for the TAA
+        { "display.handdepth",          Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: GpuTrace: the hands sort by their real distance (no first-person depth hack)
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
         { "display.disablemotionblur",  Kind::Bool,   "1", 0, 0, nullptr, true },
         { "display.disableheadbob",     Kind::Bool,   "1", 0, 0, nullptr, true },   // VrTweaks: pm_noBob 1 while the headset shows the game
@@ -379,6 +381,7 @@ bool Settings::Haptics() { return B("controls.haptics"); }
 float Settings::RenderScale() { return F("display.renderscale"); }
 float Settings::TaaSharpening() { return F("display.taasharpening"); }
 bool Settings::TaaSkyMotion() { return B("display.taaskymotion"); }
+bool Settings::HandDepth() { return B("display.handdepth"); }
 float Settings::ControllerPitchOffset() { return F("controls.controllerpitchoffset"); }
 bool Settings::FingerTracking() { return B("controls.fingertracking") && V("controls.layout") == "index"; }
 bool Settings::SwordBladeDamage() { return B("gameplay.swordbladedamage"); }
@@ -388,6 +391,7 @@ bool Settings::WeaponCollision() { return B("gameplay.weaponcollision"); }
 bool Settings::PushObjects() { return B("gameplay.pushobjects"); }
 bool Settings::PushDoors() { return B("gameplay.pushdoors"); }
 bool Settings::DoorsFollowHand() { return B("gameplay.doorsfollowhand"); }
+bool Settings::SoftCharacters() { return B("gameplay.softcharacters"); }
 bool Settings::WatchObjectives() { return B("display.watchobjectives"); }
 bool Settings::KnockoutBlow() { return B("gameplay.knockoutblow"); }
 bool Settings::FinisherAnimations() { return B("gameplay.finisheranimations"); }
@@ -619,6 +623,7 @@ namespace
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
         { "doorsfollowhand", "1" },
+        { "softcharacters", "1" },
         { "renderscale", "1" },
         { "taasharpening", "0.5" },
         { "disablemetaasw", "1" },

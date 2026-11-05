@@ -310,6 +310,10 @@ namespace GpuTrace
     //! [Controls] FingerTracking (Index layout): the drawn fingers of an empty hand or a hand with a power follow the
     //! controller's fingers (XRInputState::fingerCurl), each finger its own.
     void SetFingerTracking(bool on);
+    //! [Display.Picture] HandDepth (hidden, default 1): the game draws the first-person models with a depth hack
+    //! (cb_modeldepthhack 5) so they always win against the world; 1 = undone on the player's own draws (the hands
+    //! sort by their real distance), 0 = the game's.
+    void SetHandDepth(bool real);
     std::string HandRestStats();
     std::string SixDofStats();
 

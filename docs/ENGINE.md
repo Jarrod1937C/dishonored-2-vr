@@ -291,7 +291,9 @@ the copy.
   `cb_modelmatrix{x,y,z}`.
 - `cb_modeldepthhack` is what keeps the first-person arms in front of the world. A world draw moved into the hand (a
   carried item) must be given the arms' value, or the hand draws over the parts of it that are nearer the eye. Take
-  the value from an arm draw with the same projection, so shadow and reflection passes keep their own.
+  the value from an arm draw with the same projection, so shadow and reflection passes keep their own. Measured: 5.0
+  on the arms, 1.0 on the world. In a headset the hands are at arm's length, among the world's things: with the
+  hack they showed through a lamp post in front of them, so HandDepth sets it back to 1 on the player's own draws.
 - **There is no fixed layout**: every material compiles its own (~30 different cb2 sizes in one frame, up to at least
   1168 bytes). Read the offsets from the shader's reflection (`D3DReflect` on the bytecode kept from
   `CreateVertexShader`, cached per shader object) by those names. Use `__uuidof(ID3D11ShaderReflection)`, not
@@ -768,13 +770,24 @@ muzzle flash is placed from the weapon render model's transform set.
   &axis), exe+0x53D940; by joint name/reference exe+0x53DAC0 (86 callers).
 - **Pose array**: skeleton object `obj` (entity+0x360, check `obj+0x38 == entity+0xF0`): `obj+0x2D8` {ptr, count low 24
   bits at +0x2E0}, 64-byte entries in MODEL space (axis rows at +0x00/+0x10/+0x20, position at +0x30; exe+0x9B900
-  converts one). Remaps per space at `obj+0x2E8 + space*16` {short* joint -> entry, count}: space 1 = identity = the
-  BIND pose; space 3 = the animation's pose (what the engine hangs things on).
+  converts one). The remaps: `obj+0x2E8` {pointer, count = the number of spaces, 4} to an array of {short* joint ->
+  entry, count}, kept inline at obj+0x2F8 (so `obj+0x2E8 + k*16` -- what the mod first read as "space k" -- is space
+  k-1 for k >= 1). Space 2 (read as "3" by NpcSkel) = the animation's pose before the last stage, what the engine hangs
+  things on; space 3 = the last stage's, the drawn pose.
 - **Ragdolls write the TAIL of the pose array** (the last J entries), while space 3 keeps the last animated pose
   standing. The array is rebuilt over time (667 = 3J-2 entries, then 530), so use "the last J", never an absolute
   index. Tell a ragdoll pose by its bone lengths matching the bind's and its position differing from space 3.
 - No parent table was found in the skeleton definition; joining each joint to the nearest earlier joint in the bind
   pose gives usable bone capsules.
+- **How the pose is built and drawn** (measured 2026-11-04): each animation update copies the posed joints (obj+0x198,
+  64-byte model-space entries) into the pose array one space at a time with **exe+0x540A90(obj, space)** (space 0 resets
+  the count; each entry appended by exe+0x53BAD0, the write at exe+0x53BB96; space 3 copies every joint, a later space
+  only the joints a later stage changed). Spaces 0-2 share one block (the animation's pose -- not a bind pose in play);
+  space 3 is the last J entries, the drawn pose: exe+0x25EFE0(model, [[obj+0x2E8]+0x30][0]'s block; called from the
+  render model's update exe+0x541270 and from exe+0x53ECAF) turns each through exe+0x9B980
+  (an entry's rows are the joint's axes, +0x30 its position; out: 3x4 with the rows as columns) and multiplies them by
+  the skeleton definition's inverse binds (def+0x120, 0x30 bytes each; exe+0x24C340 -> exe+0x12E1D00) into the render
+  model (+0x1FF8). SoftCharacters (SoftBody.cpp) turns space 3's entries after its commit.
 - **Entity binds**: exe+0x7506D0 places an entity bound to a joint. It takes **SEVEN** arguments (it reads the 5th at
   entry+0x28 and divides by the 7th at entry+0x38; hooked with six it crashed in a load); `self` = transform component,
   entity at +0x10; it calls exe+0x53D800 with space 3. Held objects, equipment and weapon attachments come through it.

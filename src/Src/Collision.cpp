@@ -2,6 +2,7 @@
 #include "Collision.h"
 #include "Probes.h"
 #include "DoorHold.h"
+#include "SoftBody.h"
 #include "GameInfo.h"
 #include "GpuTrace.h"
 #include "HandAimHook.h"
@@ -1451,6 +1452,7 @@ void Collision::Tick()
         for (int i = 0; i < nc; i++) P.c[i] = cs[i];
     }
     DoorHold::Tick(now);   // the held doors' swings: how far this frame's presses take them
+    Probes::GameTick();    // (research, profiling only: a test asked for from another thread)
 }
 
 bool Collision::Apply(int hand, const float r[9], float t[3], float applied[3])
@@ -1488,7 +1490,7 @@ void Collision::SetBodyContacts(int hand, const Contact* c, int n)
 std::string Collision::Stats()
 {
     std::ostringstream o;
-    o << DoorHold::Status() << "; ";
+    o << DoorHold::Status() << "; " << SoftBody::Status() << "; ";
     o << "hands " << g_Hands.load() << " weapons " << g_Weapons.load() << " push " << g_Push.load() << " ticks " << g_Ticks.load()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()

@@ -227,6 +227,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        to close it: it swings only as far as you push it (stop and
                                        it stops; a quick shove swings it open by itself;
                                        DoorsFollowHand); slide either hand up / down on a window
+   Press on a person ................. his body gives where you press (a shoulder turns away, an arm
+                                       is pushed aside) and springs back when you let go; squeeze the
+                                       grip on him to pull that part along (SoftCharacters)
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -309,6 +312,7 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SwordBodyDepth = 4 (cm the blade sinks into a body before it stops)
                PushDoors = 1 (with HandCollision: push a door with your hand to open it)
                DoorsFollowHand = 1 (with PushDoors: the door swings only as far as the hand pushes it)
+               SoftCharacters = 1 (experimental: people's bodies give where your hand presses or pulls)
                PullToOpen = 1 (with HandCollision: grab a drawer / cabinet, pull it open, push it shut)
                SwipeDials = 1 (with HandCollision: slide your hand up / down a safe's number wheel to turn it)
                SlideWindows = 1 (with HandCollision: slide your right hand up / down a window to raise / lower it)

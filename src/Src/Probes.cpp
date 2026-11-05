@@ -228,6 +228,73 @@ namespace
         return g_RealPlayHit(comp, info);
     }
 
+    // ---- characters' physics: the active ragdoll (round 6, 2026-11-04) ----
+    // arkCpntPhysicsSystemEvolved (vtable exe+0x1C54008): +0x238 its body mode now, +0x23C the one asked for (-1 none).
+    // exe+0x733E00(comp, mode) asks for a mode (the call from exe+0x401530 asks 2); exe+0x735290(comp, ent, asked)
+    // settles it, 0 / 2 trying the active ragdoll first: exe+0x734800(comp) picks an arkDeclActiveRagdoll whose rules
+    // pass ([comp+0x2C8]) and broadcasts ARK_MSG_STARTED_ACTIVE_RAGDOLL (0xBC).
+    using SetMode_t = uintptr_t(*)(void* comp, int mode);
+    using Resolve_t = int(*)(void* comp, void* ent, int asked);
+    using TryActive_t = bool(*)(void* comp);
+    SetMode_t g_RealSetMode = nullptr; Resolve_t g_RealResolve = nullptr; TryActive_t g_RealTryActive = nullptr;
+    constexpr uintptr_t kSetMode = 0x733E00, kResolve = 0x735290, kTryActive = 0x734800, kPhysEvolvedVt = 0x1C54008;
+    std::atomic<int> g_RagLogged{ 0 };
+    std::atomic<unsigned long long> g_SetModes{ 0 }, g_Resolves{ 0 }, g_TryActives{ 0 }, g_ActiveStarted{ 0 };
+    struct RagWatch { const void* comp = nullptr; const void* ent = nullptr; double t0 = 0, last = 0; int mode = -9, asked = -9; float pos[3] = {}; std::string name; };
+    std::vector<RagWatch> g_Rag;   // (g_DM) characters whose body mode was asked for or changed: followed 8 s
+    void WatchRag(const void* comp, const void* ent, const char* why)
+    {
+        std::lock_guard lk(g_DM);
+        for (RagWatch& w : g_Rag) if (w.comp == comp) { w.t0 = Now(); return; }
+        if (g_Rag.size() >= 6) return;
+        RagWatch w; w.comp = comp; w.ent = ent; w.t0 = w.last = Now(); w.name = NameAt(ent, 0x20);
+        Rd(w.pos, (const uint8_t*)ent + 0x300, 12);
+        g_Rag.push_back(w);
+        LOGI("Probes: character '{}' ({}): its body followed for 8 s (physics comp {} vtable {})", w.name, why, comp, Rva(Ptr(comp, 0)));
+    }
+    uintptr_t HkSetMode(void* comp, int mode)
+    {
+        g_SetModes++;
+        if (PassProfile::On() && g_RagLogged.load() < 120)
+        {
+            g_RagLogged++;
+            int cur = -9; Rd(&cur, (const uint8_t*)comp + 0x238, 4);
+            const void* ent = Ptr(comp, 0x10);
+            LOGI("Probes: body mode {} asked for '{}' (now {}) from {}", mode, NameAt(ent, 0x20), cur, Rva(_ReturnAddress()));
+            WatchRag(comp, ent, "a body mode asked for");
+        }
+        return g_RealSetMode(comp, mode);
+    }
+    int HkResolve(void* comp, void* ent, int asked)
+    {
+        g_Resolves++;
+        const int r = g_RealResolve(comp, ent, asked);
+        if (PassProfile::On() && g_RagLogged.load() < 120 && asked != -1)
+        {
+            g_RagLogged++;
+            LOGI("Probes: body mode for '{}': asked {} -> {} (from {})", NameAt(ent, 0x20), asked, r, Rva(_ReturnAddress()));
+        }
+        return r;
+    }
+    bool HkTryActive(void* comp)
+    {
+        g_TryActives++;
+        const bool r = g_RealTryActive(comp);
+        if (r) g_ActiveStarted++;
+        if (PassProfile::On() && g_RagLogged.load() < 120)
+        {
+            g_RagLogged++;
+            const void* decl = Ptr(comp, 0x2C8);
+            LOGI("Probes: active ragdoll for '{}': {} (decl {} '{}' / '{}'); comp +0x220..+0x2E0:{}", NameAt(Ptr(comp, 0x10), 0x20), r ? "STARTED" : "not started",
+                 decl, NameAt(decl, 8), NameAt(decl, 0x10), Dump(comp, 0x220, 0xC0, 40));
+            if (r && decl) LOGI("Probes:   its decl (vtable {}):{}", Rva(Ptr(decl, 0)), Dump(decl, 0, 0x100, 64));
+        }
+        return r;
+    }
+    int g_NpcTests = 0; double g_NpcTestAt = 0;   // (g_DM / the game thread)
+    struct NpcPending { void* npc = nullptr; float p[3] = {}, n[3] = {}; float into = 0; int hand = 0, joint = -1; };
+    NpcPending g_NpcPending;   // (g_DM)
+
     // ---- a door pushed by an impulse (Probes::DoorImpulseTest) ----
     struct Watch { const void* ent = nullptr; double t0 = 0, last = 0; std::string name; float imp = 0; };
     Watch g_Watch; int g_ImpulseTests = 0;
@@ -295,6 +362,60 @@ void Probes::OnMarkerProj(const float* world)
     LOGI("Probes: objective marker {} (tail):{}", m, Dump(m, 0x600, 0x60, 24));
 }
 
+void Probes::NpcPushTest(void* npc, const float point[3], const float normal[3], float into, int hand, int joint)
+{
+    // round 7 (2026-11-04): where a character's posed skeleton goes to be drawn. A hand touching a standing character's
+    // body (SwordContact, any thread: run on the game thread's next Collision tick), twice, 4 s apart: a read / write
+    // watchpoint on the touched joint's pose entry for 1.5 s -- the 1st on the animation's (space 3), the 2nd on the
+    // array's tail (what a ragdoll writes; perhaps the drawn pose). (Round 6's impulse / active ragdoll tests: done.)
+    if (!PassProfile::On() || !npc || joint < 0) return;
+    std::lock_guard lk(g_DM);
+    constexpr int kPoseWatches = 0;   // (done 2026-11-04: written by exe+0x53BB96 (exe+0x540A90), the tail read by exe+0x25EFE0)
+    if (g_NpcTests >= kPoseWatches || g_NpcPending.npc || g_WpArmed) return;
+    const double now = Now();
+    if (now - g_NpcTestAt < 4.0) return;
+    g_NpcTestAt = now;
+    g_NpcPending.npc = npc; memcpy(g_NpcPending.p, point, 12); memcpy(g_NpcPending.n, normal, 12); g_NpcPending.into = into; g_NpcPending.hand = hand;
+    g_NpcPending.joint = joint;
+}
+
+void Probes::GameTick()
+{
+    if (!PassProfile::On()) return;
+    NpcPending r;
+    { std::lock_guard lk(g_DM); if (!g_NpcPending.npc || g_WpArmed) return; r = g_NpcPending; g_NpcPending = NpcPending{}; }
+    int k; { std::lock_guard lk(g_DM); k = g_NpcTests++; }
+    const uint8_t* e = (const uint8_t*)r.npc;
+    const void* obj = Ptr(e, 0x360);
+    const void* pose = Ptr(obj, 0x2D8);
+    uint32_t cnt = 0; Rd(&cnt, (const uint8_t*)obj + 0x2E0, 4); cnt &= 0xFFFFFF;
+    const void* model = Ptr(e, 0xF0);
+    uint16_t J = 0; Rd(&J, (const uint8_t*)Ptr(Ptr(model, 0x1FE8), 0x50) + 0x78, 2);
+    std::string spaces;
+    int idx3 = -1;
+    for (int sp = 0; sp < 8; sp++)
+    {
+        const void* rp = Ptr(obj, 0x2E8 + sp * 16);
+        uint32_t rc = 0; Rd(&rc, (const uint8_t*)obj + 0x2E8 + sp * 16 + 8, 4); rc &= 0xFFFFFF;
+        int16_t ix = -1; if (rp && (uint32_t)r.joint < rc) Rd(&ix, (const uint8_t*)rp + r.joint * 2, 2);
+        if (sp == 3) idx3 = ix;
+        spaces += fmt::format(" [{}] {} x{} -> {}", sp, rp, rc, ix);
+    }
+    const int entry = k == 0 ? idx3 : (int)cnt - (int)J + r.joint;
+    LOGI("Probes: research {}/2: the {} hand touched character '{}' at joint {} of {}: skeleton object {} (vtable {}), pose array {} x{} entries; remaps per space (ptr, count -> this joint's entry):{}",
+         k + 1, r.hand ? "right" : "left", NameAt(e, 0x20), r.joint, J, obj, Rva(Ptr(obj, 0)), pose, cnt, spaces);
+    LOGI("Probes:   skeleton object +0x2C0..+0x370:{}", Dump(obj, 0x2C0, 0xB0, 40));
+    if (pose && entry >= 0 && (uint32_t)entry < cnt)
+    {
+        const uintptr_t at = (uintptr_t)pose + (size_t)entry * 64 + 0x30;
+        LOGI("Probes:   entry {} ({}) now:{}", entry, k == 0 ? "the animation's, space 3" : "the tail's", Dump((const uint8_t*)pose + (size_t)entry * 64, 0, 0x40, 16));
+        std::lock_guard lk(g_DM);
+        g_WpArmed = Watchpoint::Arm(at, 4, 400, true, true);
+        g_WpAt = Now();
+        LOGI("Probes:   read / write watchpoint on that entry's position x ({:#x}) {} for 1.5 s", at, g_WpArmed ? "armed" : "COULD NOT BE ARMED");
+    }
+}
+
 bool Probes::DoorImpulseTest(void* door, const float point[3], const float normal[3], int hand)
 {
     // (done 2026-11-04: impulses of 20 / 60 / 150 moved a door not at all -- its body is kinematic. Kept, off.)
@@ -315,6 +436,31 @@ bool Probes::DoorImpulseTest(void* door, const float point[3], const float norma
 void Probes::OnPresent()
 {
     if (!PassProfile::On()) return;
+    {   // characters whose body mode changed or who were pushed: mode, asked mode, how far they moved (every 0.1 s on a change)
+        const double t = Now();
+        std::lock_guard lk(g_DM);
+        for (auto it = g_Rag.begin(); it != g_Rag.end();)
+        {
+            RagWatch& w = *it;
+            if (t - w.t0 > 8.0) { LOGI("Probes: character '{}': no longer followed", w.name); it = g_Rag.erase(it); continue; }
+            if (t - w.last >= 0.1)
+            {
+                w.last = t;
+                int mode = -9, asked = -9; float p[3] = {}, v[3] = {};
+                Rd(&mode, (const uint8_t*)w.comp + 0x238, 4); Rd(&asked, (const uint8_t*)w.comp + 0x23C, 4);
+                Rd(p, (const uint8_t*)w.ent + 0x300, 12); Rd(v, (const uint8_t*)w.ent + 0x33C, 12);
+                const float dx = p[0] - w.pos[0], dy = p[1] - w.pos[1], dz = p[2] - w.pos[2];
+                const float moved = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (mode != w.mode || asked != w.asked || moved > 0.02f)
+                {
+                    LOGI("Probes: character '{}' t={:.1f}: body mode {} (asked {}), moved ({:.2f}, {:.2f}, {:.2f}) since, velocity ({:.2f}, {:.2f}, {:.2f})",
+                         w.name, t - w.t0, mode, asked, dx, dy, dz, v[0], v[1], v[2]);
+                    w.mode = mode; w.asked = asked; memcpy(w.pos, p, 12);
+                }
+            }
+            ++it;
+        }
+    }
     if (g_WatchOn.load())
     {   // the door an impulse was sent to: its rotation's first row and its velocities, 1.5 s
         const double t = Now();
@@ -329,9 +475,9 @@ void Probes::OnPresent()
         }
         if (t - g_Watch.t0 > 1.5) g_WatchOn = false;
     }
-    {   // the door watchpoint: its writers after 1.5 s
+    {   // the research watchpoint (a door's, a pose entry's): its accesses after 1.5 s
         std::lock_guard lk(g_DM);
-        if (g_WpArmed && Now() - g_WpAt > 1.5) { Watchpoint::Dump(); Watchpoint::Disarm(); g_WpArmed = false; LOGI("Probes: door watchpoint dumped and disarmed"); }
+        if (g_WpArmed && Now() - g_WpAt > 1.5) { Watchpoint::Dump(); Watchpoint::Disarm(); g_WpArmed = false; LOGI("Probes: watchpoint dumped and disarmed"); }
     }
     {   // the objective markers' pool, every 5 s
         static double nextPool = 0;
@@ -373,9 +519,10 @@ void Probes::OnPresent()
     if (next == 0) next = now + 30.0;
     if (now < next) return;
     next = now + 30.0;
-    LOGI("Probes: 30 s: door animation updates {} (exe+0x540D30 calls {}); NPC damage handled {}, hit reacts played {}; markers projected: objective {}, other {}, marker not found {}; ark_ui_show_objective_markers {}",
+    LOGI("Probes: 30 s: door animation updates {} (exe+0x540D30 calls {}); NPC damage handled {}, hit reacts played {}; markers projected: objective {}, other {}, marker not found {}; ark_ui_show_objective_markers {}; "
+         "character body modes asked {}, settled {}, active ragdolls tried {} / started {}",
          g_AnimUpdCalls.load(), g_SetSpeedCalls.load(), g_HitMsgs.load(), g_HitPlays.load(), g_ObjProj.load(), g_OtherProj.load(), g_NoMarker.load(),
-         CVars::GetInt("ark_ui_show_objective_markers", -1));
+         CVars::GetInt("ark_ui_show_objective_markers", -1), g_SetModes.load(), g_Resolves.load(), g_TryActives.load(), g_ActiveStarted.load());
 }
 
 void Probes::Install()
@@ -390,6 +537,9 @@ void Probes::Install()
         { kSetSpeed, "animation speed", { 0x44, 0x89, 0x44, 0x24 }, (void**)&g_RealSetSpeed, (void*)HkSetSpeed },
         { kHitMsg, "NPC damage -> hit react", { 0x48, 0x89, 0x5C, 0x24 }, (void**)&g_RealHitMsg, (void*)HkHitMsg },
         { kPlayHit, "NPC hit react", { 0x40, 0x55, 0x56, 0x48 }, (void**)&g_RealPlayHit, (void*)HkPlayHit },
+        { kSetMode, "character body mode asked", { 0x48, 0x8B, 0x01, 0x89 }, (void**)&g_RealSetMode, (void*)HkSetMode },
+        { kResolve, "character body mode settled", { 0x48, 0x8B, 0xC4, 0x48 }, (void**)&g_RealResolve, (void*)HkResolve },
+        { kTryActive, "active ragdoll start", { 0x40, 0x56, 0x48, 0x83 }, (void**)&g_RealTryActive, (void*)HkTryActive },
     };
     std::string said;
     DetourTransactionBegin(); DetourUpdateThread(GetCurrentThread());

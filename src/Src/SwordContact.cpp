@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "SwordContact.h"
+#include "Probes.h"
+#include "SoftBody.h"
 #include "XRSession.h"
 #include "VRRuntime.h"
 #include "GameInfo.h"
@@ -432,6 +434,7 @@ namespace
     // stays inside. Not on a body that is down (a ragdoll: the hands carry and search those).
     float g_HandEntryN[2][4][3]; bool g_HandEntryOn[2][4] = {};
     double g_HandBodyLog = -10;
+    float g_HandLastP[2][3] = {}; double g_HandLastT[2] = {};   // the palm, last tick (its speed: the research push test)
     void HandBodies(double t)
     {
         static const float kLocal[4][3] = { { 0.f, 0.f, 0.f }, { 0.06f, 0.f, -0.005f }, { 0.095f, 0.022f, -0.01f }, { 0.083f, -0.022f, -0.01f } };
@@ -441,8 +444,13 @@ namespace
             g_HandN[h] = 0;
             float hr[9], ht[3];
             bool inside[4] = {};
+            void* deepEnt = nullptr; int deepJ = -1; float deepPen = 0.f, deepSurf[3] = {}, deepN[3] = {};   // (SoftBody)
+            const int first = g_HandN[h]; void* entOf[16] = {};
             if (GpuTrace::RawHandPose(h, ht, hr))
             {
+                float hv[3] = {};
+                if (t - g_HandLastT[h] > 1e-4 && t - g_HandLastT[h] < 0.1) for (int k = 0; k < 3; k++) hv[k] = (ht[k] - g_HandLastP[h][k]) / (float)(t - g_HandLastT[h]);
+                memcpy(g_HandLastP[h], ht, 12); g_HandLastT[h] = t;
                 for (const Target& tg : g_Targets)
                 {
                     if (!tg.skel || tg.sk < 0 || tg.sk >= (int)g_Skels.size()) continue;
@@ -477,21 +485,34 @@ namespace
                             if (nl < 1e-3f) continue;
                             for (int k = 0; k < 3; k++) un[k] = nrm[k] / nl;
                             memcpy(g_HandEntryN[h][i], un, 12); g_HandEntryOn[h][i] = true;
+                            {   // (research, profiling only: where a character's pose goes to be drawn)
+                                const float pt[3] = { bq[0] + un[0] * s.r[bj], bq[1] + un[1] * s.r[bj], bq[2] + un[2] * s.r[bj] };
+                                Probes::NpcPushTest(tg.ent, pt, un, -Dot(hv, un), h, bj);
+                            }
                             if (t - g_HandBodyLog > 2.0)
                             {
                                 g_HandBodyLog = t;
                                 LOGI("SwordContact: {} hand stopped at the body of {} ({:.0f} cm in)", h ? "right" : "left", Collision::Describe(tg.ent), bpen * 100.f);
                             }
                         }
+                        entOf[g_HandN[h]] = tg.ent;
                         Collision::Contact& c = g_HandCs[h][g_HandN[h]++];
                         for (int k = 0; k < 3; k++) { c.n[k] = un[k]; c.p[k] = bq[k] + un[k] * s.r[bj]; }
                         c.clear = kR[i];
                         memcpy(c.local, kLocal[i], 12);
+                        if (bpen > deepPen) { deepPen = bpen; deepEnt = tg.ent; deepJ = bj; memcpy(deepSurf, c.p, 12); memcpy(deepN, un, 12); }
                     }
                 }
+                // [Gameplay.Collision] SoftCharacters: the body gives where the hand presses deepest; the hand's stops on
+                // that body move in by as much
+                const float give = SoftBody::Press(h, deepEnt, deepJ, deepSurf, deepN, deepPen, ht, t);
+                if (give > 0.f)
+                    for (int k = first; k < g_HandN[h]; k++)
+                        if (entOf[k] == deepEnt) for (int q = 0; q < 3; q++) g_HandCs[h][k].p[q] -= g_HandCs[h][k].n[q] * give;
             }
             for (int i = 0; i < 4; i++) if (!inside[i]) g_HandEntryOn[h][i] = false;
         }
+        SoftBody::Tick(t);   // the bent bodies' springs
     }
     //! The body contacts of this tick to Collision: each hand's own, and the blade's with the right hand's.
     void PublishBodies()
