@@ -33,6 +33,9 @@ namespace Collision
     //! [Gameplay] SlideWindows: a hand sliding up on a window (a door / openable whose level name holds "window") raises
     //! it, sliding down lowers it -- the game's interact.
     void SetWindows(bool on);
+    //! [Gameplay.Interaction] TouchToUse: buttons, switches and levers by hand -- an empty hand poking into one, or its
+    //! grip closed on one and pulled -- the game's interact on it (only if the sensor, aimed there, picks it).
+    void SetUsables(bool on);
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();

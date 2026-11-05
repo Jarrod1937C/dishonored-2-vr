@@ -659,7 +659,7 @@ namespace
     // statistics / debug
     unsigned long long g_Contacts = 0, g_Touches = 0, g_Taps = 0, g_Opens = 0, g_Releases = 0, g_Teleports = 0, g_Frames = 0;
     unsigned long long g_RejSwing = 0, g_RejArmed = 0, g_RejSlow = 0, g_RejLost = 0, g_AirTaps = 0, g_AirDropped = 0, g_Queued = 0, g_Impacts = 0, g_SkelHits = 0, g_Attach = 0;
-    std::mutex g_DbgM; SwordContact::Debug g_Dbg; double g_DbgContactAt = -1;
+    std::mutex g_DbgM; SwordContact::Debug g_Dbg; double g_DbgContactAt = -1; double g_BladeAt = 0;   // when the blade was last swept (SwordContact::Blade)
     double g_LastContactAt = -1; float g_LastSpeed = 0; uint32_t g_LastId = 0;
 
     double Now() { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart / (double)f.QuadPart; }
@@ -975,6 +975,7 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
 
     {   // debug for the reticle
         std::lock_guard lk(g_DbgM);
+        { static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f); LARGE_INTEGER t; QueryPerformanceCounter(&t); g_BladeAt = (double)t.QuadPart / (double)f.QuadPart; }
         g_Dbg.blade = true; memcpy(g_Dbg.guard, cur[0], 12); memcpy(g_Dbg.tip, cur[n - 1], 12); g_Dbg.n = n; memcpy(g_Dbg.pts, cur, sizeof(float) * 3 * n);
         g_Dbg.armed = g_Armed && g_SwingOk && t >= g_LostUntil; g_Dbg.ready = g_Armed && t >= g_LostUntil;
         if (o.contact) { g_Dbg.contact = true; memcpy(g_Dbg.point, bestPt, 12); g_DbgContactAt = t; }
@@ -1016,6 +1017,19 @@ SwordContact::Out SwordContact::Tick(const XRInputState& in, bool active)
 }
 
 bool SwordContact::GetDebug(Debug& d) { std::lock_guard lk(g_DbgM); d = g_Dbg; return d.blade; }
+bool SwordContact::Blade(float guard[3], float tip[3], double* age)
+{
+    std::lock_guard lk(g_DbgM);
+    if (!g_Dbg.blade) return false;
+    memcpy(guard, g_Dbg.guard, 12); memcpy(tip, g_Dbg.tip, 12);
+    if (age)
+    {
+        static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f);
+        LARGE_INTEGER t; QueryPerformanceCounter(&t);
+        *age = g_BladeAt > 0 ? (double)t.QuadPart / (double)f.QuadPart - g_BladeAt : 1e9;
+    }
+    return true;
+}
 
 void SwordContact::Scan(float radius)
 {

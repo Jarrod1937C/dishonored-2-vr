@@ -55,4 +55,7 @@ namespace SwordContact
         bool contact = false; float point[3] = {}; float age = 0;
     };
     bool GetDebug(Debug& d);
+    //! The blade as last swept (guard and tip, world; the real controller's, as it strikes) and how long ago (s): false
+    //! when the right hand holds no blade. Any thread (SwordParry).
+    bool Blade(float guard[3], float tip[3], double* age = nullptr);
 }

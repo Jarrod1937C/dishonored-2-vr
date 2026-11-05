@@ -234,6 +234,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        your shoulder to put it on your back (DragBodies)
    Point, right grip, flick back ..... an object out of reach flies to your hand; keep the grip
                                        squeezed to catch it (GravityGloves)
+   Press a button, grip a lever ...... with an empty hand: press it, or squeeze the grip on it and
+                                       pull, and it works as interact would (TouchToUse)
+   Sword across an enemy's blow ...... parries it (SwordParry)
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -312,6 +315,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                FarReachVRComfortOption = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
                DragBodies = 1 (experimental: grip a body to drag it; hand up over your shoulder = onto your back)
                GravityGloves = 1 (experimental: point, grip and flick back: an object out of reach flies to your hand)
+               TouchToUse = 1 (experimental: press buttons and switches, grip and pull levers by hand)
+               SwordParry = 1 (experimental: the sword held across an enemy's blow parries it)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
                HandCollision = 1 / WeaponCollision = 1 (your hands / the sword and guns stop at

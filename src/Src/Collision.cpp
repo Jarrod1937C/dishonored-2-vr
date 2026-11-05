@@ -14,6 +14,7 @@
 #include "Game.h"
 #include "PlayerState.h"
 #include "ViewMatrixHook.h"
+#include "KbmInject.h"
 #include <cmath>
 #include <algorithm>
 #include <sstream>
@@ -657,6 +658,18 @@ namespace
     // game's interact (KbmInject taps it when the pointer has the window: its locks and animation apply).
     std::atomic<bool> g_Windows{ false };
     std::atomic<uint64_t> g_WindowMoves{ 0 };
+    // [Gameplay.Interaction] TouchToUse: buttons, switches and levers worked by hand (a poke into them, or a grip on one
+    // and a pull), as the game's interact aimed where the hand met them (KbmInject: only once the sensor picks that very
+    // entity, so a wall or a crate touched never presses anything)
+    std::atomic<bool> g_Usables{ true };
+    std::atomic<uint64_t> g_Uses{ 0 }, g_UsePulls{ 0 };
+    constexpr float kPokeSpeed = 0.35f, kPokePast = 0.01f, kPokePress = 0.035f;   // m/s into it and 1 cm through, or 3.5 cm through
+    constexpr float kPull = 0.07f;                                                 // m the gripping hand moves: a lever pulled
+    constexpr double kUseGap = 1.2;                                                // s before the same thing is used again by hand
+    struct UseHand { void* blocked = nullptr; void* touch = nullptr; double touchAt = -1; float tp[3] = {}, tn[3] = {};
+                     bool grip = false, gripDone = false; void* gripEnt = nullptr; float gripStart[3] = {}, gp[3] = {}, gn[3] = {}; };
+    UseHand g_UseH[2];                                                             // game thread
+    std::unordered_map<void*, double> g_UseAt;                                     // game thread
     struct WinSwipe { void* ent = nullptr; float acc = 0.f; double lastAt = 0, movedAt = 0; float prev[3] = {}; bool prevOk = false; int lastDir = 0; };
     WinSwipe g_Win[2];                          // game thread
     constexpr float kWindowSwipe = 0.06f;       // m of the hand along the window, up or down
@@ -952,6 +965,7 @@ void Collision::SetPush(bool on, float m)
     LOGI("Collision: pushing loose objects {} (the hand weighs {:.1f} kg)", on ? "on" : "off", g_HandMass.load());
 }
 void Collision::SetWindows(bool on) { g_Windows = on; LOGI("Collision: sliding windows {}", on ? "rise when a hand slides up on them and lower when it slides down" : "use the interact button"); }
+void Collision::SetUsables(bool on) { g_Usables = on; LOGI("Collision: buttons, switches and levers {}", on ? "work by hand: press one, or grip it and pull (TouchToUse)" : "use the interact button only"); }
 void Collision::SetDials(bool on) { g_Dials = on; LOGI("Collision: safe dials {}", on ? "turn when a hand slides up / down on them" : "turn with the interact button"); }
 void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
 bool Collision::ItemsOn() { return g_Items.load() && g_Hands.load(); }   // a hand must be able to touch them
@@ -1389,6 +1403,73 @@ void Collision::Tick()
                 }
             }
         }
+        // TouchToUse: buttons, switches and levers by an empty hand -- a poke into one, or the grip closed on one and a pull
+        if (g_Usables.load() && S.valid && !item && dt > 1e-4 && dt < 0.1)
+        {
+            UseHand& U = g_UseH[h];
+            bool blockedSeen = false;
+            for (int i = 0; i < nc; i++)
+            {
+                void* e = cents[i];
+                if (!e) continue;
+                if (e == U.blocked) { blockedSeen = true; continue; }
+                // what is already worked another way, or is not a thing to use: doors, windows, drawers and cabinets,
+                // items, notes, characters, loose objects (pushed), safe dials, what the game holds
+                if (IsDoor(e) || IsWindowEnt(e) || OpenOrNot(e) >= 0 || IsUsableFront(e) || IsItem(e) || IsReadable(e) || IsCharacter(e)
+                    || Pushable(e) || DialOf(e) || HasComponent(e, kPickableSimpleType)) continue;
+                int pi = -1; for (int k = 0; k < np; k++) if (!memcmp(pts[k].local, cs[i].local, 12)) { pi = k; break; }
+                if (pi < 0) continue;
+                U.touch = e; U.touchAt = now; memcpy(U.tp, cs[i].p, 12); memcpy(U.tn, cs[i].n, 12);
+                float v[3]; for (int k = 0; k < 3; k++) v[k] = (goal[pi][k] - S.prevRaw[pi][k]) / (float)dt;
+                const float into = -Dot(v, cs[i].n);
+                const float d[3] = { goal[pi][0] - cs[i].p[0], goal[pi][1] - cs[i].p[1], goal[pi][2] - cs[i].p[2] };
+                const float past = cs[i].clear - Dot(d, cs[i].n);
+                const bool poke = (into >= kPokeSpeed && past >= kPokePast) || past >= kPokePress;
+                if (!poke) continue;
+                auto it = g_UseAt.find(e);
+                if (it != g_UseAt.end() && now - it->second < kUseGap) continue;
+                if (g_UseAt.size() > 128) g_UseAt.clear();
+                g_UseAt[e] = now; U.blocked = e; blockedSeen = true;
+                uint32_t id = 0; SafeRead(&id, (uint8_t*)e + kEntId, 4);
+                const float at[3] = { cs[i].p[0] - cs[i].n[0] * 0.02f, cs[i].p[1] - cs[i].n[1] * 0.02f, cs[i].p[2] - cs[i].n[2] * 0.02f };
+                RequestInteract(h, id, at, now);
+                g_Uses++;
+                VRRuntime::Vibrate(h, 0.3f, 0.03f);
+                LOGI("Collision: {} hand pressed '{}' (id {:#x}; {}) at {:.2f} m/s, {:.0f} cm in: interact on it, if the game uses it",
+                     h ? "right" : "left", EntityName(e), id, DescribeEnt(e), into, past * 100.f);
+                break;
+            }
+            if (!blockedSeen) U.blocked = nullptr;     // (the hand has left it: it can be pressed again)
+            // the grip closed with the hand on one (within the last 0.3 s), then the hand moved: a lever pulled, a switch flipped
+            const bool grip = KbmInject::GripIdle(h);
+            if (grip && !U.grip && !U.gripDone && U.touch && now - U.touchAt < 0.3)
+            {
+                U.grip = true; U.gripEnt = U.touch; memcpy(U.gripStart, goal[0], 12); memcpy(U.gp, U.tp, 12); memcpy(U.gn, U.tn, 12);
+                LOGI("Collision: {} grip closed on '{}': move the hand to pull it", h ? "right" : "left", EntityName(U.gripEnt));
+            }
+            if (!grip) { if (U.grip) LOGI("Collision: {} grip let go of '{}' without pulling it", h ? "right" : "left", EntityName(U.gripEnt)); U.grip = false; U.gripDone = false; }
+            if (U.grip)
+            {
+                const float m[3] = { goal[0][0] - U.gripStart[0], goal[0][1] - U.gripStart[1], goal[0][2] - U.gripStart[2] };
+                const float moved = Len(m);
+                if (moved >= kPull)
+                {
+                    U.grip = false; U.gripDone = true;
+                    auto it = g_UseAt.find(U.gripEnt);
+                    if (it == g_UseAt.end() || now - it->second >= kUseGap)
+                    {
+                        g_UseAt[U.gripEnt] = now;
+                        uint32_t id = 0; SafeRead(&id, (uint8_t*)U.gripEnt + kEntId, 4);
+                        const float at[3] = { U.gp[0] - U.gn[0] * 0.02f, U.gp[1] - U.gn[1] * 0.02f, U.gp[2] - U.gn[2] * 0.02f };
+                        RequestInteract(h, id, at, now);
+                        g_UsePulls++;
+                        VRRuntime::Vibrate(h, 0.4f, 0.04f);
+                        LOGI("Collision: {} hand pulled '{}' (id {:#x}) {:.0f} cm with the grip: interact on it, if the game uses it",
+                             h ? "right" : "left", EntityName(U.gripEnt), id, moved * 100.f);
+                    }
+                }
+            }
+        }
         // what this hand touches (the first contact with an entity), for KbmInject's grab-and-pull on drawers and cabinets;
         // pushing an OPEN one (not a door: those have their own push) closes it
         {
@@ -1554,7 +1635,7 @@ std::string Collision::Stats()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()
       << " touching L " << g_Touch[0].load() << " R " << g_Touch[1].load() << " off L " << g_LastOff[0].load() << " R " << g_LastOff[1].load()
-      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " prophits " << g_PropHits.load() << " dialsteps " << g_DialSteps.load() << " windows " << g_WindowMoves.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
+      << " pushes " << g_Pushes.load() << " doors " << g_DoorPushes.load() << " prophits " << g_PropHits.load() << " dialsteps " << g_DialSteps.load() << " windows " << g_WindowMoves.load() << " uses " << g_Uses.load() << " / " << g_UsePulls.load() << " bodystops " << g_BodyStops.load() << " resets " << g_Resets.load();
     std::lock_guard lk(g_DescM);
     if (!g_LastHitDesc.empty()) o << " | last: " << g_LastHitDesc;
     return o.str();

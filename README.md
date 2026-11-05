@@ -170,6 +170,9 @@ pistol with an empty right hand.
 - **Block:** bring your right fist, holding the sword with the blade up, to your left shoulder (within about 20 cm);
   you block for as long as it stays there. Or squeeze the right grip with the sword out. The gesture is off while you
   are crouched (sneaking), where the grip still blocks.
+- **Parry with the blade** (experimental): hold your sword in the way of an enemy's blow and it is parried, as a
+  well-timed block parries it: he reels and you take no damage (`SwordParry`, on by default). Blows that cannot be
+  blocked still land.
 - **No finishing-move animations or kill cam:** a blow that would trigger one is an ordinary blow that still lands, so
   the view never leaves your head. Stealth takedowns keep theirs.
 - **Bloodflies** are easier to hit (the blade reaches 60 cm further for them), and their nests can be struck too.
@@ -252,6 +255,9 @@ side, so you can look around and still find your hips.
 - **Drawers and cabinets:** put your hand on one, squeeze the grip and pull back to open it; push it shut. Locks and
   keys work as in the game.
 - **Windows:** rest a hand on a sliding window and slide it up or down.
+- **Buttons, switches and levers** (experimental): with an empty hand, press a button or a switch, or squeeze the grip
+  on a lever and pull it, and it works as the interact button would (`TouchToUse`, on by default). The interact
+  button still works too.
 - **Safes:** slide your right hand up or down a number wheel to turn it a digit (about 3.5 cm per digit). The safe
   opens on the right combination as usual.
 - **Taking items by hand:** see [Your backpack](#your-backpack).
@@ -353,6 +359,8 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
 | Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
 | Right grip on a body, drag; hand up over your shoulder | Drag it; onto your back |
+| Sword held across an enemy's blow | Parry it |
+| Press a button with your hand, or grip a lever and pull | Use it |
 | Point at something out of reach, right grip, flick back | It flies to your hand (keep the grip to catch it) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |

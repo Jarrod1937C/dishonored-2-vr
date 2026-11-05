@@ -130,6 +130,7 @@ set(MOD_SOURCES
     Src/Vignette.cpp  Src/Vignette.h
     Src/BodyDrag.cpp  Src/BodyDrag.h
     Src/GravityGlove.cpp  Src/GravityGlove.h
+    Src/SwordParry.cpp  Src/SwordParry.h
     Src/ControllerBindings.cpp Src/ControllerBindings.h
     Src/PostShare.cpp Src/PostShare.h
     "${CMAKE_BINARY_DIR}/generated/Version.rc"

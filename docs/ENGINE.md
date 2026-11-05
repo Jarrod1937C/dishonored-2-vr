@@ -924,6 +924,14 @@ Fire sequence (gun exe+0x44EBD0, crossbow around exe+0x62B6xx):
   slot 36 (exe+0x6302E0, the blocked recoil: events 0x27 / 0x28 on the player), then the sparks exe+0x635F30(comp,
   record) and the window closes (SetActive 0); no damage. Otherwise the combat component's +0x210 set = nothing, else
   the strike (slot 39) with scale 1.0 (exe+0x1F697B0).
+- **An NPC's blow on the player** (decoded 2026-11-05): exe+0x6357D0(attacker's melee comp, hit record, player): the
+  player's component of type exe+0x39EDC20 (none = strike); the attacker = GetEntityById([comp+0x10]+0xAC), its bounds
+  centre; exe+0x60D750(that component, centre) = blocking towards it (false = strike); the attack def's +0x180 = 0 =
+  unblockable (strike); [[player component exe+0x39AED60]+0x90]+0x170 = the Block state, exe+0x859980(it, attacker,
+  comp+0x3428 bit 2) -> 2 = parried: exe+0x636140(comp, player) (the parry's damage, def+0x128, sent to the attacker),
+  else message 0xE6 ATTACK_BLOCKED {player id, result} to the attacker; then the sparks exe+0x635F30(comp, record) and
+  exe+0x634890(comp, 0, 0, 0, comp+0x3424) closes the window; returns 0. The strike is vtable +0x138. SwordParry runs
+  the parry branch when the blade is across the blow.
 - A slash from behind on an unaware guard becomes `Assassination` (kills even with `ark_god_npc 1`).
 - **The sword trail** is a ribbon along the animated sword's path: three non-indexed 26-vertex draws, vertex shaders
   DXBC `364e76313eb849ec` / `3fea51d57d8fff32` / `412fe65bec01fc06`. Skipping them removes it and nothing else.
