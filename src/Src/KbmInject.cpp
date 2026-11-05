@@ -24,7 +24,6 @@
 #include "StereoSync.h"
 #include "CameraHook.h"
 #include "BodyDrag.h"
-#include "GravityGlove.h"
 #include <cmath>
 #include <algorithm>
 
@@ -523,16 +522,13 @@ namespace
     // DragBodies: a dragged body brought up over the shoulder -- the game's carry asked for (the sensor held on the body,
     // then F held, as a keyboard player's long press) until it begins
     struct Lift { uint32_t id = 0; float p[3] = {}; double at = 0; bool f = false; } g_Lift;
-    // GravityGloves: an object pulled to the hand and caught there -- taken (as the grip takes it within reach) once the
-    // sensor, aimed at it, picks it. kind 1 an object the game holds, 2 an item; 3 = F sent, waiting for the hold
-    struct GloveCatch { uint32_t id = 0; int kind = 0; float p[3] = {}; double at = 0; } g_Glove;
     //! an entity's world origin and axis rows (entity+0x300 / +0x30C; POD: __try)
     bool ReadEntityFrame(void* e, float org[3], float ax[9])
     {
         __try { memcpy(org, (uint8_t*)e + 0x300, 12); memcpy(ax, (uint8_t*)e + 0x30C, 36); return true; }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
-    std::atomic<bool> g_GripIdle[2] = { false, false };   // that grip is closed and doing nothing else (GravityGlove's)
+    std::atomic<bool> g_GripIdle[2] = { false, false };   // that grip is closed and doing nothing else (TouchToUse's lever pull)
     // [Gameplay.Interaction] SwimStrokes: in the water, a stroke of an arm (the hand swept back past the head, as in a
     // breaststroke or a crawl) swims forward -- the game's forward key held for a glide after each stroke, longer with
     // strokes in a row. The stick swims as ever.
@@ -2026,7 +2022,6 @@ void KbmInject::Tick()
         if (g_Pull.armed) LOGI("KbmInject: {} grip let go of the drawer / cabinet without pulling it", grabSide);
         if (g_Carry.on) { LOGI("KbmInject: {} hand let go of item id {:#x} before storing it: it goes back", grabSide, g_Carry.id); CarryReturn(); }
         if (BodyDrag::Active()) BodyDrag::Stop("the grip opened");
-        if (g_Glove.id) { LOGI("KbmInject: {} grip opened as the pulled object {:#x} was being taken: not taken", grabSide, g_Glove.id); GrabHand::UnlockSensor(); g_Glove = GloveCatch{}; }
         g_GripTakes = g_GripF = false; g_Pull.armed = false; g_Carry.on = false;
     }
     {   // DragBodies: the body brought up over the shoulder goes onto the back -- the game's own carry
@@ -2038,6 +2033,11 @@ void KbmInject::Tick()
         }
         if (g_Lift.id)
         {
+            {   // the sensor kept on the body as it settles (2026-11-05: aimed where the lifted part was, it lost the body
+                // as that part fell back, and the game's long press ended: "the sensor has none")
+                float c[3];
+                if (GrabHand::EntityCenter((int)g_Lift.id, c)) { GrabHand::LockSensor(c); memcpy(g_Lift.p, c, 12); }
+            }
             const bool picked = GrabHand::CarryTargetId() == (int)g_Lift.id || GrabHand::TargetId() == (int)g_Lift.id;
             if (carrying)
             {
@@ -2055,44 +2055,6 @@ void KbmInject::Tick()
                 LOGI("KbmInject: body {:#x} NOT carried: {} (the sensor has {}; states {})", g_Lift.id,
                      g_Lift.f ? "the game did not begin its carry" : "the sensor, aimed at it, did not pick it", Collision::PointerDescribe(), PlayerState::RunningNames());
                 GrabHand::UnlockSensor(); g_Lift = Lift{};
-            }
-        }
-    }
-    {   // GravityGloves: the pulled object reached the hand with the grip still closed: taken as the grip takes it there
-        uint32_t gid = 0; int gk = 0; float gp[3];
-        if (GravityGlove::TakeCatch(&gid, &gk, gp))
-        {
-            if (holding || carrying || g_Carry.on || g_Ia.id || g_Lift.id) LOGI("KbmInject: pulled object {:#x} at the hand, but the hands are busy: not taken", gid);
-            else { g_Glove = GloveCatch{ gid, gk, { gp[0], gp[1], gp[2] }, g_Now }; GrabHand::LockSensor(gp); g_GripTakes = true; }
-        }
-        if (g_Glove.id)
-        {
-            const bool picked = GrabHand::TargetId() == (int)g_Glove.id || GrabHand::CarryTargetId() == (int)g_Glove.id;
-            if (g_Glove.kind == 3)
-            {   // F is down: the hold begins (F then goes up, above) -- or not
-                if (holding) { LOGI("KbmInject: pulled object {:#x} is in the hand ({:.2f} s after the catch)", g_Glove.id, g_Now - g_Glove.at); GrabHand::UnlockSensor(); g_Glove = GloveCatch{}; }
-                else if (g_Now - g_Glove.at > 1.0) { LOGI("KbmInject: pulled object {:#x}: the game did not hold it (states {})", g_Glove.id, PlayerState::RunningNames()); g_GripF = false; GrabHand::UnlockSensor(); g_Glove = GloveCatch{}; }
-            }
-            else if (picked && g_Glove.kind == 1)
-            {
-                g_GripF = true; g_GripTakes = true; g_Glove.kind = 3;
-                LOGI("KbmInject: pulled object {:#x} caught: interact held with the grip (taken in the hand)", g_Glove.id);
-            }
-            else if (picked && g_Glove.kind == 2)
-            {   // an item: in the hand, as one taken by hand -- put it behind your back to keep it (or eat it)
-                void* ient = BodyHide::EntityById((int)g_Glove.id);
-                g_Carry = Carry{ true, g_Glove.id, g_Now, -1 };
-                Collision::ClassifyItem(g_Glove.id);
-                g_CarryClearAt = -1; g_Verify = Verify{};
-                BodyHide::SetCarryEntity(ient); GpuTrace::SetCarry(grabHand);
-                g_GripTakes = true;
-                LOGI("KbmInject: pulled item {:#x} caught: in the hand (put it behind your back to keep it, or to your mouth to eat it)", g_Glove.id);
-                g_Glove = GloveCatch{};   // (the sensor stays on it, as for any item taken by hand)
-            }
-            else if (g_Now - g_Glove.at > 0.5)
-            {
-                LOGI("KbmInject: pulled object {:#x} at the hand, but the sensor aimed at it picked {}: not taken", g_Glove.id, Collision::PointerDescribe());
-                GrabHand::UnlockSensor(); g_Glove = GloveCatch{};
             }
         }
     }
@@ -2196,6 +2158,8 @@ void KbmInject::Tick()
             const int tid = GrabHand::TargetId();
             bool hit = tid == (int)g_Ia.id;
             float tp[3];
+            // a shopkeeper (waved at to talk): his shop is the counter in front of him -- its interact opens the shop
+            if (!hit && tid > 0 && Collision::IsShopkeeper(g_Ia.id) && Collision::PointerDescribe().find("arkBlackMarket") != std::string::npos) hit = true;
             if (!hit && Collision::IsWindow(g_Ia.id) && Collision::IsWindow((uint32_t)tid) && GrabHand::TargetPoint(tp))
             {
                 const float d[3] = { tp[0] - g_Ia.p[0], tp[1] - g_Ia.p[1], tp[2] - g_Ia.p[2] };
@@ -2259,9 +2223,9 @@ void KbmInject::Tick()
         peekWas = peek;
     }
     for (int h = 0; h < 2; h++)
-    {   // GravityGloves: a grip closed and doing nothing else here may pull something to the hand
+    {   // a grip closed and doing nothing else (TouchToUse: gripping a lever to pull it)
         const uint32_t gb = h ? kVGripR : kVGripL;
-        const bool busyHere = h == grabHand && (g_GripTakes || holding || carrying || g_Carry.on || g_Pull.armed || g_Glove.id || g_Lift.id || BodyDrag::Active());
+        const bool busyHere = h == grabHand && (g_GripTakes || holding || carrying || g_Carry.on || g_Pull.armed || g_Lift.id || BodyDrag::Active());
         g_GripIdle[h] = (live & gb) != 0 && !busyHere && !g_DrinkGrip[h] && !(h == 1 && g_SwordGrip) && !(h == 0 && g_HolsterGrip);
     }
     Hold(kF, (!quick && (live & kXRBtnX) != 0 && !itemAimed) || g_GripF || trigUse || g_Lift.f);   // the grabbing grip (above), (old) X, Index trigger, a body lifted to the shoulder : interact

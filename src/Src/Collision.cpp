@@ -4,9 +4,9 @@
 #include "DoorHold.h"
 #include "SoftBody.h"
 #include "BodyDrag.h"
-#include "GravityGlove.h"
 #include "NpcGestures.h"
 #include "AiResearch.h"
+#include "Undetected.h"
 #include "GameInfo.h"
 #include "GpuTrace.h"
 #include "HandAimHook.h"
@@ -677,7 +677,7 @@ namespace
     std::atomic<uint64_t> g_Climbs{ 0 };
     struct LedgeHand { double at = -1; float p[3] = {}; };
     LedgeHand g_Ledge[2];                                                          // game thread
-    struct ClimbArm { bool on = false; double at = 0; float rel0[2] = {}; float p[2][3] = {}; double lastTold = -10; } g_ClimbArm;   // game thread
+    struct ClimbArm { bool on = false; double at = 0; float z0[2] = {}; float p[2][3] = {}; double lastTold = -10, lastArmLog = -10; } g_ClimbArm;   // game thread
     // a knock (research for KnockToLure): a hand rapping on something
     std::atomic<uint64_t> g_Knocks{ 0 };
     double g_KnockAt[2] = { -10, -10 };
@@ -980,6 +980,11 @@ void Collision::SetClimb(bool on) { g_Climb = on; LOGI("Collision: climbing by h
 bool Collision::TakeClimbRequest() { return g_ClimbReq.exchange(false); }
 void Collision::RequestUse(int hand, uint32_t id, const float point[3]) { RequestInteract(hand, id, point, Now()); }
 bool Collision::IsCharacterEnt(void* ent) { return ent && IsCharacter(ent); }
+bool Collision::IsShopkeeper(uint32_t id)
+{
+    void* e = BodyHide::EntityById((int)id);
+    return e && IsCharacter(e) && EntityName(e).find("shopkeeper") != std::string::npos;
+}
 void Collision::SetUsables(bool on) { g_Usables = on; LOGI("Collision: buttons, switches and levers {}", on ? "work by hand: press one, or grip it and pull (TouchToUse)" : "use the interact button only"); }
 void Collision::SetDials(bool on) { g_Dials = on; LOGI("Collision: safe dials {}", on ? "turn when a hand slides up / down on them" : "turn with the interact button"); }
 void Collision::SetItems(bool on) { g_Items = on; LOGI("Collision: items {}", on ? "are taken by hand: grab one, put it behind your back (or food to your mouth)" : "are taken with the interact button"); }
@@ -1017,29 +1022,6 @@ bool Collision::TakeCloseRequest(int hand, uint32_t* id, float point[3])
 }
 std::string Collision::PointerDescribe() { std::lock_guard lk(g_TouchM); return g_PointerDesc; }
 void Collision::Push(void* ent, const float impulse[3], const float at[3]) { if (ent) PostImpulse(ent, impulse, at); }
-bool Collision::PullRay(const float a[3], const float b[3], PullHit& out)
-{
-    out = PullHit{};
-    BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
-    void* skip[8]; int nskip = 0;
-    for (int k = 0; k < BodyHide::aCount && nskip < 7; k++) if (an[k].valid && an[k].ent) skip[nskip++] = an[k].ent;
-    if (void* held = GrabHand::HeldEntity()) skip[nskip++] = held;
-    RayHit h;
-    if (!CastHand(a, b, skip, nskip, h)) { out.why = "nothing in reach"; return false; }
-    out.hitEnt = h.ent; memcpy(out.p, h.pos, 12); out.dist = h.dist;
-    if (!h.ent) { out.why = "the level (no entity)"; return false; }
-    void* e = h.ent;
-    if (IsCharacter(e)) { out.why = "a character"; return false; }
-    if (IsDoor(e)) { out.why = "a door"; return false; }
-    if (!Pushable(e)) { out.why = "fixed (not a loose physics object)"; return false; }
-    int kind = 0;
-    if (HasComponent(e, kPickableSimpleType)) kind = 1;
-    else if (IsHandItem(e)) kind = 2;
-    if (!kind) { out.why = "loose, but not something the game holds or takes"; return false; }
-    uint32_t id = 0; if (!SafeRead(&id, (uint8_t*)e + kEntId, 4) || !id || id == 0x3FFF0010u) { out.why = "no id"; return false; }
-    out.ent = e; out.id = id; out.kind = kind; memcpy(out.p, h.pos, 12); out.dist = h.dist;
-    return true;
-}
 void Collision::KeyholeProbe()
 {
     if (!Log::Enabled()) return;
@@ -1067,10 +1049,6 @@ void Collision::KeyholeProbe()
     LOGI("Collision: keyhole research: the eyes {:.0f} cm from door {:#x} ({}), {:.2f} m over the feet; in the door's frame (fwd, left, up from its origin) the eyes ({:.2f}, {:.2f}, {:.2f}), the point looked at ({:.2f}, {:.2f}, {:.2f}); the interaction sensor has {:#x} ({}){}",
          h.dist * 100.f, id, DescribeEnt(h.ent), eye[2] - feet, le[0], le[1], le[2], lh[0], lh[1], lh[2], (uint32_t)GrabHand::TargetId(), PointerDescribe(),
          PlayerState::Running("Peeking") ? ", peeking now" : "");
-}
-bool Collision::EntityVelocity(void* ent, float v[3])
-{
-    return ent && SafeRead(v, (uint8_t*)ent + kEntVelocity, 12) && Finite(v, 3);
 }
 void Collision::NoteInteract(uint32_t id)
 {
@@ -1641,9 +1619,14 @@ void Collision::Tick()
             const float apart = sqrtf((g_Ledge[0].p[0] - g_Ledge[1].p[0]) * (g_Ledge[0].p[0] - g_Ledge[1].p[0]) + (g_Ledge[0].p[1] - g_Ledge[1].p[1]) * (g_Ledge[0].p[1] - g_Ledge[1].p[1]));
             if (lz > -0.70f && lz < 0.60f && fabsf(g_Ledge[0].p[2] - g_Ledge[1].p[2]) < 0.25f && apart < 1.2f)
             {
-                A = ClimbArm{ true, now, { hp[0][2] - eye[2], hp[1][2] - eye[2] }, {}, A.lastTold };
+                const double lastArmLog = A.lastArmLog;
+                A = ClimbArm{ true, now, { hp[0][2], hp[1][2] }, {}, A.lastTold, lastArmLog };
                 memcpy(A.p[0], g_Ledge[0].p, 12); memcpy(A.p[1], g_Ledge[1].p, 12);
-                LOGI("Collision: both hands on a ledge {:.0f} cm {} the eyes ({:.0f} cm apart): pull down to climb", fabsf(lz) * 100.f, lz < 0.f ? "below" : "above", apart * 100.f);
+                if (now - A.lastArmLog > 2.0)
+                {
+                    A.lastArmLog = now;
+                    LOGI("Collision: both hands on a ledge {:.0f} cm {} the eyes ({:.0f} cm apart): push down on it to climb", fabsf(lz) * 100.f, lz < 0.f ? "below" : "above", apart * 100.f);
+                }
             }
             else if (now - A.lastTold > 2.0)
             {
@@ -1653,19 +1636,25 @@ void Collision::Tick()
             }
         }
         if (A.on && ok)
-        {
-            const float d0 = A.rel0[0] - (hp[0][2] - eye[2]), d1 = A.rel0[1] - (hp[1][2] - eye[2]);   // how far each hand went down
-            bool onIt = true;
-            for (int h = 0; h < 2; h++) { const float dx = hp[h][0] - A.p[h][0], dy = hp[h][1] - A.p[h][1]; if (dx * dx + dy * dy > 0.35f * 0.35f) onIt = false; }
-            if (d0 >= 0.10f && d1 >= 0.10f && onIt)
+        {   // (2026-11-05 play: measured against the eyes, and with the real hands' place across checked, it failed nearly
+            // always -- the head goes down with the push, and the real hands go on past the edge the drawn ones stop at)
+            // How far each real hand has pushed down: below the ledge's top, or below where it was when it took the ledge
+            float d[2];
+            for (int h = 0; h < 2; h++) d[h] = std::max(A.p[h][2] - hp[h][2], A.z0[h] - hp[h][2]);
+            const bool still = now - g_Ledge[0].at < 0.35 && now - g_Ledge[1].at < 0.35;   // both hands still on a top face
+            if (d[0] >= 0.04f && d[1] >= 0.04f && d[0] + d[1] >= 0.12f)
             {
                 g_ClimbReq = true; g_Climbs++; A.on = false;
                 VRRuntime::Vibrate(0, 0.5f, 0.06f); VRRuntime::Vibrate(1, 0.5f, 0.06f);
-                LOGI("Collision: both hands pulled down on the ledge ({:.0f} / {:.0f} cm) {:.2f} s after taking it: climb (the game's jump)", d0 * 100.f, d1 * 100.f, now - A.at);
+                LOGI("Collision: both hands pushed down on the ledge ({:.0f} / {:.0f} cm) {:.2f} s after taking it: climb (the game's jump)", d[0] * 100.f, d[1] * 100.f, now - A.at);
             }
-            else if (now - A.at > 1.5 || !onIt)
+            else if (now - A.at > 2.0 || !still)
             {
-                LOGI("Collision: the ledge was let go without a climb ({}; the hands went down {:.0f} / {:.0f} cm, it needs 10 each)", !onIt ? "a hand left it" : "1.5 s passed", d0 * 100.f, d1 * 100.f);
+                if (now - A.lastTold > 1.0)
+                {
+                    A.lastTold = now;
+                    LOGI("Collision: the ledge was let go without a climb ({}; the hands pushed down {:.0f} / {:.0f} cm, it needs 4 each and 12 together)", !still ? "a hand left it" : "2 s passed", d[0] * 100.f, d[1] * 100.f);
+                }
                 A.on = false;
             }
         }
@@ -1709,7 +1698,7 @@ void Collision::SetBodyContacts(int hand, const Contact* c, int n)
 std::string Collision::Stats()
 {
     std::ostringstream o;
-    o << DoorHold::Status() << "; " << SoftBody::Status() << "; " << BodyDrag::Status() << "; " << GravityGlove::Status() << "; " << NpcGestures::Status() << "; " << AiResearch::Status() << "; ";
+    o << DoorHold::Status() << "; " << SoftBody::Status() << "; " << BodyDrag::Status() << "; " << NpcGestures::Status() << "; " << AiResearch::Status() << "; " << Undetected::Status() << "; ";
     o << "hands " << g_Hands.load() << " weapons " << g_Weapons.load() << " push " << g_Push.load() << " ticks " << g_Ticks.load()
       << " casts " << g_Casts.load() << " hits " << g_CastHits.load() << " faults " << g_CastFaults.load() << " skipped " << g_Skipped.load()
       << " stops L " << g_Stops[0].load() << " R " << g_Stops[1].load() << " ghosts L " << g_Ghosts[0].load() << " R " << g_Ghosts[1].load()

@@ -72,14 +72,10 @@ namespace Settings
     bool PhysicalCrouch();                        //!< [Controls] PhysicalCrouch: crouching for real crouches the character (KbmInject)
     float PhysicalCrouchDepth();                  //!< [Controls] PhysicalCrouchDepth: m (the ini says cm) the head goes down to crouch
     bool DragBodies();                            //!< [Gameplay.Interaction] DragBodies: a gripped body is dragged; up over the shoulder it is carried (BodyDrag)
-    bool PickpocketByHand();                      //!< [Gameplay.Interaction] PickpocketByHand (NpcGestures)
-    bool WaveToTalk();                            //!< [Gameplay.Interaction] WaveToTalk (NpcGestures)
     bool ClimbByHand();                           //!< [Gameplay.Interaction] ClimbByHand (Collision)
     bool SwimStrokes();                           //!< [Gameplay.Interaction] SwimStrokes (KbmInject)
-    bool ChokeByHands();                          //!< [Gameplay.Knockout] ChokeByHands (MeleeAim)
+    bool Undetected();                            //!< [Cheats.Player] Undetected: guards and hostile people do not notice you (Undetected)
     bool TouchToUse();                            //!< [Gameplay.Interaction] TouchToUse: buttons, switches and levers by hand (Collision)
-    bool SwordParry();                            //!< [Gameplay.Sword] SwordParry: the blade across an enemy's blow parries it (SwordParry)
-    bool GravityGloves();                         //!< [Gameplay.Interaction] GravityGloves: point, grip and flick pulls an object to the hand (GravityGlove)
     float SitHoldTime();                          //!< [Gameplay.Sitting] SitHoldTime: s B is held while crouched to sit (0 = off)
     float SitHeight();                            //!< [Gameplay.Sitting] SitHeight: m (the ini says cm) the eye is over the feet when sitting
     float MovementVignette();                     //!< [Controls.Comfort] MovementVignette: 0..1, the view's edges darken while the character moves (Vignette)

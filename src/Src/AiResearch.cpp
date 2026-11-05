@@ -18,7 +18,7 @@ namespace
 
     struct Kind { uint32_t type; const char* name; };
     const Kind kKinds[] = { { 0x23, "AI_QUEUE_STIM" }, { 0x24, "AI_PANIC_INDUCED" }, { 0x87, "AI_HEARD_SOUND" }, { 0x8B, "AI_PANIC" }, { 0x8C, "AI_PANIC_CLEAR" },
-                            { 0x8F, "AI_GREETINGS_START" }, { 0x90, "AI_GREETINGS_FINISHED" }, { 0xFB, "ENTITY_HEARD_BY_AI" }, { 0x1B0, "AI_PANIC_FINISHED" },
+                            { 0x53, "AI_ESCALATE_TO_ALERT" }, { 0x54, "AI_ESCALATE_TO_SUSPICIOUS" }, { 0xD5, "AI_SUSPICION_LEVEL_CHANGED" }, { 0x8F, "AI_GREETINGS_START" }, { 0x90, "AI_GREETINGS_FINISHED" }, { 0xFB, "ENTITY_HEARD_BY_AI" }, { 0x1B0, "AI_PANIC_FINISHED" },
                             { 0x1C4, "AI_PICKPOCKETED_ON" }, { 0x1C5, "AI_PICKPOCKETED_OFF" } };
     int KindOf(uint32_t t) { for (int i = 0; i < (int)(sizeof kKinds / sizeof kKinds[0]); i++) if (kKinds[i].type == t) return i; return -1; }
     int g_PerKind[16] = {};   // lines so far per kind (under g_M)

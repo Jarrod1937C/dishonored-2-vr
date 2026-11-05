@@ -3,10 +3,9 @@
 #include "Collision.h"
 #include "Roomscale.h"
 #include "BodyDrag.h"
-#include "GravityGlove.h"
-#include "SwordParry.h"
 #include "NpcGestures.h"
 #include "AiResearch.h"
+#include "Undetected.h"
 #include "ThrowGesture.h"
 #include "MeleeAim.h"
 #include "Holster.h"
@@ -295,11 +294,10 @@ namespace
         GunRay::Tick();                         // the gun ray's sweep: where the next shot would land
         Collision::Tick();                      // solid hands and weapons: what they meet this frame
         BodyDrag::Tick();                       // a body dragged by the hand: pulled after it (DragBodies)
-        GravityGlove::Tick();                   // an object out of reach pulled to the hand (GravityGloves)
         Collision::KeyholeProbe();              // research (logging on): the head at a door, for the keyhole peek
-        SwordParry::Tick();                     // the blade's recent positions (an enemy's blow across them is parried)
-        NpcGestures::Tick();                    // gestures at people: a wave, a pickpocket (and research: a weapon held on someone, a tap)
+        NpcGestures::Tick();                    // research (logging on): a weapon held on someone, a tap on the shoulder
         AiResearch::Tick();                     // (log on only) the AI messages posted since, with their payloads
+        Undetected::Tick();                     // the cheat Undetected: the player's stealth attributes held
         ThrowGesture::GameTick();               // a grenade released this frame leaves now (the real throw)
         Roomscale::Tick();                      // the wall fade's ray: the head in a wall the character cannot enter
         MeleeAim::TickTakedown();               // is a stealth kill on offer (the blade then clicks the attack)

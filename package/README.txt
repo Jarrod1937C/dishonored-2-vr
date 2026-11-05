@@ -232,16 +232,10 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                        grip on him to pull that part along (SoftCharacters)
    Right grip on a body .............. drag it by the part you took hold of; bring the hand up over
                                        your shoulder to put it on your back (DragBodies)
-   Point, right grip, flick back ..... an object out of reach flies to your hand; keep the grip
-                                       squeezed to catch it (GravityGloves)
    Press a button, grip a lever ...... with an empty hand: press it, or squeeze the grip on it and
                                        pull, and it works as interact would (TouchToUse)
-   Sword across an enemy's blow ...... parries it (SwordParry)
-   Both hands on a ledge, pull down .. climb it (ClimbByHand)
+   Both hands on a ledge, push down .. climb it (ClimbByHand)
    An arm's stroke in the water ...... swim forward (SwimStrokes)
-   Hands each side of a neck ......... from behind, held 1 s: knock him out (ChokeByHands)
-   Hand at a belt, grip, pull back ... sneaking: pickpocket (PickpocketByHand)
-   Wave at someone facing you ........ within 3 m: talk to him (WaveToTalk)
    Right trackpad, press ............. the sword's attack button (hold: power attack); in
                                        cutscenes: skip
    Left B (upper) / left A (lower) ... drink a health / mana elixir
@@ -319,13 +313,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                SitHoldTime = 0.8 (s B is held while crouched to sit; 0 = off)   SitHeight = 80 (cm)
                FarReachVRComfortOption = 1 (Far Reach takes you there at once, like Blink; 0 = the game's pull)
                DragBodies = 1 (experimental: grip a body to drag it; hand up over your shoulder = onto your back)
-               GravityGloves = 1 (experimental: point, grip and flick back: an object out of reach flies to your hand)
                TouchToUse = 1 (experimental: press buttons and switches, grip and pull levers by hand)
-               SwordParry = 1 (experimental: the sword held across an enemy's blow parries it)
-               ChokeByHands = 1 (experimental: a hand each side of a guard's neck from behind, 1 s: knocked out)
-               PickpocketByHand = 1 (experimental: sneaking, right hand at a belt, grip, pull back)
-               WaveToTalk = 1 (experimental: wave at someone facing you within 3 m to talk to him)
-               ClimbByHand = 1 (experimental: both hands on a ledge, pull down: climb)
+               ClimbByHand = 1 (experimental: both hands on a ledge, push down: climb)
                SwimStrokes = 1 (experimental: in the water, an arm's stroke swims forward)
                Core VR (hidden, always on): SwordGestures, SwordBladeDamage, FinisherAnimations = 0,
                KnockoutBlow, ThrowGestures, GrabObjects, MouthPotions, and these:
@@ -427,7 +416,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
                                       "no AO" fill overwrites is skipped; 2 = also skip DOF's copy,
                                       which breaks water / electricity: do not use)
    [Cheats]    UnlockEverything = 0 (all of the following but the powers)   InfiniteMana = 0   InfiniteAmmo = 0
-               InfiniteHealth = 0; or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
+               InfiniteHealth = 0   Undetected = 0 (guards and hostile people do not notice you)
+               Or, each on its own: UnlockOutsidersMark, UnlockPowerUpgrades,
                UnlockBlackMarketUpgrades, UnlockWeapons, FillAmmoAndGadgets, FillElixirs
    [Cheats.Powers] the powers, each on its own (the only way to unlock them): UnlockBlink, UnlockFarReach, UnlockDarkVision, UnlockPossession,
                UnlockDevouringSwarm, UnlockBendTime, UnlockWindblast, UnlockDomino, UnlockDoppelganger,

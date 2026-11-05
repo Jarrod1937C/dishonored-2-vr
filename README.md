@@ -17,8 +17,7 @@ it builds on.
   work too.
 - **Solid hands and weapons** that stop at walls and push loose objects; push doors open only as far as you push them,
   pull drawers open, slide windows, turn safe dials, take items and eat food by hand. People's bodies give under your
-  hands instead of standing like statues; drag bodies by hand and lift them onto your back; pull objects out of reach
-  to your hand with a flick, like Half-Life: Alyx's gravity gloves.
+  hands instead of standing like statues; drag bodies by hand and lift them onto your back.
 - **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
   inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
   head zooms the mask's spyglass.
@@ -138,8 +137,8 @@ Other limitations:
   the further in, and open again as you slow down (`MovementVignette`, 0.6; 0 = off; VR Controls tab, Comfort).
   Walking in your room, leaning and turning your head do not count.
 - **Lean and peek** with your body: there is no lean button.
-- **Climb with your hands** (experimental): put both hands on a ledge at chest height or above and pull down, as if
-  pulling yourself up, and the character climbs it, where the game can (`ClimbByHand`).
+- **Climb with your hands** (experimental): put both hands on a ledge at chest height or above and push down on it,
+  as if pulling yourself up, and the character climbs it, where the game can (`ClimbByHand`).
 - **Swim with your arms** (experimental): in the water, sweep an arm back to swim forward; keep stroking to keep going.
   The stick still swims (`SwimStrokes`).
 - **Wall fade.** If your head goes into a wall, floor or door, the headset fades to dark blue until you step back out,
@@ -174,9 +173,6 @@ pistol with an empty right hand.
 - **Block:** bring your right fist, holding the sword with the blade up, to your left shoulder (within about 20 cm);
   you block for as long as it stays there. Or squeeze the right grip with the sword out. The gesture is off while you
   are crouched (sneaking), where the grip still blocks.
-- **Parry with the blade** (experimental): hold your sword in the way of an enemy's blow and it is parried, as a
-  well-timed block parries it: he reels and you take no damage (`SwordParry`, on by default). Blows that cannot be
-  blocked still land.
 - **No finishing-move animations or kill cam:** a blow that would trigger one is an ordinary blow that still lands, so
   the view never leaves your head. Stealth takedowns keep theirs.
 - **Bloodflies** are easier to hit (the blade reaches 60 cm further for them), and their nests can be struck too.
@@ -195,8 +191,6 @@ pistol with an empty right hand.
   - How hard: `KnockoutSpeed` (8 m/s in the shipped ini; a firm punch is about 4 to 6 m/s).
   - How squarely behind him (60° off straight behind) and how close to his head (35 cm) are hidden settings.
   - A hit sound plays (`KnockoutSoundVolume`); put your own `DVR_knockout.wav` in the game folder to replace it.
-- **Choke by hand (new, experimental):** with the blue dot showing, put a hand on each side of his neck and hold them
-  there for a second: he is knocked out, as by the game's choke but without its animation (`ChokeByHands`).
 
 ### Pistol, crossbow and powers
 
@@ -261,10 +255,6 @@ side, so you can look around and still find your hips.
 - **Drawers and cabinets:** put your hand on one, squeeze the grip and pull back to open it; push it shut. Locks and
   keys work as in the game.
 - **Windows:** rest a hand on a sliding window and slide it up or down.
-- **Pickpocket by hand** (experimental): sneaking, behind or beside someone, put your right hand at his belt, squeeze
-  the grip and pull back: the game's pickpocket, where it offers one (`PickpocketByHand`).
-- **Wave to talk** (experimental): wave your empty hand side to side at someone facing you within 3 m, while looking at
-  him, to talk to him where the game lets you (`WaveToTalk`).
 - **Buttons, switches and levers** (experimental): with an empty hand, press a button or a switch, or squeeze the grip
   on a lever and pull it, and it works as the interact button would (`TouchToUse`, on by default). The interact
   button still works too.
@@ -277,22 +267,6 @@ side, so you can look around and still find your hips.
 - **Drag bodies** (experimental): squeeze the right grip on a body, dead or unconscious, and drag it by the arm, leg or
   collar you took hold of -- along the floor, into a corner, out of the light. Bring that hand up over your shoulder
   and the body goes onto your back, the game's own carry; grip again to put it down (`DragBodies`, on by default).
-- **Gravity gloves** (experimental, as in Half-Life: Alyx): point your right hand at a loose object out of reach (a
-  bottle, a glass, coins, an elixir), squeeze the grip and flick your hand back towards you: it flies to your hand.
-  Keep the grip squeezed to catch it; let go and it falls (`GravityGloves`, on by default).
-
-### Your backpack
-
-Your inventory is a backpack you reach into over your shoulder: pick loot up with your hand and put it away, the way
-you would for real, instead of only pointing at it and pressing a button.
-
-1. **Take it:** touch an item with your right hand (coins, ammo, elixirs, runes, bone charms, keys,
-   blueprints, mission items...) and squeeze the right grip. The item is now in your hand; keep the grip squeezed.
-2. **Put it away:** reach behind your head, over your shoulder or behind your back. It goes into your inventory as
-   soon as your hand gets there (no need to let go), with a firm buzz to say the game took it.
-3. **Changed your mind?** Let go of the grip before reaching back and the item goes back where it was. It also goes
-   back if you hold it for more than 7 seconds.
-
 - **Inventory full** (or an item the game will not take): a long, soft buzz, and the item returns to where it lay,
   just as the game would leave it there.
 - **Food** cannot go in the backpack: bring it to your mouth to eat it instead (a short buzz reminds you if you reach
@@ -345,7 +319,8 @@ you would for real, instead of only pointing at it and pressing a button.
 ### Cheats
 
 Optional, in the VR System / Cheats tab or the ini. The cheats are all off in the shipped ini (`InfiniteMana`,
-`InfiniteAmmo` and `InfiniteHealth` too). `UnlockEverything` gives the Outsider's mark, every upgrade, bone charm crafting, black market upgrade
+`InfiniteAmmo` and `InfiniteHealth` too). `Undetected` makes guards and other hostile people not notice you, to live in
+the world without being hunted (attacking someone still starts a fight). `UnlockEverything` gives the Outsider's mark, every upgrade, bone charm crafting, black market upgrade
 and weapon; the powers are switched on one by one (`[Cheats.Powers]`: Blink, Far Reach, Dark Vision, Possession,
 Devouring Swarm, Bend Time, Windblast, Domino, Doppelganger, Mesmerize, Shadow Walk). The game saves what the cheats
 change: use saves you do not mind changing.
@@ -369,14 +344,9 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
 | Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
 | Right grip on a body, drag; hand up over your shoulder | Drag it; onto your back |
-| Sword held across an enemy's blow | Parry it |
 | Press a button with your hand, or grip a lever and pull | Use it |
-| Both hands on a ledge, pull down | Climb it |
+| Both hands on a ledge, push down | Climb it |
 | Sweep an arm back, in the water | Swim forward |
-| A hand each side of a guard's neck from behind, 1 s | Knock him out |
-| Sneaking, right hand at someone's belt, grip, pull back | Pickpocket |
-| Wave at someone facing you, close | Talk to him |
-| Point at something out of reach, right grip, flick back | It flies to your hand (keep the grip to catch it) |
 | A hand to your mouth + its grip | Drink an elixir (left health, right mana), eat what it holds |
 | Tap your right hand against the side of your head | Zoom; again: zoom in more (upgraded spyglass); again: back to normal |
 | Look at the back of your left wrist | The watch: health, mana, ammo, the way to your objectives |

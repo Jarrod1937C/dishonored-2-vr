@@ -37,11 +37,15 @@ namespace
     unsigned long long g_Gets = 0, g_Found = 0, g_NoObj = 0, g_Odd = 0;
     std::atomic<int> g_Mode{ 1 };
 
+    // Every read below is guarded (Rd), so this only screens out wild pointers: its first and last byte, read guarded --
+    // no VirtualQuery. That call is a system call whose cost grows with the region it reports on; after a death and a
+    // reload (2026-11-05: spawned among the level's parked entities) SwordContact's scan made thousands a frame and the
+    // render thread spent 25-43 % of its time in it: a ~45 ms Present every 100 ms.
     bool Readable(uintptr_t p, size_t n)
     {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (!HeapPtr(p) || !VirtualQuery((void*)p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
-        return p + n <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+        if (!HeapPtr(p) || !n || n > (64u << 20) || p + n < p) return false;
+        uint8_t a, b;
+        return SafeCopy(&a, (void*)p, 1) && SafeCopy(&b, (void*)(p + n - 1), 1);
     }
     // The pose array (64-byte entries, model space) starts with the bind pose [0, J); each "space" has a remap (obj+0x2E8
     // + space*16: {short*, count}) from joint to entry, and space 3 is what the engine hangs things on a character with

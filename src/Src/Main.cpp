@@ -57,10 +57,9 @@
 #include "Roomscale.h"
 #include "Vignette.h"
 #include "BodyDrag.h"
-#include "GravityGlove.h"
-#include "SwordParry.h"
 #include "NpcGestures.h"
 #include "AiResearch.h"
+#include "Undetected.h"
 #include "ControllerBindings.h"
 #include "TestAids.h"
 #include "Seeds.h"
@@ -177,14 +176,10 @@ static void ApplySettings(const std::vector<std::string>& changed)
     if (has({ "snapturnblank" })) KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     if (has({ "movementvignette" })) Vignette::SetStrength(Settings::MovementVignette());
     if (has({ "dragbodies" })) BodyDrag::SetEnabled(Settings::DragBodies());
-    if (has({ "gravitygloves" })) GravityGlove::SetEnabled(Settings::GravityGloves());
     if (has({ "touchtouse" })) Collision::SetUsables(Settings::TouchToUse());
-    if (has({ "swordparry" })) SwordParry::SetEnabled(Settings::SwordParry());
-    if (has({ "pickpocketbyhand" })) NpcGestures::SetPickpocket(Settings::PickpocketByHand());
-    if (has({ "wavetotalk" })) NpcGestures::SetWaveToTalk(Settings::WaveToTalk());
     if (has({ "climbbyhand" })) Collision::SetClimb(Settings::ClimbByHand());
     if (has({ "swimstrokes" })) KbmInject::SetSwimStrokes(Settings::SwimStrokes());
-    if (has({ "chokebyhands" })) MeleeAim::SetChokeByHands(Settings::ChokeByHands());
+    if (has({ "undetected" })) Undetected::SetEnabled(Settings::Undetected());
     if (has({ "gripthresholdleft", "gripthreshold" })) KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     if (has({ "gripthresholdright", "gripthreshold" })) KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     if (has({ "layout", "fingertracking" })) GpuTrace::SetFingerTracking(Settings::FingerTracking());
@@ -285,14 +280,10 @@ static DWORD WINAPI InitThread(LPVOID)
     KbmInject::SetSnapBlank(Settings::SnapTurnBlank());
     Vignette::SetStrength(Settings::MovementVignette());
     BodyDrag::SetEnabled(Settings::DragBodies());
-    GravityGlove::SetEnabled(Settings::GravityGloves());
     Collision::SetUsables(Settings::TouchToUse());
-    SwordParry::SetEnabled(Settings::SwordParry());
-    NpcGestures::SetPickpocket(Settings::PickpocketByHand());
-    NpcGestures::SetWaveToTalk(Settings::WaveToTalk());
     Collision::SetClimb(Settings::ClimbByHand());
     KbmInject::SetSwimStrokes(Settings::SwimStrokes());
-    MeleeAim::SetChokeByHands(Settings::ChokeByHands());
+    Undetected::SetEnabled(Settings::Undetected());
     KbmInject::SetGripThreshold(0, Settings::GripThreshold(0));
     KbmInject::SetGripThreshold(1, Settings::GripThreshold(1));
     KbmInject::SetPadParams(Settings::PadPressForce(), Settings::PadReleaseForce(), Settings::PadCenterRadius());
@@ -389,7 +380,6 @@ static DWORD WINAPI InitThread(LPVOID)
     PlayerViewHook::SetEnabled(false);   // the local player never goes through that builder
     ViewMatrixHook::Install();
     Roomscale::Install();            // walking in the room walks the character: its character proxy follows the head
-    SwordParry::Install();           // an enemy's blow parried by the blade held across it
     AiResearch::Install();           // (log on only) research for the gestures at people: the AI's messages, what NPCs hear
     StereoSync::Install();           // the game's frame: held on every second frame for synchronised stereo
     ScreenShadows::InstallCasterLog();   // research: the shadow casters by size, every 10 s

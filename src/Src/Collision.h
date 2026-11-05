@@ -46,6 +46,8 @@ namespace Collision
     void RequestUse(int hand, uint32_t id, const float point[3]);
     //! A character (a person, a creature; alive or not).
     bool IsCharacterEnt(void* ent);
+    //! A shopkeeper (his name says so): talking to him is the shop counter's interact.
+    bool IsShopkeeper(uint32_t id);
     bool ItemsOn();
     //! The pointer's pick when it is an item (its id), else 0.
     uint32_t PointerItem();
@@ -81,19 +83,9 @@ namespace Collision
     void NoteInteract(uint32_t id);
     //! The game's impulse message to an entity (only physics-driven ones take it), at a world point.
     void Push(void* ent, const float impulse[3], const float at[3]);
-    //! GravityGloves: the nearest thing on the ray from a to b (the world and props, the player's own entities and the
-    //! held object skipped) when it is a loose object a hand could catch -- `kind` 1 an object the game holds (a bottle,
-    //! a glass), 2 an item (loot, taken by hand) -- else false (nothing, or the world / a character / a door in front).
-    //! Game thread only.
-    //! (false: `hitEnt` / `p` / `dist` are what the ray met, if anything, and `why` says why it is not pulled -- for the log)
-    struct PullHit { void* ent = nullptr; uint32_t id = 0; int kind = 0; float p[3] = {}; float dist = 0.f; void* hitEnt = nullptr; const char* why = nullptr; };
-    bool PullRay(const float a[3], const float b[3], PullHit& out);
     //! Research for a keyhole peek (logging on only): the head close to a door and facing it -- once per door per
     //! approach, the door, where the eye is in its frame and what the interaction sensor has then. Game thread, once a frame.
     void KeyholeProbe();
-    //! An entity's velocity as the game keeps it (entity+0x33C, synced from its physics body each frame), and whether it
-    //! could be read.
-    bool EntityVelocity(void* ent, float v[3]);
     bool HandsOn();
     //! The nearest wall, floor, ceiling or moving part of the level (doors, lifts) from a to b -- what the sword's sweep
     //! takes for the world (layers 0x27, flag 0x100000: no props, characters or invisible clips). true + its distance

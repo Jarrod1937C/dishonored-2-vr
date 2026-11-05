@@ -17,8 +17,11 @@
 namespace
 {
     // The pull: a spring from the grabbed joint to the hand, slack within kSlack, its speed at most kMaxSpeed.
-    constexpr float kSlack = 0.08f, kGain = 4.0f, kMaxSpeed = 2.8f;   // m, 1/s, m/s
-    constexpr float kShare = 0.45f;          // of the speed error corrected per tick (an impulse acts a tick later)
+    // (2026-11-05 play: at 4/s, 2.8 m/s and 45 % the body shook and its arm flew up with the hand: softer now, and the
+    // pull's target kept low -- a body is dragged along the floor, not lifted into the air)
+    constexpr float kSlack = 0.10f, kGain = 3.0f, kMaxSpeed = 2.0f;   // m, 1/s, m/s
+    constexpr float kShare = 0.30f;          // of the speed error corrected per tick (an impulse acts a tick later)
+    constexpr float kLiftMax = 0.55f;        // m: the pull's target at most this far above the body's lowest joint
     constexpr float kMass0 = 20.f, kMassMin = 3.f, kMassMax = 160.f;  // kg: the part's effective mass, first guess and bounds
     constexpr float kMaxImpulse = 140.f;     // N s in one tick, whatever the mass
     // Onto the back: the hand over the shoulder -- within kShoulderDown of the eyes' height or above, within
@@ -182,8 +185,11 @@ void BodyDrag::Tick()
         S.judge = false;
     }
 
-    // the pull
-    const float d[3] = { hp[0] - p[0], hp[1] - p[1], hp[2] - p[2] };
+    // the pull: towards the hand, but no higher than kLiftMax over the body's lowest part
+    float floorZ = p[2];
+    if (sk) for (int j = 0; j < g_Sk.n; j++) floorZ = std::min(floorZ, g_Sk.p[j][2]);
+    const float tz = std::min(hp[2], floorZ + kLiftMax);
+    const float d[3] = { hp[0] - p[0], hp[1] - p[1], tz - p[2] };
     const float dl = Len(d);
     float vdes[3] = {};
     if (dl > kSlack) { const float s = std::min(kMaxSpeed, kGain * (dl - kSlack)) / dl; for (int i = 0; i < 3; i++) vdes[i] = d[i] * s; }

@@ -25,17 +25,13 @@ namespace
     constexpr uint32_t kGamePtr = 0x39A5290, kEntTable = 0x3130B0, kEntSlots = 0x4000;
     constexpr size_t kEntId = 0xA8, kEntFlagsD1 = 0xD1, kEntOrigin = 0x300, kEntAxis = 0x30C, kEntHidden = 0xD0;
     constexpr float kScanR = 10.f;
-    // wave
-    constexpr float kWaveAmp = 0.08f, kWaveAbove = -0.25f, kWaveAngle = 12.f, kWaveMin = 1.2f, kWaveMax = 8.f, kTalkMax = 3.0f;
-    constexpr double kWaveWindow = 1.4;
     // a weapon held on someone
     constexpr float kAimR = 0.22f, kAimMax = 5.f, kBladeR = 0.40f, kBladeMax = 1.5f;
     constexpr double kAimHold = 0.7;
     // touches
-    constexpr float kTapR = 0.12f, kBeltR = 0.20f, kPullBack = 0.06f;
+    constexpr float kTapR = 0.12f;
 
-    std::atomic<bool> g_Pick{ true }, g_Talk{ true };
-    std::atomic<unsigned long long> g_Waves{ 0 }, g_Talks{ 0 }, g_Threats{ 0 }, g_Taps{ 0 }, g_Picks{ 0 };
+    std::atomic<unsigned long long> g_Threats{ 0 }, g_Taps{ 0 };
 
     struct Person { void* ent = nullptr; uint32_t id = 0; float org[3] = {}; float fwd[3] = {}; };
     std::vector<Person> g_People; double g_ScanAt = -1;
@@ -90,22 +86,17 @@ namespace
     }
 
     // ---- state (game thread) ----
-    struct Wave { bool valid = false; float lastX = 0, ext = 0; int dir = 0, swings = 0; double firstAt = 0; double lastWave = -10; } g_Wave[2];
     struct Threat { uint32_t id = 0; double since = -1; double toldAt = -10; } g_Threat[2];   // 0 the gun, 1 the blade
-    std::unordered_map<uint32_t, double> g_TapAt, g_ThreatAt;
-    struct Pick { bool armed = false; Person who; float joint[3] = {}; float d0 = 0; double at = 0; bool gripWas = false; double toldAt = -10; } g_Pk;
+    std::unordered_map<uint32_t, double> g_TapAt;
     NpcSkel::Skel g_Sk;
     float g_PrevHand[2][3] = {}; bool g_PrevOk[2] = {}; double g_PrevT = 0;
 
     std::string Who(const Person& p) { return fmt::format("{:#x} ({})", p.id, Collision::Describe(p.ent)); }
 }
 
-void NpcGestures::SetPickpocket(bool on) { g_Pick = on; LOGI("NpcGestures: pickpocket by hand {}", on ? "on: sneaking, your hand at someone's belt from behind, grip and pull back (PickpocketByHand)" : "off"); }
-void NpcGestures::SetWaveToTalk(bool on) { g_Talk = on; LOGI("NpcGestures: a wave {}", on ? "at someone within 3 m you look at talks to him, where the game lets you (WaveToTalk)" : "does not talk"); }
-
 void NpcGestures::Tick()
 {
-    if (!Log::Enabled() && !g_Pick.load() && !g_Talk.load()) return;
+    if (!Log::Enabled()) return;   // research only
     float eye[3], ax[9];
     if (!HandAimHook::RealCamera(eye, ax)) return;
     {   // the real head, where the view puts it
@@ -122,60 +113,9 @@ void NpcGestures::Tick()
     BodyHide::Anchor an[BodyHide::aCount]; BodyHide::GetAnchors(an);
     float player[3] = { eye[0], eye[1], eye[2] - 1.6f };
     if (an[BodyHide::aPlayer].valid) memcpy(player, an[BodyHide::aPlayer].org, 12);
-    const float fwd[3] = { ax[0], ax[1], ax[2] }, right[3] = { -ax[3], -ax[4], -ax[5] };
     const float dt = (float)std::clamp(now - g_PrevT, 1e-3, 0.1); g_PrevT = now;
     float hp[2][3]; bool hok[2];
     for (int h = 0; h < 2; h++) { float r[9]; hok[h] = GpuTrace::RawHandPose(h, hp[h], r); }
-
-    // ---- a wave: an empty hand raised and waved side to side (three strokes within 1.4 s, 8 cm each) ----
-    for (int h = 0; h < 2; h++)
-    {
-        Wave& W = g_Wave[h];
-        if (!hok[h] || GpuTrace::HandItemDraws(h) > 0 || hp[h][2] - eye[2] < kWaveAbove) { W.valid = false; W.swings = 0; continue; }
-        const float rel[3] = { hp[h][0] - eye[0], hp[h][1] - eye[1], hp[h][2] - eye[2] };
-        const float x = Dot(rel, right);
-        if (!W.valid) { W = Wave{ true, x, x, 0, 0, 0, W.lastWave }; continue; }
-        const int d = x > W.lastX + 0.004f ? 1 : x < W.lastX - 0.004f ? -1 : 0;
-        if (d && d != W.dir)
-        {
-            if (W.dir && fabsf(W.lastX - W.ext) >= kWaveAmp)
-            {
-                if (W.swings == 0 || now - W.firstAt > kWaveWindow) { W.swings = 0; W.firstAt = now; }
-                W.swings++;
-            }
-            W.ext = W.lastX; W.dir = d;
-        }
-        W.lastX = x;
-        if (W.swings >= 3 && now - W.lastWave > 3.0)
-        {
-            W.lastWave = now; W.swings = 0; g_Waves++;
-            const Person* best = nullptr; float bestA = 1e9f, bestD = 0.f;
-            for (const Person& p : g_People)
-            {
-                const float c[3] = { p.org[0] - eye[0], p.org[1] - eye[1], p.org[2] + 1.5f - eye[2] };
-                const float dl = Len(c); if (dl < kWaveMin || dl > kWaveMax) continue;
-                const float a = acosf(std::clamp(Dot(c, fwd) / dl, -1.f, 1.f)) * 57.29578f;
-                if (a < bestA) { bestA = a; best = &p; bestD = dl; }
-            }
-            if (!best || bestA > kWaveAngle)
-            {
-                LOGI("NpcGestures: {} hand waved, at no one ({})", h ? "right" : "left",
-                     best ? fmt::format("the nearest to your gaze, {}, is {:.0f} deg off it (needs under {:.0f})", Who(*best), bestA, kWaveAngle) : std::string("nobody within 8 m"));
-                continue;
-            }
-            const float fc = Facing(*best, player);
-            const bool talk = g_Talk.load() && bestD <= kTalkMax && fc > 0.3f;   // (facing you: from behind, the interact would be a pickpocket)
-            LOGI("NpcGestures: {} hand WAVED at {}, {:.1f} m away, {:.0f} deg off your gaze, {} you{}", h ? "right" : "left", Who(*best), bestD, bestA,
-                 fc > 0.5f ? "facing" : fc > -0.3f ? "side on to" : "with his back to",
-                 talk ? ": interact on him (talks, if the game lets you talk to him)" : " (a greeting: research, the game does nothing yet)");
-            if (talk)
-            {
-                const float pt[3] = { best->org[0], best->org[1], best->org[2] + 1.35f };
-                Collision::RequestUse(h, best->id, pt); g_Talks++;
-                VRRuntime::Vibrate(h, 0.2f, 0.03f);
-            }
-        }
-    }
 
     // ---- a weapon held on someone (research: who would cower) ----
     for (int w = 0; w < 2; w++)
@@ -216,11 +156,7 @@ void NpcGestures::Tick()
         }
     }
 
-    // ---- touches: the hands at someone's shoulder / upper back (a tap) or belt (a pickpocket) ----
-    const int gh = GrabHand::Hand();
-    const bool sneaking = PlayerState::Running("Sneaking") || PlayerState::Running("AutoCrouch");
-    const bool grip = KbmInject::GripIdle(gh);
-    Pick& P = g_Pk;
+    // ---- a tap: a hand arriving gently at someone's shoulder / upper back, from behind ----
     for (const Person& p : g_People)
     {
         bool close = false;
@@ -232,16 +168,14 @@ void NpcGestures::Tick()
         for (int h = 0; h < 2; h++)
         {
             if (!hok[h]) continue;
-            float bestT = 1e9f, bestB = 1e9f; int jt = -1, jb = -1;
+            float bestT = 1e9f; int jt = -1;
             for (int j = 0; j < g_Sk.n; j++)
             {
                 const float r = (g_Sk.p[j][2] - lo) / tall;
                 const float d[3] = { hp[h][0] - g_Sk.p[j][0], hp[h][1] - g_Sk.p[j][1], hp[h][2] - g_Sk.p[j][2] };
                 const float l = Len(d);
                 if (r > 0.72f && r < 0.92f && l < bestT) { bestT = l; jt = j; }
-                if (r > 0.45f && r < 0.64f && l < bestB) { bestB = l; jb = j; }
             }
-            // a tap: a hand arriving gently at the shoulder / upper back, from behind (research)
             if (jt >= 0 && bestT < kTapR && fc < -0.2f && g_PrevOk[h])
             {
                 const float v[3] = { (hp[h][0] - g_PrevHand[h][0]) / dt, (hp[h][1] - g_PrevHand[h][1]) / dt, (hp[h][2] - g_PrevHand[h][2]) / dt };
@@ -255,42 +189,12 @@ void NpcGestures::Tick()
                          h ? "right" : "left", Who(p), sp, bestT * 100.f, (g_Sk.p[jt][2] - lo) / tall * 100.f);
                 }
             }
-            // a pickpocket: sneaking, behind or beside him, the grabbing hand at his belt, the grip closed there
-            if (g_Pick.load() && h == gh && jb >= 0 && bestB < kBeltR && !P.armed && grip && !P.gripWas)
-            {
-                if (!sneaking || fc > 0.3f)
-                {
-                    if (now - P.toldAt > 2.0) { P.toldAt = now; LOGI("NpcGestures: grip at {}'s belt, but no pickpocket: {}", Who(p), !sneaking ? "you are not sneaking (crouch)" : "he faces you"); }
-                }
-                else
-                {
-                    P.armed = true; P.who = p; memcpy(P.joint, g_Sk.p[jb], 12); P.d0 = bestB; P.at = now;
-                    VRRuntime::Vibrate(h, 0.15f, 0.02f);
-                    LOGI("NpcGestures: {} hand at {}'s belt ({:.0f} cm), grip: pull back to pickpocket", h ? "right" : "left", Who(p), bestB * 100.f);
-                }
-            }
         }
     }
-    if (P.armed)
-    {
-        const int h = gh;
-        const float d[3] = { hp[h][0] - P.joint[0], hp[h][1] - P.joint[1], hp[h][2] - P.joint[2] };
-        const float away = Len(d) - P.d0;
-        if (!grip) { LOGI("NpcGestures: the grip opened at {}'s belt without a pull: no pickpocket", Who(P.who)); P.armed = false; }
-        else if (away >= kPullBack)
-        {
-            Collision::RequestUse(h, P.who.id, P.joint); g_Picks++;
-            VRRuntime::Vibrate(h, 0.3f, 0.04f);
-            LOGI("NpcGestures: {} hand pulled back from {}'s belt ({:.0f} cm): interact on him (the game's pickpocket, if it offers one)", h ? "right" : "left", Who(P.who), away * 100.f);
-            P.armed = false;
-        }
-        else if (now - P.at > 2.0) { LOGI("NpcGestures: no pull from {}'s belt within 2 s: no pickpocket", Who(P.who)); P.armed = false; }
-    }
-    P.gripWas = grip;
     for (int h = 0; h < 2; h++) { if (hok[h]) memcpy(g_PrevHand[h], hp[h], 12); g_PrevOk[h] = hok[h]; }
 }
 
 std::string NpcGestures::Status()
 {
-    return fmt::format("people: waves {} (to talk {}), weapons held on someone {}, taps {}, pickpockets {}", g_Waves.load(), g_Talks.load(), g_Threats.load(), g_Taps.load(), g_Picks.load());
+    return fmt::format("people (research): weapons held on someone {}, taps {}", g_Threats.load(), g_Taps.load());
 }

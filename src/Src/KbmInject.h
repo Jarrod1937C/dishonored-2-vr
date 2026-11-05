@@ -63,7 +63,7 @@ namespace KbmInject
     //! Inside a possessed host (EnterPossessedHost began it; the arms coming back, death or a load end it).
     bool Possessing();
     //! That hand's grip is closed and doing nothing else (not taking, pulling a drawer, drawing, drinking, holding or
-    //! carrying): GravityGlove may use it to pull something to the hand.
+    //! carrying): Collision's TouchToUse takes it as a grip on a lever.
     bool GripIdle(int hand);
     //! [Gameplay.Interaction] SwimStrokes: in the water an arm's stroke swims forward (the forward key for a glide).
     void SetSwimStrokes(bool on);

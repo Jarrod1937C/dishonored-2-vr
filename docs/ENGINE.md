@@ -930,8 +930,16 @@ Fire sequence (gun exe+0x44EBD0, crossbow around exe+0x62B6xx):
   unblockable (strike); [[player component exe+0x39AED60]+0x90]+0x170 = the Block state, exe+0x859980(it, attacker,
   comp+0x3428 bit 2) -> 2 = parried: exe+0x636140(comp, player) (the parry's damage, def+0x128, sent to the attacker),
   else message 0xE6 ATTACK_BLOCKED {player id, result} to the attacker; then the sparks exe+0x635F30(comp, record) and
-  exe+0x634890(comp, 0, 0, 0, comp+0x3424) closes the window; returns 0. The strike is vtable +0x138. SwordParry runs
-  the parry branch when the blade is across the blow.
+  exe+0x634890(comp, 0, 0, 0, comp+0x3424) closes the window; returns 0. The strike is vtable +0x138. The parry's damage
+  is `blowback_player.damage`: the attacker is thrown, the active ragdolls ar_throwhit_front -> ar_flying -> ar_impact
+  (measured 2026-11-05: a mod that ran this branch made guards fly).
+- **The attack window** exe+0x634890(comp, open, b, c, float -> comp+0x3424): comp+0x3428 = open | b<<1 | c<<2 (the
+  low nibble); open posts message 0x167 {open} to the holder (GetEntityById([comp+0x10]+0xAC)); closing also clears
+  comp+0x33D0 / 0x33D8 / 0x33DC. Its only caller with open = 1 is the animation event handler exe+0x84E0C0. comp+0x10
+  is the weapon entity (its +0xAC = the holder's id), whose origin the sweep exe+0x634990 measures against comp+0x33E4
+  (the last frame's). The sparks exe+0x635F30(comp, record) read the record's +0x30 (point), +0x3C and +0x48 (vec3s).
+  A guard's sword ('gs_guard_sword', its own entity): render model bounds (-0.11 -0.02 -0.09)-(0.91 0.02 0.09), the
+  blade along its axis 0 to 0.91 m.
 - A slash from behind on an unaware guard becomes `Assassination` (kills even with `ark_god_npc 1`).
 - **The sword trail** is a ribbon along the animated sword's path: three non-indexed 26-vertex draws, vertex shaders
   DXBC `364e76313eb849ec` / `3fea51d57d8fff32` / `412fe65bec01fc06`. Skipping them removes it and nothing else.
@@ -1329,6 +1337,17 @@ ammo / gadget items (giving them gives one). Callers: `arkCpntBlackMarketUpgrade
 index<<2 | variant) and a loop at exe+0x514B34. exe+0x456AA0(ps, decl) = index of a decl in that list.
 
 ---
+
+### 10.6 The player's attributes (static only, 2026-11-05)
+- arkCpntAttributes (type exe+0x39EDB90; GetComponent exe+0x877720(entity, type, 2)) holds named attributes in a hash
+  table: buckets comp+0x20 / chain comp+0x28 / masks +0x3C / +0x40, entries comp+0x48 (0x28 bytes: the name atom at
+  +0x00, the value every reader reads at **+0x24**: 334 inline reads `movss [entries + i*0x28 + 0x24]`). Lookup by
+  name: **exe+0x60CE50(comp, int* index, const idAtomicString* name)** (-1 = none). Names are idAtomicString globals
+  made at start-up (one copy per source file, the same atom), e.g. ARK_ATTRIBUTE_PLAYER_VISIBILITY_FACTOR
+  exe+0x32CD9F0, _VISIBILITY_WHEN_MOVING_FACTOR 0x32CD9F8, _RUNNING_FOOTSTEP_NOISE_FACTOR 0x32CDA08,
+  _SPRINTING_FOOTSTEP_NOISE_FACTOR 0x32CDA10, _STEALTH_ILLUMINATION_FACTOR 0x32CDA88, _INVISIBLE_WHEN_NOT_MOVING
+  0x32CDA78, _INVISIBLE_WHEN_NOT_MOVING_CROUCHED 0x32CDA80. A subclass's virtual exe+0x435660 caches the indices it
+  uses (+0x70..; VISIBILITY_FACTOR's at +0xBC). Used by the cheat Undetected.
 
 ## 11. Consolidated address table
 

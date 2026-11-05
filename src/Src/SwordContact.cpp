@@ -236,7 +236,8 @@ namespace
         void* held = GrabHand::HeldEntity();
         float player[3] = { eye[0], eye[1], eye[2] - 1.0f };
         if (an[BodyHide::aPlayer].valid) memcpy(player, an[BodyHide::aPlayer].org, 12);
-        int seen = 0;
+        int seen = 0, nBoxed = 0, nSkelReads = 0;
+        LARGE_INTEGER q0{}; if (Log::Enabled()) QueryPerformanceCounter(&q0);
         for (uint32_t i = 0; i < kEntSlots; i++)
         {
             uint8_t* e = nullptr;
@@ -260,6 +261,17 @@ namespace
             const float d[3] = { t.org[0] - eye[0], t.org[1] - eye[1], t.org[2] - eye[2] };
             if (Dot(d, d) > (C.radius + C.worldDim) * (C.radius + C.worldDim)) continue;
             if (!EntityBox(e, t.mn, t.mx)) { NoteSkipped(t, false, "no box (no render model bounds)", eye, C.radius); continue; }
+            // reach: the box's nearest point to the eye (a big one's centre can be far while its side is at hand)
+            float boxNear2 = 0; nBoxed++;
+            {
+                const float de[3] = { eye[0] - t.org[0], eye[1] - t.org[1], eye[2] - t.org[2] };
+                for (int r = 0; r < 3; r++)
+                {
+                    const float l = Dot(de, t.axis + 3 * r);
+                    const float o = l < t.mn[r] ? t.mn[r] - l : l > t.mx[r] ? l - t.mx[r] : 0.f;
+                    boxNear2 += o * o;
+                }
+            }
             const float sx = t.mx[0] - t.mn[0], sy = t.mx[1] - t.mn[1], sz = t.mx[2] - t.mn[2];
             t.vol = sx * sy * sz;
             const float big = fmaxf(sx, fmaxf(sy, sz));
@@ -278,7 +290,10 @@ namespace
                 }
                 if (nc->second) t.kind = 2;
             }
-            t.skel = t.kind == 0 && NpcSkel::Get(e, g_Tmp) && g_Tmp.n >= (int)C.skelMin;
+            // a skeleton is read only for what is near (its box within 2 m of the reach: a ragdoll's bones stay by its box);
+            // everything within the 33 m box test used to have its skeleton read here, every scan
+            const float skelR = C.radius + 2.0f;
+            t.skel = t.kind == 0 && boxNear2 < skelR * skelR && (nSkelReads++, NpcSkel::Get(e, g_Tmp)) && g_Tmp.n >= (int)C.skelMin;
             const char* why = nullptr;
             float w[3];
             if (t.skel)
@@ -299,18 +314,7 @@ namespace
                 else if (InBox(t, eye, 0.05f) || InBox(t, player, 0.05f)) why = "the player is inside it";
                 const float c[3] = { 0.5f * (t.mn[0] + t.mx[0]), 0.5f * (t.mn[1] + t.mx[1]), 0.5f * (t.mn[2] + t.mx[2]) };
                 for (int k = 0; k < 3; k++) w[k] = t.org[k] + c[0] * t.axis[k] + c[1] * t.axis[3 + k] + c[2] * t.axis[6 + k];
-                // reach: the box's nearest point to the eye (a big one's centre can be far while its side is at hand)
-                float near2 = 0;
-                {
-                    const float de[3] = { eye[0] - t.org[0], eye[1] - t.org[1], eye[2] - t.org[2] };
-                    for (int r = 0; r < 3; r++)
-                    {
-                        const float l = Dot(de, t.axis + 3 * r);
-                        const float o = l < t.mn[r] ? t.mn[r] - l : l > t.mx[r] ? l - t.mx[r] : 0.f;
-                        near2 += o * o;
-                    }
-                }
-                if (!why && near2 > C.radius * C.radius) continue;
+                if (!why && boxNear2 > C.radius * C.radius) continue;
             }
             if (log)
             {
@@ -326,6 +330,19 @@ namespace
             if (g_Targets.size() >= 256) break;
         }
         if (log) LOGI("swordscan: {} entities in the table, {} targets within {:.1f} m", seen, g_Targets.size(), C.radius);
+        if (q0.QuadPart)
+        {   // a slow scan (it runs on the render thread every 0.1 s): what it went through
+            static LARGE_INTEGER f{}; if (!f.QuadPart) QueryPerformanceFrequency(&f);
+            LARGE_INTEGER q1; QueryPerformanceCounter(&q1);
+            const double ms = 1000.0 * (double)(q1.QuadPart - q0.QuadPart) / (double)f.QuadPart;
+            static int s_Slow = 0; static double s_LastSlow = -1e9;
+            const double now = (double)q1.QuadPart / (double)f.QuadPart;
+            if (ms > 3.0 && s_Slow < 60 && now - s_LastSlow > 2.0)
+            {
+                s_Slow++; s_LastSlow = now;
+                LOGI("SwordContact: a target scan took {:.1f} ms: {} entities in the table, {} with a box in the 33 m test, {} skeletons read, {} targets", ms, seen, nBoxed, nSkelReads, g_Targets.size());
+            }
+        }
     }
 
     //! Segment p0->p1 against the box (local frame of t, grown by m): entry fraction in [0,1], or -1. Starts inside = -1

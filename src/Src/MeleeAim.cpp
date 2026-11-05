@@ -838,13 +838,6 @@ namespace
     int g_KoRagdollGate = 0;   // the last knockout: 1 the game's gate passed, 2 it refused, 3 no such component (sent anyway)
     constexpr uint32_t kMsgSystem2 = 0x810240, kMsgPost2 = 0x8112C0, kMsgQueue2 = 0xC8E8;
     std::atomic<bool> g_KoOn{ false };
-    // [Gameplay.Knockout] ChokeByHands: from behind, while the takedown is offered, a hand on each side of his neck held
-    // there 1 s knocks him out -- the choke's knockout (as the knockout blow), without its animation. Forgiving: the
-    // hands within 22 cm of the neck, a gap of up to 0.3 s does not start it again.
-    std::atomic<bool> g_ChokeOn{ true };
-    constexpr float kChokeR = 0.22f, kChokeTime = 1.0f;
-    struct Choke { const void* target = nullptr; double held = 0, lastIn = -10, startAt = 0; bool told = false; double lastNear = -10; } g_Choke;   // game thread
-    std::atomic<unsigned long long> g_Chokes{ 0 };
     std::atomic<uint64_t> g_Kos{ 0 }, g_KoFails{ 0 };
     // Reported from the headset: the blow failed most of the time -- the head is a small target to hit blind, and the
     // takedown offer (and with it the check) went away as the arm swung. So the blow counts within 22 cm of the head's
@@ -1042,60 +1035,6 @@ namespace
             g_KoPrevT = 0;
             return;
         }
-        if (g_ChokeOn.load() && cur[0].ok && cur[1].ok && dt > 1e-4 && dt < 0.1)
-        {   // ChokeByHands: a hand on each side of his neck (12 cm under the head's centre), from behind
-            const double t = (double)now / (double)QpcFreq();
-            const float neck[3] = { head[0], head[1], head[2] - 0.12f };
-            const float left[3] = { -fwd[1], fwd[0], 0.f };   // his left, across
-            float dist[2], side[2];
-            for (int k = 0; k < 2; k++)
-            {
-                const float d[3] = { cur[k].p[0] - neck[0], cur[k].p[1] - neck[1], cur[k].p[2] - neck[2] };
-                dist[k] = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-                side[k] = d[0] * left[0] + d[1] * left[1];
-            }
-            const bool both = dist[0] < kChokeR && dist[1] < kChokeR && side[0] * side[1] < 0.f;   // one each side
-            Choke& C = g_Choke;
-            if (C.target != target) { C = Choke{}; C.target = target; }
-            if (both)
-            {
-                if (t - C.lastIn > 0.3) { C.held = 0; C.startAt = t; C.told = false; }
-                C.held += dt; C.lastIn = t;
-                if (!C.told)
-                {
-                    C.told = true;
-                    VRRuntime::Vibrate(0, 0.3f, 0.05f); VRRuntime::Vibrate(1, 0.3f, 0.05f);
-                    LOGI("MeleeAim: hands on his neck from behind ({:.0f} / {:.0f} cm from it, one each side): choking -- hold {:.1f} s", dist[1] * 100.f, dist[0] * 100.f, kChokeTime);
-                }
-                if (C.held >= kChokeTime)
-                {
-                    const int why = Knockout(sensor, target, player);
-                    if (why == 0)
-                    {
-                        g_Chokes++; g_Kos++;
-                        VRRuntime::Vibrate(0, 0.8f, 0.1f); VRRuntime::Vibrate(1, 0.8f, 0.1f);
-                        g_KoFall.target = target; g_KoFall.at = now; g_KoFall.pushed = false;
-                        for (int k = 0; k < 3; k++) { g_KoFall.dir[k] = -fwd[k]; g_KoFall.pt[k] = head[k]; }
-                    }
-                    else g_KoFails++;
-                    LOGI("MeleeAim: CHOKED by hand ({:.1f} s): {}", t - C.startAt, why == 0 ? "the game's choke knockout sent" : fmt::format("not sent (reason {})", why));
-                    g_KoLast = now; C = Choke{};
-                    return;
-                }
-            }
-            else if (C.told && t - C.lastIn > 0.3)
-            {
-                LOGI("MeleeAim: the choke was let go after {:.1f} s (the hands {:.0f} / {:.0f} cm from his neck, {})", C.held, dist[1] * 100.f, dist[0] * 100.f,
-                     side[0] * side[1] < 0.f ? "one each side" : "both on one side");
-                C.told = false; C.held = 0;
-            }
-            else if (!C.told && (dist[0] < 0.35f || dist[1] < 0.35f) && (dist[0] < kChokeR || dist[1] < kChokeR) && t - C.lastNear > 3.0)
-            {   // one hand there, not the other: what is missing (for tuning)
-                C.lastNear = t;
-                LOGI("MeleeAim: a hand at his neck, not a choke: right {:.0f} cm, left {:.0f} cm from it (each needs under {:.0f}), {}", dist[0] * 100.f, dist[1] * 100.f, kChokeR * 100.f,
-                     side[0] * side[1] < 0.f ? "one each side" : "both on one side");
-            }
-        }
         if (dt <= 1e-4 || dt > 0.1 || (double)(now - g_KoLast) / (double)QpcFreq() < 1.0) return;
         for (int i = 0; i < 4; i++)
         {
@@ -1191,7 +1130,6 @@ void MeleeAim::SetKnockoutZone(float angleDeg, float radiusM)
     LOGI("MeleeAim: a knockout (and the blue dot) only from within {:.0f} deg of straight behind the guard, the blow within {:.0f} cm of his head's centre",
          g_KoAngle.load(), g_KoRadius.load() * 100.f);
 }
-void MeleeAim::SetChokeByHands(bool on) { g_ChokeOn = on; LOGI("MeleeAim: choke by hand {}", on ? "on: a hand each side of his neck from behind, held 1 s, knocks him out (ChokeByHands)" : "off"); }
 void MeleeAim::SetKnockoutSpeed(float mps)
 {
     g_KoSpeed = std::clamp(mps, 1.f, 20.f);

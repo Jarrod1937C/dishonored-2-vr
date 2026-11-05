@@ -58,7 +58,6 @@ namespace
         { "gameplay.swordgestures",     Kind::Bool,   "1", 0, 0, nullptr, true },
         { "gameplay.swordbladedamage",  Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: the blade's contact strikes by itself
         { "gameplay.sworddamagescale",  Kind::Float,  "1", 0.1f, 5, nullptr },
-        { "gameplay.swordparry",        Kind::Bool,   "1", 0, 0, nullptr },   // SwordParry: the blade across an enemy's blow parries it
         { "gameplay.handcollision",     Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: the drawn hands stop at the world
         { "gameplay.weaponcollision",   Kind::Bool,   "1", 0, 0, nullptr, true },   // Collision: the held weapons too, and at characters' bodies
         { "gameplay.swordbodydepth",    Kind::Float,  "4", 0, 15, nullptr, true },  // cm the blade sinks into a body before it stops
@@ -67,13 +66,9 @@ namespace
         { "gameplay.doorsfollowhand",   Kind::Bool,   "1", 0, 0, nullptr },   // DoorHold: a pushed door swings only as far as the hand pushes it
         { "gameplay.softcharacters",    Kind::Bool,   "1", 0, 0, nullptr },   // SoftBody: characters' bodies give where a hand presses
         { "gameplay.dragbodies",        Kind::Bool,   "1", 0, 0, nullptr },   // BodyDrag: a gripped body is dragged; up over the shoulder it is carried
-        { "gameplay.gravitygloves",     Kind::Bool,   "1", 0, 0, nullptr },   // GravityGlove: point, grip and flick: an object out of reach flies to the hand
         { "gameplay.touchtouse",        Kind::Bool,   "1", 0, 0, nullptr },   // Collision: buttons, switches and levers by hand
-        { "gameplay.pickpocketbyhand",  Kind::Bool,   "1", 0, 0, nullptr },   // NpcGestures: sneaking, hand at a belt, grip, pull back
-        { "gameplay.wavetotalk",        Kind::Bool,   "1", 0, 0, nullptr },   // NpcGestures: a wave at someone within 3 m talks to him
         { "gameplay.climbbyhand",       Kind::Bool,   "1", 0, 0, nullptr },   // Collision: both hands on a ledge, pull down: climb
         { "gameplay.swimstrokes",       Kind::Bool,   "1", 0, 0, nullptr },   // KbmInject: an arm's stroke in the water swims forward
-        { "gameplay.chokebyhands",      Kind::Bool,   "1", 0, 0, nullptr },   // MeleeAim: a hand each side of the neck from behind, 1 s: knocked out
         { "gameplay.sitholdtime",       Kind::Float,  "0.8", 0, 3, nullptr },   // KbmInject: B held this long (s) while crouched sits down (0 = off)
         { "gameplay.sitheight",         Kind::Float,  "80", 40, 130, nullptr },  // cm the eye is over the feet when sitting
         { "gameplay.knockoutblow",      Kind::Bool,   "1", 0, 0, nullptr, true },   // MeleeAim: a blow to the back of the head knocks a guard out
@@ -205,6 +200,7 @@ namespace
         { "cheats.infinitemana",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infiniteammo",        Kind::Bool,   "0", 0, 0, nullptr },
         { "cheats.infinitehealth",      Kind::Bool,   "0", 0, 0, nullptr },
+        { "cheats.undetected",          Kind::Bool,   "0", 0, 0, nullptr },   // Undetected: guards and hostile people do not notice you
         { "advanced.keepaliveframes",   Kind::Bool,   "1", 0, 0, nullptr, true },
         { "advanced.newsessionafter",   Kind::Float,  "5", 0, 120, nullptr, true },
         // experimental (StereoSync): passes the right eye's frame skips, using what the left eye's frame of the same tick did
@@ -432,14 +428,10 @@ float Settings::RoomscaleMaxSpeed() { return F("controls.roomscalemaxspeed"); }
 float Settings::PhysicalCrouchDepth() { return F("controls.physicalcrouchdepth") / 100.f; }
 float Settings::SitHoldTime() { return F("gameplay.sitholdtime"); }
 bool Settings::DragBodies() { return B("gameplay.dragbodies"); }
-bool Settings::GravityGloves() { return B("gameplay.gravitygloves"); }
+bool Settings::Undetected() { return B("cheats.undetected"); }
 bool Settings::TouchToUse() { return B("gameplay.touchtouse"); }
-bool Settings::PickpocketByHand() { return B("gameplay.pickpocketbyhand"); }
-bool Settings::WaveToTalk() { return B("gameplay.wavetotalk"); }
 bool Settings::ClimbByHand() { return B("gameplay.climbbyhand"); }
 bool Settings::SwimStrokes() { return B("gameplay.swimstrokes"); }
-bool Settings::ChokeByHands() { return B("gameplay.chokebyhands"); }
-bool Settings::SwordParry() { return B("gameplay.swordparry"); }
 float Settings::SitHeight() { return F("gameplay.sitheight") / 100.f; }
 float Settings::MovementVignette() { return F("controls.movementvignette"); }
 bool Settings::PullToOpen() { return B("gameplay.pulltoopen"); }
@@ -641,19 +633,14 @@ namespace
         { "physicalcrouchdepth", "30" },
         { "wallfade", "1" },
         { "sworddamagescale", "1" },
-        { "swordparry", "1" },
         { "knockoutspeed", "8" },
         { "knockoutsoundvolume", "0.8" },
         { "doorsfollowhand", "1" },
         { "softcharacters", "1" },
         { "dragbodies", "1" },
-        { "gravitygloves", "1" },
         { "touchtouse", "1" },
-        { "pickpocketbyhand", "1" },
-        { "wavetotalk", "1" },
         { "climbbyhand", "1" },
         { "swimstrokes", "1" },
-        { "chokebyhands", "1" },
         { "sitholdtime", "0.8" },
         { "sitheight", "80" },
         { "renderscale", "1" },
@@ -704,6 +691,7 @@ namespace
         { "infinitemana", "0" },
         { "infiniteammo", "0" },
         { "infinitehealth", "0" },
+        { "undetected", "0" },
         { "skipintrovideos", "1" },
         { "debuglogging", "0" },
         { "controllerbindings", "auto" }
