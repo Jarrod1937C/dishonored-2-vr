@@ -11,6 +11,7 @@
 #include "VRMath.h"
 #include "Game.h"
 #include "KbmInject.h"
+#include "ViewMatrixHook.h"
 #include "BodyHide.h"
 #include "TestAids.h"
 #include "WeaponPose.h"
@@ -84,13 +85,21 @@ namespace
         const float* ref = eyePosXr ? eyePosXr : hp.pos;
         float q[4] = { in.hand[hand].quatX, in.hand[hand].quatY, in.hand[hand].quatZ, in.hand[hand].quatW };
         float d[3] = { in.hand[hand].posX - ref[0], in.hand[hand].posY - ref[1], in.hand[hand].posZ - ref[2] };
+        float yaw = atan2f(viewAxis[1], viewAxis[0]);
         if (KbmInject::HeadAim())
         {   // the game yaw already follows the HMD: express hand pose in the HMD-yaw frame
-            float yaw = XrYaw(hp.quat), qq[4]; RemoveYaw(q, yaw, qq); memcpy(q, qq, 16);
-            float c = cosf(-yaw), s = sinf(-yaw); float dx = d[0] * c + d[2] * s, dz = -d[0] * s + d[2] * c; d[0] = dx; d[2] = dz;
+            const float hy = XrYaw(hp.quat); float qq[4]; RemoveYaw(q, hy, qq); memcpy(q, qq, 16);
+            float c = cosf(-hy), s = sinf(-hy); float dx = d[0] * c + d[2] * s, dz = -d[0] * s + d[2] * c; d[0] = dx; d[2] = dz;
+            // ...and into the world the way the view goes there: the room meets the world at the servo's anchor (game
+            // yaw = room yaw + off), not at the game's current yaw. They are the same once the servo has caught up;
+            // during a snap turn the anchor turns at once and the game over a few ticks, and hands placed by the game's
+            // yaw swung round into place after the view (reported 2026-11-04).
+            float off = 0;
+            if (ViewMatrixHook::RoomYaw(off)) yaw = off / 57.29578f + hy;
         }
-        HandAxis(viewAxis, q, axis);
-        float yaw = atan2f(viewAxis[1], viewAxis[0]), cy = cosf(yaw), sy = sinf(yaw);
+        const float fwd[3] = { cosf(yaw), sinf(yaw), 0.f };
+        HandAxis(fwd, q, axis);
+        const float cy = cosf(yaw), sy = sinf(yaw);
         float dl[3]; VRMath::XrToId(d, dl);
         org[0] = eyeOrg[0] + dl[0] * cy - dl[1] * sy; org[1] = eyeOrg[1] + dl[0] * sy + dl[1] * cy; org[2] = eyeOrg[2] + dl[2];
         return true;
@@ -104,7 +113,15 @@ namespace
         {
             VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
             if (headQuat) { memcpy(hp.quat, headQuat, 16); hp.valid = true; }
-            if (hp.valid) { float yaw = XrYaw(hp.quat); float c = cosf(-yaw), s = sinf(-yaw); float dx = d[0] * c + d[2] * s, dz = -d[0] * s + d[2] * c; d[0] = dx; d[2] = dz; }
+            if (hp.valid)
+            {
+                const float hy = XrYaw(hp.quat); float c = cosf(-hy), s = sinf(-hy); float dx = d[0] * c + d[2] * s, dz = -d[0] * s + d[2] * c; d[0] = dx; d[2] = dz;
+                float off = 0;
+                if (ViewMatrixHook::RoomYaw(off)) { const float yaw = off / 57.29578f + hy, cy = cosf(yaw), sy = sinf(yaw);   // (as CtrlPose)
+                    float dl[3]; VRMath::XrToId(d, dl);
+                    out[0] = dl[0] * cy - dl[1] * sy; out[1] = dl[0] * sy + dl[1] * cy; out[2] = dl[2];
+                    return; }
+            }
         }
         float yaw = atan2f(viewAxis[1], viewAxis[0]), cy = cosf(yaw), sy = sinf(yaw);
         float dl[3]; VRMath::XrToId(d, dl);

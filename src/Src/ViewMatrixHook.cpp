@@ -247,6 +247,10 @@ namespace
         if (g_AnimOffValid.load()) { deg = g_AnimOff.load(); return true; }
         return KbmInject::WorldYawOffset(deg);
     }
+}
+bool ViewMatrixHook::RoomYaw(float& deg) { return RoomYawOffset(deg); }
+namespace
+{
 
     // ---- The first-person entities each view was built with (ViewMatrixHook::ViewEntities) ----
     // GpuTrace places a moved draw's arm or weapon with `target * entity^-1` applied to the draw's own model matrix, so

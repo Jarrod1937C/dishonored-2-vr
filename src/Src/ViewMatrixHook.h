@@ -83,6 +83,9 @@ namespace ViewMatrixHook
     //! added to the game eye of a LATER frame it says where that frame will be rendered from, which is how the game
     //! thread places something exactly where the next view will draw it (GunRay). False before an HMD-composed view.
     bool ViewAnchor(float viewOrg[3], float gameOrg[3], float hmdPos[3]);
+    //! Where the room meets the world: game yaw = room (XR) yaw + `deg` -- what the views are composed with (the servo's
+    //! anchor, or a takedown's / cutscene's own mapping while its view is on). False before the servo has one.
+    bool RoomYaw(float& deg);
 
     //! The pose the main view was ACTUALLY rendered from, in XR LOCAL space -- what the projection layer must claim
     //! so the compositor's timewarp can correct the difference to the head's pose at display time. In head-aim mode
