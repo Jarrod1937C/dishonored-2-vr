@@ -17,8 +17,8 @@ add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN UNI
 
 # The mod's version: the release number below plus the commit it was built from (shown in the log and in the DLLs'
 # file properties, so a tester's log says exactly which build it came from).
-set(DVR_VERSION_MAJOR 0)
-set(DVR_VERSION_MINOR 9)
+set(DVR_VERSION_MAJOR 1)
+set(DVR_VERSION_MINOR 0)
 set(DVR_VERSION_PATCH 0)
 set(DVR_VERSION "${DVR_VERSION_MAJOR}.${DVR_VERSION_MINOR}.${DVR_VERSION_PATCH}")
 set(DVR_GIT "nogit")

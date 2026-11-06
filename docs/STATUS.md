@@ -1,7 +1,7 @@
 # Dishonored 2 VR: feature status
 
 What works, how well it has been checked, and what is known to be broken or still open, by feature area. It covers
-the 0.9.0 release (beta).
+the 1.0.0 release (2026-11-05, beta).
 
 Where this comes from: the development log of every feature, the engine notes in [ENGINE.md](ENGINE.md), the
 player [README](../package/README.txt) and the shipped [DishonoredVR.ini](../package/DishonoredVR.ini). When this file
@@ -495,7 +495,7 @@ From the latest open items and the roadmap. None of it is scheduled.
 - More on-world screens (notes, death, spyglass) on the menu screen.
 - Controller profiles for WMR / Vive / Pico, support for canted displays, a swapchain format fallback.
 - Comfort and settings: a comfort vignette, changing `RenderScale` without restarting. (The settings are in VR tabs of
-  the game's own Options screen since 0.9.0.)
+  the game's own Options screen since 1.0.0.)
 - Left-handed mode / any item in any hand (it conflicts with the game's design).
 
 ---
@@ -505,7 +505,8 @@ From the latest open items and the roadmap. None of it is scheduled.
 Versions come from `src/CMakeLists.txt`; the build adds the commit it came from (`git describe`, counted from the
 latest release tag), shown in the log and in the DLLs' file properties.
 
-### 0.9.0 (beta)
+### 1.0.0 (beta, 2026-11-05)
+The first release since 0.5.0, and newer than it (the 1.0.0 of October 2026 was withdrawn and replaced by 0.5.0).
 - Physical interaction: the hands and weapons collide with the world; doors push open, drawers and cabinets open by
   hand, safe dials turn by hand; consumables are grabbed, food is eaten and health / mana potions drunk by bringing
   them to the mouth; grenades are thrown; weapon holsters (with a chest holster for the left hand).

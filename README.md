@@ -27,9 +27,10 @@ it builds on.
 - **Comfort options**: snap or smooth turning, a comfort vignette while you move, Far Reach that takes you there at
   once like Blink, no head bob, and a sit-down view.
 
-> **Release coming soon: no build is available to download yet.**
+> **[Download the latest release](../../releases/latest)** (a zip: unpack it into the game folder, see
+> [Install](#install)).
 >
-> Status: **0.9.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
+> Status: **1.0.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
 > Beyond 2 and a Pimax using Valve Index controllers. Other headsets and controllers have their own profiles and are
 > expected to work, but are less tested: see [docs/STATUS.md](docs/STATUS.md) for what is verified, and the known
 > issues.
@@ -69,10 +70,11 @@ it builds on.
 
 ## Install
 
-1. Download `DishonoredVR-<version>.zip` from the [Releases](../../releases) page (coming soon: there is no release
-   yet).
+1. Download the zip of the [latest release](../../releases/latest) (older ones are on the
+   [Releases](../../releases) page) and unpack it.
 2. In Steam: right-click Dishonored 2 > Manage > Browse local files (the folder with `Dishonored2.exe`).
-3. Copy `dinput8.dll`, `DishonoredVR.dll`, `DishonoredVR.ini` and the `VRControllerBindings` folder into that folder.
+3. Copy `dinput8.dll`, `DishonoredVR.dll`, `DishonoredVR.ini` and the `VRControllerBindings` folder from the zip into
+   that folder.
 4. Make your headset's app the active OpenXR runtime (Meta Horizon Link app, Virtual Desktop's VDXR, or SteamVR >
    Settings > OpenXR).
 5. Set the game to **windowed** mode, start it from Steam, click the game's window once so it is in front, and put the
