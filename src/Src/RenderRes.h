@@ -31,4 +31,8 @@ namespace RenderRes
     std::string Status();   //!< one heartbeat line
     //! The headset runtime's largest swapchain image (XRSession, from xrGetSystemProperties): the render size's limit.
     void SetRuntimeLimit(int w, int h);
+    //! The mod's message to the game's window (posted from OnPresent while the headset runs and the game is fullscreen
+    //! or borderless): switch it to windowed, as the game's Alt+Enter does. The window procedure's (Overlay) first test.
+    constexpr unsigned kMsgWindowed = 0x8000 + 0x2D1;   // WM_APP + 0x2D1
+    bool OnWindowMessage(unsigned msg);
 }

@@ -132,7 +132,7 @@ namespace
         // the synchronised one now, which is what 1 meant to the player)
         { "display.stereo3d",           Kind::Choice, "1", 0, 0, "0|1|2|true|false|on|off|yes|no", true },   // hidden: the mod is made for 1
         { "display.renderscale",        Kind::Float,  "1", 0, 2, nullptr },
-        { "display.taasharpening",      Kind::Float,  "0.5", 0, 1, nullptr },   // TaaSharpen: the TAA's result sharpened in the headset (0 = off)
+        { "display.taasharpening",      Kind::Float,  "0.85", 0, 1, nullptr },   // TaaSharpen: the TAA's result sharpened in the headset (0 = off)
         { "display.taaskymotion",       Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: SkyMotion: the sky given motion vectors for the TAA
         { "display.handdepth",          Kind::Bool,   "1", 0, 0, nullptr, true },   // hidden: GpuTrace: the hands sort by their real distance (no first-person depth hack)
         { "display.highresolution",     Kind::Bool,   "0", 0, 0, nullptr, true },   // 0.1.0's ini; replaced by RenderScale
@@ -644,7 +644,7 @@ namespace
         { "sitholdtime", "0.8" },
         { "sitheight", "80" },
         { "renderscale", "1" },
-        { "taasharpening", "0.5" },
+        { "taasharpening", "0.85" },
         { "disablemetaasw", "1" },
         { "ambientocclusion", "0" },
         { "reticleopacity", "0.4" },

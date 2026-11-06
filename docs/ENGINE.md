@@ -470,6 +470,13 @@ marks the context empty (`[+0x108]+0x12AD4 = 1`) instead of calling the function
   - **Window placement exe+0x347630** (rcx = display object exe+0x32FC580): `SetWindowPos` from
     min(`r_windowWidth/Height`, the struct). Called from the WndProc's `WM_SETFOCUS` (only when the byte at
     exe+0x32FAF8D is set: not windowed) and when video options change (exe+0x51198B, flag menu+0x309).
+  - **Switching the window mode** (decoded 2026-11-05): `r_fullscreen` (exe+0x32FB1D0; 0 windowed, 1 fullscreen, 2
+    borderless). The game's Alt+Enter, in its window procedure exe+0xE9ED0 (at exe+0xEA5E6): idCVar::SetInt
+    exe+0x1028E0(cvar, value, force true) -- the engine's own set, string and modified flag -- then the render system
+    (pointer exe+0x22FCD70 -> idRenderSystemLocal, the object exe+0x32FC580, vtable exe+0x1B31648) vtable +0x200
+    (exe+0x347C20) applies it. Its own methods slot 90 (exe+0x346990: windowed, or borderless when exe+0x32FAF6A is
+    set) and slot 91 (exe+0x346960: fullscreen) do the same. RenderRes posts the mod's message to the window and runs
+    that pair from the window procedure (Overlay's subclass) while the headset runs.
 - **The interface cursor** is read at exe+0xE27B0 (`GetCursorPos` + `ScreenToClient`, **return exe+0xE27DF**), in client
   pixels taken 1:1 as frame pixels. `ClipCursor` exe+0xE2650 and centring exe+0xE25E0 use the real client rect.
 - Answering the two `GetClientRect` call sites (and `ResizeBuffers`) with another size makes the engine render at that

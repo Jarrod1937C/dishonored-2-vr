@@ -22,6 +22,9 @@ it builds on.
 - **Holsters on your body** and **a backpack**: take an item in your hand and put it over your shoulder into your
   inventory. Elixirs are drunk at your mouth, grenades thrown with your arm's motion, and a tap on the side of your
   head zooms the mask's spyglass.
+- **A much sharper picture with TAA:** the game's TAA anti-aliasing is clean but soft, and blurry in a headset even
+  with its own sharpness slider at the maximum. The mod adds AMD's CAS (contrast-adaptive sharpening) to it, per eye,
+  which drastically improves the game's sharpness without halos or shimmer.
 - **Real stereo 3D** at the headset's full refresh, menus on a big screen in the room, the HUD as a watch on your
   wrist with pointers to your objectives, and cutscenes played around you.
 - **Comfort options**: snap or smooth turning, a comfort vignette while you move, Far Reach that takes you there at
@@ -30,7 +33,7 @@ it builds on.
 > **[Download the latest release](../../releases/latest)** (a zip: unpack it into the game folder, see
 > [Install](#install)).
 >
-> Status: **1.0.0, beta**. Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
+> Status: **1.0.0 RC** (release candidate). Developed on a Meta Quest 3 (Link / Air Link) and played on SteamVR with a Bigscreen
 > Beyond 2 and a Pimax using Valve Index controllers. Other headsets and controllers have their own profiles and are
 > expected to work, but are less tested: see [docs/STATUS.md](docs/STATUS.md) for what is verified, and the known
 > issues.
@@ -50,6 +53,7 @@ it builds on.
   - [Solid hands and weapons](#solid-hands-and-weapons)
   - [Your hands in the world](#your-hands-in-the-world)
   - [Your backpack](#your-backpack)
+  - [Picture quality](#picture-quality)
   - [HUD, menus and cutscenes](#hud-menus-and-cutscenes)
   - [Comfort and reliability](#comfort-and-reliability)
   - [Cheats](#cheats)
@@ -77,8 +81,9 @@ it builds on.
    that folder.
 4. Make your headset's app the active OpenXR runtime (Meta Horizon Link app, Virtual Desktop's VDXR, or SteamVR >
    Settings > OpenXR).
-5. Set the game to **windowed** mode, start it from Steam, click the game's window once so it is in front, and put the
-   headset on. VR switches on by itself a moment after you are in control of your character.
+5. Start the game from Steam, click the game's window once so it is in front, and put the headset on. VR switches on
+   by itself a moment after you are in control of your character, and the game is switched to windowed mode if it
+   was fullscreen or borderless.
 
 The zip's `README.txt` is the players' guide: installing, playing, the controls, the main settings and
 troubleshooting. To uninstall, delete those files (the game itself is never modified).
@@ -90,7 +95,7 @@ troubleshooting. To uninstall, delete those files (the game itself is never modi
 | Game | **Dishonored 2 on Steam**, current build (1.77.9.0). Not GOG, not Microsoft Store / Game Pass, not *Death of the Outsider* (the mod detects them and stays off). |
 | OS | Windows 10 or 11, 64-bit. Nothing else to install. |
 | Headset | Any PC VR headset with an OpenXR runtime. Tested: Meta Quest 3 over Link / Air Link; Bigscreen Beyond 2 and Pimax on SteamVR with Index controllers. Expected to work: other Quests, Virtual Desktop, other SteamVR headsets, WMR, Pico, Vive (see [STATUS](docs/STATUS.md)). |
-| Display mode | Windowed (not fullscreen or borderless). |
+| Display mode | Windowed: the mod switches the game to it while the headset runs (fullscreen and borderless render at the monitor's size). |
 | Graphics | A PC that runs VR. Fixed foveated rendering (optional) needs an NVIDIA card. |
 
 ## Known limitations
@@ -112,14 +117,23 @@ will still need tuning:
   resolution in your headset's PC app (SteamVR's per-application resolution, the Meta Horizon Link app, Virtual
   Desktop).
 
+**Expect some small graphics differences.** To reach those frame rates the mod strips back a lot of the game's
+rendering work: effects shared between the eyes, shadows that are drawn less often or reused, work skipped where it
+changes nothing, parts of each eye's picture outside the lens left unshaded, and more (see
+[Performance optimizations](#performance-optimizations)). Each one was checked to look the same or nearly the same,
+but with this many changes some minor visual glitches are expected: a shadow that updates a moment late, a
+reflection or effect that differs slightly at the edge of the view. They should be few and small; please report any
+that stand out (see [docs/STATUS.md](docs/STATUS.md)), and most of the optimizations can be switched off one by one
+in the VR Performance tab or the ini to find the cause.
+
 Known bugs:
 
 - **The Timepiece in A Crack in the Slab:** the view of the other era through its lens is not in stereo (both eyes see the same flat picture). This may not be possible to fix due to how it is generated on the timepiece.
 
 Other limitations:
 
-- Only the current **Steam** build of Dishonored 2, in **windowed** mode, is supported; the game window must stay in
-  front on the PC (the mod keeps it there).
+- Only the current **Steam** build of Dishonored 2 is supported. It runs in windowed mode in VR (the mod switches
+  it), and the game window must stay in front on the PC (the mod keeps it there).
 - Most testing was on a Quest 3 and on SteamVR with Index controllers; other headsets and controllers have profiles
   but are less tested.
 - [docs/STATUS.md](docs/STATUS.md) lists every known issue, and what is verified and what is not.
@@ -158,8 +172,8 @@ pistol with an empty right hand.
 - **Right hand:** the sword, interacting (the right trigger uses what the right hand points at), grabbing and carrying.
 - **Left hand:** powers, the pistol, the crossbow, grenades, springrazors, mines.
 - **Each one aims where it points.** A shot leaves along the pistol as you hold it, a bolt along the crossbow, a power
-  from your palm, a mine lands where your hand points. Two pointers (optional, shown as small dots by default) show
-  where each hand points; the right one grows on something you can take or use.
+  from your palm, and a mine or springrazor is placed on the surface your hand points at. Two pointers (optional,
+  shown as small dots by default) show where each hand points; the right one grows on something you can take or use.
 - **Full arms** reach your controllers with inverse kinematics; the hands grip what they hold, learned per weapon.
 - **A hand you empty stays empty** until you put something in it: choosing a power, a quick slot, blocking, swinging
   or being stunned no longer pulls the sword back into your right hand.
@@ -211,11 +225,12 @@ pistol with an empty right hand.
 
 ### Throwing
 
-- **Grenades and springrazors:** hold the left trigger, swing your arm and let go. It leaves your hand at that moment,
+- **Grenades:** hold the left trigger, swing your arm and let go. It leaves your hand at that moment,
   the way and as hard as your hand was moving. The mod waits for the game to light the fuse before it lets go, so a
   quick throw is never a dud. The game's throw animation is cut short, so the next grenade is in your hand a moment
   later (with a light buzz); pull the trigger before then and the mod holds it until that moment.
 - **Objects:** take a bottle or a cup with the right grip and let go while moving your hand to throw it.
+- Mines and springrazors are not thrown: as in the game, they are placed on the surface your left hand points at.
 
 ### Holsters
 
@@ -278,6 +293,22 @@ side, so you can look around and still find your hips.
   the game.
 - It is on by default (`PhysicalPickup`, a hidden Core VR setting); with it off, items are taken by pointing and
   pressing interact.
+
+### Picture quality
+
+- **CAS sharpening for TAA:** set the game's anti-aliasing to **TAA** (Options > Visuals). TAA gives the cleanest edges
+  and the least shimmer of the game's options, but its picture is soft, and in a headset, where every pixel is
+  magnified, that softness turns to blur; the game's own sharpness slider does not undo it. The mod sharpens each
+  eye's TAA result with AMD's CAS (contrast-adaptive sharpening): it sharpens fine detail strongly and already-sharp
+  edges little, so text, textures and distant detail come out crisp. The image TAA carries into the next frame is left
+  unsharpened, so the sharpening never builds up into halos or shimmer. On by default; how strong is `TaaSharpening`
+  (VR Display tab; 0 = off, 1 = strongest, 0.85 recommended). 0.85 was tuned at about 3700x3700 per eye; at a lower
+  resolution each pixel covers more of your view and the same value looks stronger, so lower it if edges show bright
+  or dark outlines. It has no effect with FXAA or no anti-aliasing.
+- **TAA in stereo:** each eye keeps its own TAA history (the game's would blend each eye with the other), and the sky
+  moves correctly with your head under TAA. See [Stereo rendering](#stereo-rendering).
+- **The headset's own resolution:** the game renders at what your headset asks for, not at the size of its window
+  (`RenderScale` scales it).
 
 ### HUD, menus and cutscenes
 
@@ -348,7 +379,7 @@ for your controllers is picked by itself (`ControllerBindings = auto`; the log s
 | Fist by your right ear, blade forward, then thrust | Power attack (lower the blade to cancel) |
 | Right fist at your left shoulder, blade up (or the right grip, sword out) | Block |
 | Hit the back of a guard's head, from behind | Knock him out |
-| Left trigger held, swing, let go | Throw a grenade or springrazor |
+| Left trigger held, swing, let go | Throw a grenade |
 | A grip at a holster | Draw / put away (see [Holsters](#holsters)) |
 | Right grip on an item, then reach over your shoulder | Into your backpack (see [Your backpack](#your-backpack)) |
 | Right grip on a body, drag; hand up over your shoulder | Drag it; onto your back |
@@ -525,7 +556,7 @@ most on by default.
 | Setting | What it does |
 |---|---|
 | `RenderScale` | Render resolution relative to what the headset asks for. |
-| `TaaSharpening` | With the game's anti-aliasing on TAA: sharpens each eye's TAA result (contrast-adaptive sharpening, AMD's CAS filter, applied in a perceptual space). The image TAA keeps for the next frame is not sharpened, so nothing builds up. 0 = off, 0.5 recommended. The game's own TAA "sharpness" slider is not a sharpen: it sets how much of each new frame the TAA takes (higher = sharper but more flicker). |
+| `TaaSharpening` | With the game's anti-aliasing on TAA: sharpens each eye's TAA result (contrast-adaptive sharpening, AMD's CAS filter, applied in a perceptual space). The image TAA keeps for the next frame is not sharpened, so nothing builds up. 0 = off, 0.85 recommended (tuned at about 3700x3700 per eye; lower it if edges show outlines at a lower resolution). The game's own TAA "sharpness" slider is not a sharpen: it sets how much of each new frame the TAA takes (higher = sharper but more flicker). |
 | `FoveatedRendering` | NVIDIA only: fixed foveated rendering with Variable Rate Shading. Full rate within 35° of each eye's axis, 2x2 to 50°, 4x4 beyond, on the scene's geometry, lighting, water and transparency passes. Off by default. |
 | `OutOfViewMask` | Pixels of each eye's rendered rectangle that the lens never shows are written at the near plane's depth before the depth pass, so the GPU never shades them. 2 (recommended) = only each eye's outer side, which screen-space effects do not read; 1 = all around (breaks screen-space reflections, hair and glass). |
 | `ShadowCullDistance` | How far objects cast shadows (24 m recommended; the game's Ultra uses 75). |

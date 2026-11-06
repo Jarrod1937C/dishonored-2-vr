@@ -51,8 +51,9 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
       Quest with Virtual Desktop:  Virtual Desktop Streamer > OpenXR Runtime: VDXR
       SteamVR (Index, Beyond, Pimax, PS VR2...):
                                    SteamVR > Settings > OpenXR > "Set SteamVR as OpenXR Runtime"
- 4. In the game: Options > Visuals > Display mode: WINDOWED. Not fullscreen and not borderless:
-    those render at your monitor's size and the headset gets a blurry picture.
+ 4. Nothing to set in the game's display options: when the headset runs, the mod switches the
+    game to WINDOWED mode (fullscreen and borderless render at your monitor's size, which gives
+    the headset a blurry picture). The game keeps that setting afterwards.
     The game's resolution setting does not change what you see in VR: the mod renders at the
     resolution your HEADSET asks for (change that in the headset's PC app, or with RenderScale).
 
@@ -114,7 +115,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
    Right fist at your left shoulder,
      blade up (or the right grip) .... block
    Hit the back of a guard's head .... from behind, when the blue marker shows: knock him out
-   Left trigger held, swing, let go .. throw a grenade or springrazor
+   Left trigger held, swing, let go .. throw a grenade (mines and springrazors are placed where
+                                       your left hand points, as in the game)
    A grip at a holster ............... draw / put away: left hand at the right hip = pistol,
                                        behind your back = crossbow, chest = last power;
                                        right hand at the left hip = sword
@@ -329,7 +331,8 @@ Support the development: patreon.com/CosmicTangerine  -  ko-fi.com/cosmictangeri
      Try steps of 10.
 
  Blurry picture
-   - The game must be WINDOWED (Options > Visuals > Display mode), not fullscreen or borderless.
+   - The game must be WINDOWED (the mod switches it; if the log says it could not, set Options >
+     Visuals > Display mode: windowed).
    - Raise the resolution in the headset's PC app, or RenderScale. With the game's TAA
      anti-aliasing: raise TaaSharpening (VR Display).
 

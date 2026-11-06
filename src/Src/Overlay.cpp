@@ -45,6 +45,7 @@ namespace
         // game's own thread, which stops the game until ESC or a click. Nothing in VR needs the window's system menu,
         // and the mod's own input can produce a lone Alt (a lean key, the focus fallback in KbmInject).
         if (m == WM_SYSCOMMAND && (w & 0xFFF0) == SC_KEYMENU) return 0;
+        if (RenderRes::OnWindowMessage(m)) return 0;   // the mod's own: the game to windowed for VR
         if (m == WM_KEYDOWN && w == VK_INSERT) { g_Visible = !g_Visible; return 0; }
         if (g_Visible)
         {

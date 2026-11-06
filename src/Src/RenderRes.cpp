@@ -34,6 +34,16 @@ namespace
     bool g_Installed = false;
 
     HWND g_Hwnd = nullptr;
+    // Windowed, forced (2026-11-05, asked): fullscreen and borderless render at the MONITOR's size (ComputeTarget), so
+    // while the headset runs the game is switched to windowed the way its own Alt+Enter does in its window procedure
+    // (exe+0xEA5E6): idCVar::SetInt(r_fullscreen exe+0x32FB1D0, 0, force) -- the engine's own set: the string, the
+    // modified flag -- then the render system (*exe+0x22FCD70, idRenderSystemLocal) vtable +0x200 applies the window
+    // mode. Done on the window's thread, from the mod's message in its window procedure (Overlay), never in a Present.
+    constexpr uintptr_t kFullscreenCvar = 0x32FB1D0, kCvarSetInt = 0x1028E0, kRenderSystemPtr = 0x22FCD70;
+    constexpr size_t kApplyWindowSlot = 0x200 / 8;
+    constexpr double kWindowedRetry = 3.0;
+    std::atomic<int> g_WindowedAsks{ 0 }, g_WindowedDone{ 0 };
+    double g_WindowedAt = -1e9; int g_WindowedFails = 0;
     std::atomic<int> g_TW{ 0 }, g_TH{ 0 };          // the target in effect (0 = the window's own size)
     int g_WantW = 0, g_WantH = 0, g_WantFrames = 0; // a new target has to hold this many frames before it is applied
     std::atomic<int> g_ManualW{ 0 }, g_ManualH{ 0 }; // vr rendersize <w> <h>: fixed target (research)
@@ -303,6 +313,36 @@ namespace
     }
 }
 
+namespace
+{
+    //! the game's own switch to windowed (POD)
+    bool ApplyWindowed()
+    {
+        __try
+        {
+            const uintptr_t b = GameInfo::Base();
+            ((void (*)(void*, int, bool))(b + kCvarSetInt))((void*)(b + kFullscreenCvar), 0, true);
+            void* rs = *(void**)(b + kRenderSystemPtr);
+            if (!rs) return false;
+            void** vt = *(void***)rs;
+            ((void (*)(void*))vt[kApplyWindowSlot])(rs);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+}
+bool RenderRes::OnWindowMessage(unsigned msg)
+{
+    if (msg != kMsgWindowed) return false;
+    const int was = CVars::GetInt("r_fullscreen", -1);
+    if (was == 0) return true;
+    const bool ok = g_Installed && ApplyWindowed();
+    if (ok) g_WindowedDone++;
+    LOGI("RenderRes: the game switched to WINDOWED for VR (r_fullscreen {} -> {}){}", was, CVars::GetInt("r_fullscreen", -1),
+         ok ? "" : ": the game's switch faulted");
+    return true;
+}
+
 void RenderRes::SetRuntimeLimit(int w, int h)
 {
     g_RtMaxW = w; g_RtMaxH = h;
@@ -400,6 +440,20 @@ void RenderRes::OnPresent(IDXGISwapChain* sc)
     // held off whenever the headset shows the game, with or without a target: with the game's own fov the window can
     // already be dense enough (no target), and the 85% would still be there
     HoldGameOptions(g_Mode.load() != 0 && VRRuntime::GetStatus().running);
+    // fullscreen or borderless while the headset runs: windowed, asked of the window's thread (see kFullscreenCvar)
+    if (g_Mode.load() != 0 && VRRuntime::GetStatus().running && g_WindowedFails < 3)
+    {
+        const int fs = CVars::GetInt("r_fullscreen", 0);
+        LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f);
+        const double t = (double)c.QuadPart / (double)f.QuadPart;
+        if (fs == 0) g_WindowedFails = 0;
+        else if (t - g_WindowedAt > kWindowedRetry)
+        {
+            if (g_WindowedAt > 0 && ++g_WindowedFails >= 3) LOGI("RenderRes: the game stays in {} mode after 3 tries: set Display mode to windowed in its Options", fs == 1 ? "fullscreen" : "borderless");
+            else if (PostMessageW(g_Hwnd, kMsgWindowed, 0, 0)) { g_WindowedAsks++; LOGI("RenderRes: the game is in {} mode: asking for windowed (VR renders at the headset's resolution only in a window)", fs == 1 ? "fullscreen" : "borderless"); }
+            g_WindowedAt = t;
+        }
+    }
     if (g_Reapply.exchange(false)) Trigger();
 }
 
@@ -407,9 +461,9 @@ std::string RenderRes::Status()
 {
     int rw = 0, rh = 0; RealClient(rw, rh);
     const int* ds = g_Base ? (const int*)(g_Base + kDisplaySize) : nullptr;
-    return fmt::format("renderres target {}x{} ({}) engine {}x{} buffers {}x{} window {}x{} scale {:.2f} rs {} tb {} fps {:.1f} gpu {:.2f} ms applies {} spoofed {} bufs {} cfgguard {} placeguard {}",
+    return fmt::format("renderres target {}x{} ({}) engine {}x{} buffers {}x{} window {}x{} scale {:.2f} rs {} tb {} fps {:.1f} gpu {:.2f} ms applies {} spoofed {} bufs {} cfgguard {} placeguard {} windowed asks {} done {}",
                        g_TW.load(), g_TH.load(), g_Why, ds ? ds[0] : 0, ds ? ds[1] : 0, g_BufW, g_BufH, rw, rh, g_Scale.load(),
-                       CVars::GetInt("rs_enable", -1), CVars::GetInt("r_swapChainTripleBufferEnable", -1), g_Fps, g_GpuMs, g_Applies, g_Spoofed, g_Buffers, g_CfgGuards, g_PlaceGuards);
+                       CVars::GetInt("rs_enable", -1), CVars::GetInt("r_swapChainTripleBufferEnable", -1), g_Fps, g_GpuMs, g_Applies, g_Spoofed, g_Buffers, g_CfgGuards, g_PlaceGuards, g_WindowedAsks.load(), g_WindowedDone.load());
 }
 
 bool RenderRes::Command(const std::string& what, std::istringstream& ss)
