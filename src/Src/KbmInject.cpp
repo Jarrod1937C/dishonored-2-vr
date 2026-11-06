@@ -533,12 +533,16 @@ namespace
     // breaststroke or a crawl) swims forward -- the game's forward key held for a glide after each stroke, longer with
     // strokes in a row. The stick swims as ever.
     std::atomic<bool> g_SwimStrokes{ true };
-    struct StrokeHand { bool valid = false; float prev[3] = {}; float back = 0.f; double startAt = 0; } g_Stroke[2];
+    // (2026-11-05 log: 70 s in the water, strokes made, none counted. The poses are new once per frame PAIR (synchronised
+    // stereo: SyncInput at the left eye's xrBeginFrame) and this runs at every Present, so every second tick saw the hand
+    // not moving -- "slow", the sweep reset to 0 -- and no sweep ever added up. Now the motion is taken between new
+    // poses only, over the time between them.)
+    struct StrokeHand { bool valid = false; float prev[3] = {}; float raw[3] = {}; double prevAt = 0; float back = 0.f; double startAt = 0; } g_Stroke[2];
     double g_SwimUntil = -1; int g_StrokeLogs = 0; unsigned long long g_Strokes = 0;
     // (2026-11-05 play: "arm motion swimming didn't seem to do anything", no log: now easier -- 14 cm back at 0.45 m/s
     // -- a light buzz on each stroke counted, and each time in the water a line says what the arms did)
     constexpr float kStrokeSpeed = 0.45f, kStrokeLen = 0.14f, kStrokeRest = 0.12f;
-    struct SwimLog { bool in = false; double at = 0; unsigned strokes = 0; float peakV[2] = {}, bestBack[2] = {}; unsigned noPose[2] = {}; } g_SwimLog;
+    struct SwimLog { bool in = false; double at = 0, toldAt = 0; unsigned strokes = 0; float peakV[2] = {}, bestBack[2] = {}; unsigned noPose[2] = {}; } g_SwimLog;
     // ClimbByHand (Collision): the jump held a moment for the climb
     double g_ClimbUntil = -1;
     //! The item goes back where it was taken from (refused, let go, out of reach): it flies there, then is drawn as is.
@@ -1775,7 +1779,7 @@ void KbmInject::Tick()
     if (g_SwimStrokes.load() && inWater)
     {
         const VRRuntime::HeadPose hp = VRRuntime::GetHeadPose();
-        if (hp.valid && g_Dt > 1e-4 && g_Dt < 0.1)
+        if (hp.valid)
         {
             float hf[3], hr[3], hu[3]; VRMath::QuatBasis(hp.quat, hf, hr, hu);
             float f[3] = { hf[0], 0.f, hf[2] }; const float fl = sqrtf(f[0] * f[0] + f[2] * f[2]);
@@ -1785,11 +1789,15 @@ void KbmInject::Tick()
                 StrokeHand& S = g_Stroke[h];
                 const XRHandPose& p = in.hand[h];
                 if (!p.valid || p.held) { S.valid = false; g_SwimLog.noPose[h]++; continue; }
+                if (S.valid && p.posX == S.raw[0] && p.posY == S.raw[1] && p.posZ == S.raw[2]) continue;   // no new pose yet
+                S.raw[0] = p.posX; S.raw[1] = p.posY; S.raw[2] = p.posZ;
                 const float rel[3] = { p.posX - hp.pos[0], p.posY - hp.pos[1], p.posZ - hp.pos[2] };
+                const double sdt = g_Now - S.prevAt;
+                if (S.valid && (sdt < 1e-3 || sdt > 0.1)) S.valid = false;   // (a hitch: start again from this pose)
                 if (S.valid)
                 {
                     const float d = -((rel[0] - S.prev[0]) * f[0] + (rel[2] - S.prev[2]) * f[2]);   // back, along the heading
-                    const float v = d / (float)g_Dt;
+                    const float v = d / (float)sdt;
                     g_SwimLog.peakV[h] = std::max(g_SwimLog.peakV[h], v);
                     if (v > kStrokeSpeed) { if (S.back == 0.f) S.startAt = g_Now; if (S.back >= 0.f) S.back += d; }   // (-1: this sweep already counted)
                     else if (v < kStrokeRest) S.back = 0.f;
@@ -1804,10 +1812,16 @@ void KbmInject::Tick()
                         S.back = -1.f;   // (until the hand comes forward again)
                     }
                 }
-                memcpy(S.prev, rel, 12); S.valid = true;
+                memcpy(S.prev, rel, 12); S.prevAt = g_Now; S.valid = true;
             }
         }
         swimW = g_Now < g_SwimUntil;
+        if (Log::Enabled() && g_Now - std::max(g_SwimLog.at, g_SwimLog.toldAt) > 10.0)
+        {   // every 10 s in the water: the arms so far (a session can end with the log still in the water)
+            g_SwimLog.toldAt = g_Now;
+            LOGI("KbmInject: in the water {:.0f} s: {} arm strokes so far; the fastest backward hand motion left {:.2f} / right {:.2f} m/s, the longest sweep left {:.0f} / right {:.0f} cm",
+                 g_Now - g_SwimLog.at, g_SwimLog.strokes, g_SwimLog.peakV[0], g_SwimLog.peakV[1], g_SwimLog.bestBack[0] * 100.f, g_SwimLog.bestBack[1] * 100.f);
+        }
     }
     else { g_Stroke[0].valid = g_Stroke[1].valid = false; g_SwimUntil = -1; }
     // Movement: eight steady directions (or the old PWM on request).
